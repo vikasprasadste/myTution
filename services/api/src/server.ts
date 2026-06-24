@@ -12,6 +12,16 @@ const app = express();
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
 const mockOtp = "123456";
 const mobileClientId = "mytution_mobile_app";
+const medicalProgramCatalog = [
+  { id: "medical-neet-full-12", role: "student", title: "12 month NEET full course", description: "Full syllabus plan with monthly Biology, Chemistry, and Physics milestones", milestones: 12 },
+  { id: "medical-neet-crash-90", role: "student", title: "NEET 90 day crash course", description: "High-intensity revision plan for high-yield chapters and mock practice", milestones: 6 },
+  { id: "medical-biology-masterclass", role: "student", title: "NEET Biology masterclass", description: "Botany and Zoology focused program with NCERT recall drills", milestones: 8 },
+  { id: "medical-chemistry-sprint", role: "student", title: "NEET Chemistry revision sprint", description: "Physical, Organic, and Inorganic Chemistry revision with quizzes", milestones: 6 },
+  { id: "medical-physics-problem-solving", role: "student", title: "NEET Physics problem solving", description: "Mechanics, electrodynamics, optics, and modern physics practice", milestones: 8 },
+  { id: "medical-aiims-nursing", role: "student", title: "AIIMS nursing entrance prep", description: "Medical aptitude, biology basics, and exam readiness milestones", milestones: 6 },
+  { id: "medical-class-11-foundation", role: "student", title: "Class 11 medical foundation", description: "Early foundation for future NEET aspirants", milestones: 10 },
+  { id: "medical-class-12-bridge", role: "student", title: "Class 12 board plus NEET bridge", description: "Board exam alignment with NEET-style topic practice", milestones: 8 }
+] as const;
 
 app.use(helmet());
 app.use(cors());
@@ -66,9 +76,11 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
           role,
           firstName: String(profileInput.firstName ?? "New"),
           lastName: String(profileInput.lastName ?? "User"),
+          dob: dateOrNull(profileInput.dob),
           city: stringOrNull(profileInput.city),
           communicationAddress: stringOrNull(profileInput.communicationAddress),
           alternatePhone: stringOrNull(profileInput.alternatePhone),
+          avatarUrl: stringOrNull(profileInput.avatarUrl),
           stream: role === "parent" ? null : stringOrNull(profileInput.stream),
           specialization: role === "parent" ? null : stringOrNull(profileInput.specialization)
         }
@@ -85,9 +97,11 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
         role,
         firstName: profile.firstName,
         lastName: profile.lastName,
+        dob: profile.dob,
         city: profile.city,
         communicationAddress: profile.communicationAddress,
         alternatePhone: profile.alternatePhone,
+        avatarUrl: profile.avatarUrl,
         stream: profile.stream,
         specialization: profile.specialization
       }
@@ -126,9 +140,58 @@ app.post("/api/v1/auth/revoke", async (req, res) => {
   res.status(204).send();
 });
 
+app.delete("/api/v1/admin/users/by-phone", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const phone = normalizePhone(req.body.phone ?? req.query.phone);
+  if (!phone) {
+    res.status(400).json({ error: "Phone number is required" });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { phone },
+    include: { profiles: { select: { id: true } } }
+  });
+  if (!user) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  const profileIds = user.profiles.map((profile) => profile.id);
+  const result = await prisma.$transaction(async (tx) => {
+    const resourceProgress = await tx.resourceProgress.deleteMany({ where: { profileId: { in: profileIds } } });
+    const programProgress = await tx.programProgress.deleteMany({ where: { profileId: { in: profileIds } } });
+    const reminders = await tx.reminder.deleteMany({ where: { userId: user.id } });
+    const userManagement = await tx.userManagement.deleteMany({ where: { userId: user.id } });
+    const authSessions = await tx.authSession.deleteMany({ where: { userId: user.id } });
+    const profiles = await tx.profile.deleteMany({ where: { userId: user.id } });
+    await tx.user.delete({ where: { id: user.id } });
+    return {
+      userId: user.id,
+      phone,
+      deleted: {
+        authSessions: authSessions.count,
+        reminders: reminders.count,
+        userManagement: userManagement.count,
+        resourceProgress: resourceProgress.count,
+        programProgress: programProgress.count,
+        profiles: profiles.count,
+        users: 1
+      }
+    };
+  });
+
+  res.json({ data: result });
+});
+
 app.get("/api/v1/bootstrap", async (req, res) => {
   const role = readRole(req.query.role);
-  const profile = await findProfile(role);
+  const userId = await readUserId(req);
+  const profile = await findProfile(role, userId);
   res.json({
     persona: profile ? toPersona(profile) : fallbackPersona(role),
     featureFlags,
@@ -138,7 +201,8 @@ app.get("/api/v1/bootstrap", async (req, res) => {
 
 app.get("/api/v1/usermanagement/profile", async (req, res) => {
   const role = readRole(req.query.role);
-  const profile = await findUserManagement(role);
+  const userId = await readUserId(req);
+  const profile = await findUserManagement(role, userId);
   if (!profile) {
     res.status(404).json({ error: "Profile not found" });
     return;
@@ -148,7 +212,8 @@ app.get("/api/v1/usermanagement/profile", async (req, res) => {
 
 app.put("/api/v1/usermanagement/profile", async (req, res) => {
   const role = readRole(req.body.role);
-  const current = await findProfile(role);
+  const userId = await readUserId(req);
+  const current = await findProfile(role, userId);
   if (!current) {
     res.status(404).json({ error: "Profile not found" });
     return;
@@ -157,9 +222,11 @@ app.put("/api/v1/usermanagement/profile", async (req, res) => {
   const data = {
     firstName: String(req.body.firstName ?? current.firstName),
     lastName: String(req.body.lastName ?? current.lastName),
+    dob: dateOrNull(req.body.dob) ?? current.dob,
     city: stringOrNull(req.body.city) ?? current.city,
     communicationAddress: stringOrNull(req.body.communicationAddress) ?? current.communicationAddress,
     alternatePhone: stringOrNull(req.body.alternatePhone) ?? current.alternatePhone,
+    avatarUrl: stringOrNull(req.body.avatarUrl) ?? current.avatarUrl,
     stream: role === "parent" ? null : stringOrNull(req.body.stream) ?? current.stream,
     specialization: role === "parent" ? null : stringOrNull(req.body.specialization) ?? current.specialization
   };
@@ -196,12 +263,14 @@ app.get("/api/v1/events-reminders", async (req, res) => {
     res.json({ data: [] });
     return;
   }
-  res.json({ data: await listReminders(role) });
+  const userId = await readUserId(req);
+  res.json({ data: await listReminders(role, userId) });
 });
 
 app.post("/api/v1/events-reminders", async (req, res) => {
   const role = readRole(req.body.role);
-  const profile = await findProfile(role);
+  const userId = await readUserId(req);
+  const profile = await findProfile(role, userId);
   if (!profile) {
     res.status(404).json({ error: "Profile not found" });
     return;
@@ -241,7 +310,8 @@ app.delete("/api/v1/events-reminders/:id", async (req, res) => {
 
 app.get("/api/v1/reminders", async (req, res) => {
   const role = readRole(req.query.role);
-  res.json({ data: await listReminders(role) });
+  const userId = await readUserId(req);
+  res.json({ data: await listReminders(role, userId) });
 });
 
 app.post("/api/v1/reminders", async (req, res) => {
@@ -251,7 +321,8 @@ app.post("/api/v1/reminders", async (req, res) => {
 
 app.get("/api/v1/education-plan/current", async (req, res) => {
   const role = readRole(req.query.role);
-  const plan = await getEducationPlan(role);
+  const userId = await readUserId(req);
+  const plan = await getEducationPlan(role, userId, stringOrNull(req.query.programId));
   if (!plan) {
     res.status(404).json({ error: "Education plan not found" });
     return;
@@ -259,9 +330,24 @@ app.get("/api/v1/education-plan/current", async (req, res) => {
   res.json({ data: plan });
 });
 
+app.get("/api/v1/education-plan/programs", async (req, res) => {
+  const role = readRole(req.query.role);
+  if (role === "student") {
+    res.json({ data: medicalProgramCatalog.map(({ milestones: _milestones, ...program }) => program) });
+    return;
+  }
+  const programs = await prisma.program.findMany({
+    where: { role },
+    orderBy: { title: "asc" },
+    select: { id: true, role: true, title: true, description: true }
+  });
+  res.json({ data: programs });
+});
+
 app.get("/api/v1/programs/current", async (req, res) => {
   const role = readRole(req.query.role);
-  const plan = await getEducationPlan(role);
+  const userId = await readUserId(req);
+  const plan = await getEducationPlan(role, userId, stringOrNull(req.query.programId));
   if (!plan) {
     res.status(404).json({ error: "Program sessions disabled" });
     return;
@@ -283,7 +369,8 @@ app.get("/api/v1/resources/:id", async (req, res) => {
 
 app.post("/api/v1/resources/:id/complete", async (req, res) => {
   const role = readRole(req.body.role);
-  const profile = await findProfile(role);
+  const userId = await readUserId(req);
+  const profile = await findProfile(role, userId);
   if (!profile) {
     res.status(404).json({ error: "Profile not found" });
     return;
@@ -303,9 +390,10 @@ app.post("/api/v1/resources/:id/complete", async (req, res) => {
 
 app.get("/api/v1/dis/dashboard", async (req, res) => {
   const role = readRole(req.query.role);
+  const userId = await readUserId(req);
   const [reminders, plan, recommendations] = await Promise.all([
-    listReminders(role),
-    getEducationPlan(role),
+    listReminders(role, userId),
+    getEducationPlan(role, userId, stringOrNull(req.query.programId)),
     prisma.recommendation.count({ where: { role } })
   ]);
 
@@ -355,33 +443,42 @@ async function createSession(userId: string) {
   return { accessToken, refreshToken, accessTokenExpiresAt, refreshTokenExpiresAt, tokenType: "Bearer" };
 }
 
-async function findProfile(role: Role) {
+async function readUserId(req: express.Request) {
+  const accessToken = readBearer(req.headers.authorization);
+  if (!accessToken) return null;
+  const session = await prisma.authSession.findUnique({ where: { accessToken } });
+  if (!session || session.revokedAt || session.accessTokenExpiresAt < new Date()) return null;
+  return session.userId;
+}
+
+async function findProfile(role: Role, userId?: string | null) {
   return prisma.profile.findFirst({
-    where: { role },
+    where: { role, ...(userId ? { userId } : {}) },
     include: { user: true },
-    orderBy: [{ sourceTag: "desc" }, { createdAt: "asc" }]
+    orderBy: { createdAt: "asc" }
   });
 }
 
-async function findUserManagement(role: Role) {
+async function findUserManagement(role: Role, userId?: string | null) {
   return prisma.userManagement.findFirst({
-    where: { role },
-    orderBy: [{ sourceTag: "desc" }, { createdAt: "asc" }]
+    where: { role, ...(userId ? { userId } : {}) },
+    orderBy: { createdAt: "asc" }
   });
 }
 
-async function listReminders(role: Role) {
+async function listReminders(role: Role, userId?: string | null) {
   const reminders = await prisma.reminder.findMany({
-    where: { role, status: "active" },
+    where: { role, status: "active", ...(userId ? { userId } : {}) },
     orderBy: { startsAt: "asc" }
   });
   return reminders.map(toReminder);
 }
 
-async function getEducationPlan(role: Role) {
+async function getEducationPlan(role: Role, userId?: string | null, programId?: string | null) {
   if (!isFeatureEnabled("programSessions", role)) return null;
+  const scopedProfile = userId ? await findProfile(role, userId) : null;
   const program = await prisma.program.findFirst({
-    where: { role },
+    where: { role, ...(programId ? { id: programId } : {}) },
     include: {
       milestones: {
         orderBy: { sequence: "asc" },
@@ -394,8 +491,10 @@ async function getEducationPlan(role: Role) {
       progress: true
     }
   });
-  if (!program) return null;
-  const progress = program.progress[0];
+  if (!program) return fallbackEducationPlan(role, programId);
+  const progress = scopedProfile
+    ? program.progress.find((item) => item.profileId === scopedProfile.id)
+    : null;
   const unlocked = progress?.unlockedMilestoneSequence ?? 1;
   const completed = progress?.completedMilestoneSequence ?? 0;
   return {
@@ -427,26 +526,55 @@ async function getEducationPlan(role: Role) {
 function dashboardCards(role: Role, reminderCount: number, completedMilestones: number, recommendationCount: number) {
   if (role === "tutor") {
     return [
-      { value: "3", label: "Leads", target: "search" },
-      { value: "8.2k", label: "Payouts", target: "payments" },
-      { value: "4.9", label: "Rating", target: "ratings" },
+      { value: "0", label: "Students", target: "roleHub" },
+      { value: "0", label: "Leads", target: "search" },
+      { value: "0", label: "Rating", target: "ratings" },
       { value: String(reminderCount), label: "Reminders", target: "events" }
     ];
   }
   if (role === "parent") {
     return [
-      { value: "86%", label: "Progress", target: "sessions" },
-      { value: "199", label: "Payments", target: "payments" },
+      { value: "0", label: "Surveys", target: "roleHub" },
+      { value: "0%", label: "Progress", target: "sessions" },
       { value: String(recommendationCount), label: "Smart picks", target: "home" },
       { value: String(reminderCount), label: "Reminders", target: "events" }
     ];
   }
   return [
-    { value: "12", label: "Sessions", target: "sessions" },
+    { value: "0", label: "Sessions", target: "sessions" },
     { value: String(completedMilestones), label: "Completed", target: "sessions" },
     { value: String(recommendationCount), label: "Smart picks", target: "home" },
     { value: String(reminderCount), label: "Reminders", target: "events" }
   ];
+}
+
+function fallbackEducationPlan(role: Role, programId?: string | null) {
+  if (role !== "student") return null;
+  const program = medicalProgramCatalog.find((item) => item.id === programId) ?? medicalProgramCatalog[0];
+  return {
+    id: program.id,
+    role: program.role,
+    title: program.title,
+    description: program.description,
+    unlockedMilestoneSequence: 1,
+    completedMilestoneSequence: 0,
+    milestones: Array.from({ length: program.milestones }).map((_, index) => {
+      const sequence = index + 1;
+      return {
+        id: `${program.id}-milestone-${sequence}`,
+        sequence,
+        title: `${program.title.split(" ")[0]} milestone ${sequence}`,
+        locked: sequence > 1,
+        resources: ["video", "article", "flashcard", "quiz"] as ResourceType[],
+        activities: [
+          { id: `${program.id}-m${sequence}-video`, resourceId: `${program.id}-video`, sequence: 1, type: "video", title: "Watch topic video", description: "Concept lesson with examples", status: sequence === 1 ? "in_progress" : "pending" },
+          { id: `${program.id}-m${sequence}-article`, resourceId: `${program.id}-article`, sequence: 2, type: "article", title: "Read topic notes", description: "NCERT-aligned notes and summary", status: "pending" },
+          { id: `${program.id}-m${sequence}-flashcard`, resourceId: `${program.id}-flashcard`, sequence: 3, type: "flashcard", title: "Practice flashcards", description: "Rapid recall cards", status: "pending" },
+          { id: `${program.id}-m${sequence}-quiz`, resourceId: `${program.id}-quiz`, sequence: 4, type: "quiz", title: "Complete quiz", description: "Exam-style practice", status: "pending" }
+        ]
+      };
+    })
+  };
 }
 
 function toPersona(profile: Awaited<ReturnType<typeof findProfile>>) {
@@ -529,6 +657,19 @@ function parseDate(input: unknown) {
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 }
 
+function dateOrNull(input: unknown) {
+  const value = String(input ?? "").trim();
+  if (!value) return null;
+  const dateOnly = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (dateOnly) {
+    const [, day, month, year] = dateOnly;
+    const parsed = new Date(`${year}-${month}-${day}T00:00:00.000Z`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function stringOrNull(input: unknown) {
   const value = String(input ?? "").trim();
   return value ? value : null;
@@ -537,6 +678,11 @@ function stringOrNull(input: unknown) {
 function readBearer(header: unknown) {
   const value = String(header ?? "");
   return value.startsWith("Bearer ") ? value.slice(7) : "";
+}
+
+function isAdminRequest(req: express.Request) {
+  const adminToken = process.env.ADMIN_API_TOKEN;
+  return Boolean(adminToken && req.header("x-admin-token") === adminToken);
 }
 
 function addMinutes(minutes: number) {

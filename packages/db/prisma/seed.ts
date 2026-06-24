@@ -187,69 +187,84 @@ async function main() {
     ]
   });
 
-  const program = await prisma.program.create({
-    data: {
-      role: Role.student,
-      title: "12 month NEET program",
-      description: "Milestones unlock after the previous milestone is completed",
-      sourceTag,
-      milestones: {
-        create: Array.from({ length: 12 }).map((_, index) => ({
-          sequence: index + 1,
-          title: `Month ${index + 1}: NEET milestone`,
-          sourceTag
-        }))
-      }
-    }
-  });
+  const medicalPrograms = [
+    ["12 month NEET full course", "Full syllabus plan with monthly Biology, Chemistry, and Physics milestones", 12],
+    ["NEET 90 day crash course", "High-intensity revision plan for high-yield chapters and mock practice", 6],
+    ["NEET Biology masterclass", "Botany and Zoology focused program with NCERT recall drills", 8],
+    ["NEET Chemistry revision sprint", "Physical, Organic, and Inorganic Chemistry revision with quizzes", 6],
+    ["NEET Physics problem solving", "Mechanics, electrodynamics, optics, and modern physics practice", 8],
+    ["AIIMS nursing entrance prep", "Medical aptitude, biology basics, and exam readiness milestones", 6],
+    ["Class 11 medical foundation", "Early foundation for future NEET aspirants", 10],
+    ["Class 12 board plus NEET bridge", "Board exam alignment with NEET-style topic practice", 8]
+  ] as const;
 
-  const milestones = await prisma.programMilestone.findMany({
-    where: { programId: program.id },
-    orderBy: { sequence: "asc" }
-  });
-
-  for (const milestone of milestones) {
-    await prisma.milestoneActivity.createMany({
-      data: [
-        {
-          milestoneId: milestone.id,
-          resourceId: algebraVideo.id,
-          sequence: 1,
-          type: ResourceType.video,
-          title: "Watch topic video",
-          description: algebraVideo.description,
-          status: milestone.sequence === 1 ? ActivityStatus.in_progress : ActivityStatus.pending,
-          sourceTag
-        },
-        {
-          milestoneId: milestone.id,
-          resourceId: plannerArticle.id,
-          sequence: 2,
-          type: ResourceType.article,
-          title: "Read topic notes",
-          description: plannerArticle.description,
-          sourceTag
-        },
-        {
-          milestoneId: milestone.id,
-          resourceId: flashDeck.id,
-          sequence: 3,
-          type: ResourceType.flashcard,
-          title: "Practice flashcards",
-          description: flashDeck.description,
-          sourceTag
-        },
-        {
-          milestoneId: milestone.id,
-          resourceId: quizResource.id,
-          sequence: 4,
-          type: ResourceType.quiz,
-          title: "Complete quiz",
-          description: quizResource.description,
-          sourceTag
+  const createdPrograms = [];
+  for (const [title, description, count] of medicalPrograms) {
+    const program = await prisma.program.create({
+      data: {
+        role: Role.student,
+        title,
+        description,
+        sourceTag,
+        milestones: {
+          create: Array.from({ length: count }).map((_, index) => ({
+            sequence: index + 1,
+            title: `${title.split(" ")[0]} milestone ${index + 1}`,
+            sourceTag
+          }))
         }
-      ]
+      }
     });
+    createdPrograms.push(program);
+
+    const milestones = await prisma.programMilestone.findMany({
+      where: { programId: program.id },
+      orderBy: { sequence: "asc" }
+    });
+
+    for (const milestone of milestones) {
+      await prisma.milestoneActivity.createMany({
+        data: [
+          {
+            milestoneId: milestone.id,
+            resourceId: algebraVideo.id,
+            sequence: 1,
+            type: ResourceType.video,
+            title: "Watch topic video",
+            description: algebraVideo.description,
+            status: milestone.sequence === 1 ? ActivityStatus.in_progress : ActivityStatus.pending,
+            sourceTag
+          },
+          {
+            milestoneId: milestone.id,
+            resourceId: plannerArticle.id,
+            sequence: 2,
+            type: ResourceType.article,
+            title: "Read topic notes",
+            description: plannerArticle.description,
+            sourceTag
+          },
+          {
+            milestoneId: milestone.id,
+            resourceId: flashDeck.id,
+            sequence: 3,
+            type: ResourceType.flashcard,
+            title: "Practice flashcards",
+            description: flashDeck.description,
+            sourceTag
+          },
+          {
+            milestoneId: milestone.id,
+            resourceId: quizResource.id,
+            sequence: 4,
+            type: ResourceType.quiz,
+            title: "Complete quiz",
+            description: quizResource.description,
+            sourceTag
+          }
+        ]
+      });
+    }
   }
 
   const studentProfile = user.profiles.find((profile) => profile.role === Role.student);
@@ -257,7 +272,7 @@ async function main() {
     await prisma.programProgress.create({
       data: {
         profileId: studentProfile.id,
-        programId: program.id,
+        programId: createdPrograms[0].id,
         unlockedMilestoneSequence: 1,
         completedMilestoneSequence: 0,
         sourceTag

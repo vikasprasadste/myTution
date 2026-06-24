@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { Persona, ProgramMilestone, Recommendation, Reminder, Role } from "@mytution/shared";
+import type { Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role } from "@mytution/shared";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -29,6 +29,7 @@ type AppScreen =
   | "search"
   | "sessions"
   | "payments"
+  | "roleHub"
   | "chat"
   | "account"
   | "events"
@@ -43,6 +44,15 @@ const icon = require("../assets/myTution_icon.png");
 type StreamKey = "junior" | "senior" | "ug" | "pg";
 type AuthSession = { accessToken: string; refreshToken: string; tokenType: string };
 type DashboardCard = { value: string; label: string; target: AppScreen };
+type SignInMode = "fresh" | "returning";
+type ProfileDraft = {
+  firstName: string;
+  lastName: string;
+  dob: string;
+  city: string;
+  communicationAddress: string;
+  alternatePhone: string;
+};
 
 const streamOptions: Array<{ label: string; value: StreamKey }> = [
   { label: "Junior", value: "junior" },
@@ -73,10 +83,11 @@ const flashcards = [
 
 export default function Index() {
   const [role, setRole] = useState<Role>("student");
-  const [screen, setScreen] = useState<AppScreen>("role");
+  const [screen, setScreen] = useState<AppScreen>("signin");
+  const [signInMode, setSignInMode] = useState<SignInMode>("fresh");
   const [valueIndex, setValueIndex] = useState(0);
   const [consent, setConsent] = useState(false);
-  const [phoneNumber, setPhoneNumber] = useState(personas.student.phone.replace("+91", ""));
+  const [phoneNumber, setPhoneNumber] = useState("");
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [otpSeconds, setOtpSeconds] = useState(60);
   const [mpin, setMpin] = useState("");
@@ -86,12 +97,23 @@ export default function Index() {
   const [securityReturn, setSecurityReturn] = useState<"otp" | "account">("otp");
   const [stream, setStream] = useState<StreamKey>("senior");
   const [specialization, setSpecialization] = useState("CBSE Class 10 Mathematics");
+  const [profileDraft, setProfileDraft] = useState<ProfileDraft>({
+    firstName: "",
+    lastName: "",
+    dob: "",
+    city: "",
+    communicationAddress: "",
+    alternatePhone: ""
+  });
   const [apiNotice, setApiNotice] = useState("");
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [apiPersona, setApiPersona] = useState<Persona | null>(null);
   const [apiRecommendations, setApiRecommendations] = useState<Recommendation[] | null>(null);
   const [dashboardCards, setDashboardCards] = useState<DashboardCard[] | null>(null);
   const [apiMilestones, setApiMilestones] = useState<ProgramMilestone[] | null>(null);
+  const [programs, setPrograms] = useState<ProgramSummary[]>([]);
+  const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [reminderTitle, setReminderTitle] = useState("Math revision reminder");
@@ -104,7 +126,21 @@ export default function Index() {
   const [flashAnswer, setFlashAnswer] = useState(false);
   const [completedMilestone, setCompletedMilestone] = useState(0);
   const theme = useRoleTheme(role);
-  const persona = apiPersona?.role === role ? apiPersona : personas[role];
+  const phoneDigits = phoneNumber.replace(/\D/g, "");
+  const phoneForApi = `+91${phoneDigits.slice(-10)}`;
+  const phoneComplete = phoneDigits.length === 10;
+  const otpComplete = otp.every((digit) => /^\d$/.test(digit));
+  const otpValue = otp.join("");
+  const mpinValid = /^\d{4,6}$/.test(mpin) && mpin === confirmMpin;
+  const emptyPersona = useMemo<Persona>(() => ({
+    role,
+    firstName: "",
+    lastName: "",
+    initials: role.charAt(0).toUpperCase(),
+    phone: phoneForApi,
+    profileLabel: `${capitalize(role)} • myTution`
+  }), [phoneForApi, role]);
+  const persona = (authSession || screen === "signin") && apiPersona?.role === role ? apiPersona : emptyPersona;
 
   const roleRecommendations = useMemo(
     () => (apiRecommendations ?? recommendations.filter((item) => item.role === role)).filter((item) => !completedRecommendations.includes(item.id)),
@@ -112,11 +148,6 @@ export default function Index() {
   );
 
   const roleReminders = reminders.filter((item) => item.role === role && item.status === "active");
-  const otpComplete = otp.every((digit) => /^\d$/.test(digit));
-  const otpValue = otp.join("");
-  const phoneForApi = `+91${phoneNumber.replace(/\D/g, "").slice(-10)}`;
-  const phoneComplete = phoneNumber.replace(/\D/g, "").length === 10;
-  const mpinValid = /^\d{4,6}$/.test(mpin) && mpin === confirmMpin;
 
   useEffect(() => {
     if (screen !== "otp") return undefined;
@@ -136,18 +167,25 @@ export default function Index() {
     let ignore = false;
     async function loadRoleData() {
       try {
-        const [bootstrap, recs, eventData, dashboard, plan] = await Promise.all([
-          apiGet<{ persona: Persona }>(`/api/v1/bootstrap?role=${role}`),
+        const token = authSession?.accessToken;
+        const [bootstrap, recs, eventData, dashboard, programList] = await Promise.all([
+          apiGet<{ persona: Persona }>(`/api/v1/bootstrap?role=${role}`, token),
           apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`),
-          apiGet<{ data: Reminder[] }>(`/api/v1/events-reminders?role=${role}`),
-          apiGet<{ data: { cards: DashboardCard[] } }>(`/api/v1/dis/dashboard?role=${role}`),
-          apiGet<{ data: { milestones: ProgramMilestone[]; completedMilestoneSequence: number } }>(`/api/v1/education-plan/current?role=${role}`)
+          token ? apiGet<{ data: Reminder[] }>(`/api/v1/events-reminders?role=${role}`, token) : Promise.resolve({ data: [] }),
+          token ? apiGet<{ data: { cards: DashboardCard[] } }>(`/api/v1/dis/dashboard?role=${role}`, token) : Promise.resolve({ data: { cards: [] } }),
+          apiGet<{ data: ProgramSummary[] }>(`/api/v1/education-plan/programs?role=${role}`)
         ]);
+        const programId = selectedProgramId ?? programList.data[0]?.id ?? null;
+        const plan = programId
+          ? await apiGet<{ data: { milestones: ProgramMilestone[]; completedMilestoneSequence: number } }>(`/api/v1/education-plan/current?role=${role}&programId=${programId}`, token)
+          : { data: { milestones: [], completedMilestoneSequence: 0 } };
         if (ignore) return;
-        setApiPersona(bootstrap.persona);
+        setApiPersona(token ? bootstrap.persona : null);
         setApiRecommendations(recs.data);
         setReminders(eventData.data);
         setDashboardCards(dashboard.data.cards);
+        setPrograms(programList.data);
+        setSelectedProgramId(programId);
         setApiMilestones(plan.data.milestones);
         setCompletedMilestone(plan.data.completedMilestoneSequence);
         setApiNotice("");
@@ -163,7 +201,7 @@ export default function Index() {
     return () => {
       ignore = true;
     };
-  }, [role]);
+  }, [role, authSession?.accessToken, selectedProgramId]);
 
   async function pickAvatar() {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -176,7 +214,8 @@ export default function Index() {
 
   function restartPrototype() {
     setRole("student");
-    setPhoneNumber(personas.student.phone.replace("+91", ""));
+    setPhoneNumber("");
+    setProfileDraft({ firstName: "", lastName: "", dob: "", city: "", communicationAddress: "", alternatePhone: "" });
     setValueIndex(0);
     setConsent(false);
     setOtp(["", "", "", "", "", ""]);
@@ -192,9 +231,12 @@ export default function Index() {
     setApiRecommendations(null);
     setDashboardCards(null);
     setApiMilestones(null);
+    setPrograms([]);
+    setSelectedProgramId(null);
     setAuthSession(null);
     setApiNotice("");
-    setScreen("role");
+    setSignInMode("fresh");
+    setScreen("signin");
   }
 
   function updateOtp(value: string) {
@@ -203,40 +245,56 @@ export default function Index() {
   }
 
   async function sendOtp() {
+    setLoadingAction("sendOtp");
     try {
       await apiPost("/api/v1/auth/register/start", { phone: phoneForApi, role });
       setApiNotice("");
       setScreen("otp");
     } catch {
       setApiNotice("Something went wrong");
+    } finally {
+      setLoadingAction(null);
     }
   }
 
   async function completeRegistration() {
+    setLoadingAction("completeRegistration");
     try {
       const response = await apiPost<{ data: AuthSession }>("/api/v1/auth/register/verify", {
         phone: phoneForApi,
         otp: otpValue,
         role,
         profile: {
-          firstName: persona.firstName,
-          lastName: persona.lastName,
-          city: "Delhi",
-          communicationAddress: "South Delhi, near Green Park",
-          alternatePhone: "9999999999",
+          firstName: profileDraft.firstName.trim(),
+          lastName: profileDraft.lastName.trim(),
+          dob: profileDraft.dob.trim(),
+          city: profileDraft.city.trim(),
+          communicationAddress: profileDraft.communicationAddress.trim(),
+          alternatePhone: profileDraft.alternatePhone.trim(),
           stream,
           specialization
         }
       });
       setAuthSession(response.data);
+      setApiPersona({
+        role,
+        firstName: profileDraft.firstName.trim(),
+        lastName: profileDraft.lastName.trim(),
+        initials: `${profileDraft.firstName.charAt(0)}${profileDraft.lastName.charAt(0)}`.toUpperCase() || role.charAt(0).toUpperCase(),
+        phone: phoneForApi,
+        profileLabel: role === "parent" ? "Parent • myTution" : `${capitalize(role)} • ${stream} • ${specialization}`
+      });
       setApiNotice("");
       setScreen("home");
     } catch {
       setApiNotice("Something went wrong");
+    } finally {
+      setLoadingAction(null);
     }
   }
 
   async function createReminder() {
+    setLoadingAction("createReminder");
     const optimistic: Reminder = {
       id: `rem_${Date.now()}`,
       role,
@@ -250,10 +308,12 @@ export default function Index() {
         role,
         title: optimistic.title,
         startsAt: optimistic.startsAt
-      });
+      }, authSession?.accessToken);
       setReminders((items) => items.map((item) => item.id === optimistic.id ? response.data : item));
     } catch {
       setApiNotice("Reminder saved locally. API write failed.");
+    } finally {
+      setLoadingAction(null);
     }
   }
 
@@ -268,7 +328,7 @@ export default function Index() {
   async function deleteReminder(id: string) {
     setReminders((items) => items.map((item) => item.id === id ? { ...item, status: "cancelled" } : item));
     try {
-      await apiDelete(`/api/v1/events-reminders/${id}`);
+      await apiDelete(`/api/v1/events-reminders/${id}`, authSession?.accessToken);
     } catch {
       setApiNotice("Reminder deleted locally. API write failed.");
     }
@@ -279,11 +339,13 @@ export default function Index() {
     setScreen(resource.type === "flashcard" ? "flashIntro" : "resource");
   }
 
-  function markComplete() {
+  async function markComplete() {
+    setLoadingAction("markComplete");
     if (selectedResource) {
       setCompletedRecommendations((items) => items.includes(selectedResource.id) ? items : [...items, selectedResource.id]);
-      apiPost(`/api/v1/resources/${selectedResource.id}/complete`, { role }).catch(() => undefined);
+      await apiPost(`/api/v1/resources/${selectedResource.id}/complete`, { role }, authSession?.accessToken).catch(() => undefined);
     }
+    setLoadingAction(null);
     setSelectedResource(null);
     setScreen("home");
   }
@@ -292,15 +354,12 @@ export default function Index() {
     if (screen === "role") {
       return (
         <>
-          <Hero>
-            <Image source={splash} style={styles.splash} resizeMode="contain" />
-            <Title>Find the right tutor, class, and schedule.</Title>
-            <Muted>Start by choosing how you want to use myTution.</Muted>
-          </Hero>
           {(["student", "tutor", "parent"] as Role[]).map((item) => (
             <Card key={item} role={role} selected={role === item} onPress={() => {
               setRole(item);
-              setPhoneNumber(personas[item].phone.replace("+91", ""));
+              setPhoneNumber("");
+              setProfileDraft({ firstName: "", lastName: "", dob: "", city: "", communicationAddress: "", alternatePhone: "" });
+              setSelectedProgramId(null);
               setConsent(false);
             }}>
               <Avatar role={item} label={item[0].toUpperCase()} />
@@ -352,7 +411,7 @@ export default function Index() {
             maxLength={10}
           />
           {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
-          <Button disabled={!consent || !phoneComplete} role={role} label="Send OTP" onPress={sendOtp} />
+          <Button disabled={!consent || !phoneComplete} loading={loadingAction === "sendOtp"} role={role} label="Send OTP" onPress={sendOtp} />
         </>
       );
     }
@@ -400,6 +459,8 @@ export default function Index() {
         <ProfileForm
           role={role}
           persona={persona}
+          draft={profileDraft}
+          setDraft={setProfileDraft}
           avatarUri={avatarUri}
           pickAvatar={pickAvatar}
           stream={stream}
@@ -411,6 +472,8 @@ export default function Index() {
           setSpecialization={setSpecialization}
           title="Complete your profile"
           cta="Finish registration"
+          loading={loadingAction === "completeRegistration"}
+          disabled={!profileDraft.firstName.trim() || !profileDraft.lastName.trim()}
           onSubmit={completeRegistration}
         />
       );
@@ -421,6 +484,8 @@ export default function Index() {
         <ProfileForm
           role={role}
           persona={persona}
+          draft={profileDraft}
+          setDraft={setProfileDraft}
           avatarUri={avatarUri}
           pickAvatar={pickAvatar}
           stream={stream}
@@ -433,21 +498,35 @@ export default function Index() {
           title="Edit profile"
           cta="Save profile"
           back={() => setScreen("account")}
+          loading={loadingAction === "saveProfile"}
+          disabled={!profileDraft.firstName.trim() || !profileDraft.lastName.trim()}
           onSubmit={async () => {
+            setLoadingAction("saveProfile");
             try {
               await apiPut("/api/v1/usermanagement/profile", {
                 role,
-                firstName: persona.firstName,
-                lastName: persona.lastName,
-                city: "Delhi",
-                communicationAddress: "South Delhi, near Green Park",
-                alternatePhone: "9999999999",
+                firstName: profileDraft.firstName.trim(),
+                lastName: profileDraft.lastName.trim(),
+                dob: profileDraft.dob.trim(),
+                city: profileDraft.city.trim(),
+                communicationAddress: profileDraft.communicationAddress.trim(),
+                alternatePhone: profileDraft.alternatePhone.trim(),
                 stream,
                 specialization
+              }, authSession?.accessToken);
+              setApiPersona({
+                role,
+                firstName: profileDraft.firstName.trim(),
+                lastName: profileDraft.lastName.trim(),
+                initials: `${profileDraft.firstName.charAt(0)}${profileDraft.lastName.charAt(0)}`.toUpperCase() || role.charAt(0).toUpperCase(),
+                phone: phoneForApi,
+                profileLabel: role === "parent" ? "Parent • myTution" : `${capitalize(role)} • ${stream} • ${specialization}`
               });
               setApiNotice("");
             } catch {
               setApiNotice("Profile saved locally. API write failed.");
+            } finally {
+              setLoadingAction(null);
             }
             setScreen("account");
           }}
@@ -456,7 +535,7 @@ export default function Index() {
     }
 
     if (screen === "signin") {
-      return <SignInScreen role={role} persona={persona} avatarUri={avatarUri} restart={restartPrototype} signIn={() => setScreen("home")} />;
+      return <SignInScreen role={role} mode={signInMode} persona={persona} avatarUri={avatarUri} restart={restartPrototype} signIn={() => setScreen("home")} register={() => setScreen("role")} />;
     }
 
     if (screen === "home") {
@@ -504,6 +583,7 @@ export default function Index() {
               setDate={setReminderDate}
               setTime={setReminderTime}
               onCreate={createReminder}
+              loading={loadingAction === "createReminder"}
             />
           ) : (
             <>
@@ -516,14 +596,12 @@ export default function Index() {
                   onDelete={() => deleteReminder(item.id)}
                 />
               ))}
-              <Pressable style={styles.viewAllCard} onPress={() => setScreen("events")}>
+      <Pressable style={({ pressed }) => [styles.viewAllCard, pressed && styles.pressed]} onPress={() => setScreen("events")}>
                 <Text style={[styles.viewAllText, { color: theme.text }]}>View all reminders</Text>
               </Pressable>
             </>
           )}
 
-          <SectionTitle>Today</SectionTitle>
-          <TodayCard role={role} onPress={() => setScreen("sessions")} />
           <SectionTitle>Dashboard</SectionTitle>
           <DashboardGrid role={role} cards={dashboardCards} setScreen={setScreen} />
         </>
@@ -531,20 +609,21 @@ export default function Index() {
     }
 
     if (screen === "search") return <SimpleScreen title="Tutor discovery" role={role} back={() => setScreen("home")} />;
-    if (screen === "payments") return <Payments role={role} back={() => setScreen("home")} />;
+    if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
+    if (screen === "roleHub") return <RoleHub role={role} back={() => setScreen("home")} />;
     if (screen === "chat") return <Chat role={role} back={() => setScreen("home")} />;
-    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setScreen("signin"); }} setScreen={setScreen} openSecurity={() => { setSecurityReturn("account"); setScreen("mpin"); }} />;
+    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} openSecurity={() => { setSecurityReturn("account"); setScreen("mpin"); }} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} />;
-    if (screen === "sessions") return <Sessions role={role} reminders={roleReminders} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} setCompletedMilestone={setCompletedMilestone} openResource={(item) => { setSelectedResource(item); setScreen("resource"); }} />;
-    if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={selectedResource} complete={markComplete} back={() => setScreen("home")} />;
+    if (screen === "sessions") return <Sessions role={role} reminders={roleReminders} programs={programs} selectedProgramId={selectedProgramId} setSelectedProgramId={setSelectedProgramId} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} setCompletedMilestone={setCompletedMilestone} openResource={(item) => { setSelectedResource(item); setScreen("resource"); }} />;
+    if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen("home")} />;
     if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen("home")} />;
     if (screen === "flashPlay") return <FlashPlay role={role} index={flashIndex} answer={flashAnswer} setAnswer={setFlashAnswer} next={() => { setFlashIndex((flashIndex + 1) % flashcards.length); setFlashAnswer(false); }} learnMore={() => { setSelectedResource({ id: "article_quadratic", role, type: "article", title: "Quadratic equations deep dive", description: "Worked examples, formula use, and exam-style practice.", thumbnailLabel: "Article" }); setScreen("resource"); }} complete={markComplete} />;
 
     return null;
   }
 
-  const showNav = ["home", "sessions", "payments", "chat", "account"].includes(screen);
+  const showNav = ["home", "sessions", "roleHub", "chat", "account"].includes(screen);
 
   return (
     <LinearGradient colors={screenGradient(role)} style={styles.shell}>
@@ -584,23 +663,41 @@ function Header({ role, personaName }: { role: Role; personaName: string }) {
 
 function SignInScreen({
   role,
+  mode,
   persona,
   avatarUri,
   restart,
-  signIn
+  signIn,
+  register
 }: {
   role: Role;
+  mode: SignInMode;
   persona: typeof personas[Role];
   avatarUri: string | null;
   restart: () => void;
   signIn: () => void;
+  register: () => void;
 }) {
+  if (mode === "fresh") {
+    return (
+      <>
+        <View style={styles.freshSigninTop}>
+          <Image source={icon} style={styles.freshSigninLogo} resizeMode="contain" />
+          <Text style={styles.freshSigninBrand}>myTution</Text>
+        </View>
+        <Button role={role} label="Sign in" onPress={signIn} />
+        <Pressable style={({ pressed }) => [styles.registerLink, pressed && styles.pressed]} onPress={register}>
+          <Text style={styles.registerLinkText}>Don't have an account? Register Now!!</Text>
+        </Pressable>
+      </>
+    );
+  }
+
   return (
     <>
       <View style={styles.brandRow}>
         <Image source={icon} style={styles.brandIcon} resizeMode="contain" />
         <Text style={styles.brandTitle}>myTution</Text>
-        <Pressable style={styles.headerIconButton} onPress={restart}><Text style={styles.headerIconButtonText}>↻</Text></Pressable>
       </View>
       <View style={styles.signinCard}>
         <Avatar role={role} label={persona.initials} uri={avatarUri} />
@@ -696,6 +793,8 @@ function SecureField({
 function ProfileForm({
   role,
   persona,
+  draft,
+  setDraft,
   avatarUri,
   pickAvatar,
   stream,
@@ -705,10 +804,14 @@ function ProfileForm({
   title,
   cta,
   back,
-  onSubmit
+  onSubmit,
+  loading,
+  disabled
 }: {
   role: Role;
   persona: typeof personas[Role];
+  draft: ProfileDraft;
+  setDraft: (value: ProfileDraft) => void;
   avatarUri: string | null;
   pickAvatar: () => void;
   stream: StreamKey;
@@ -719,36 +822,40 @@ function ProfileForm({
   cta: string;
   back?: () => void;
   onSubmit: () => void;
+  loading?: boolean;
+  disabled?: boolean;
 }) {
   const theme = useRoleTheme(role);
   const streamLabel = streamOptions.find((item) => item.value === stream)?.label ?? "Senior";
+  const initials = `${draft.firstName.charAt(0)}${draft.lastName.charAt(0)}`.toUpperCase() || persona.initials;
+  const updateDraft = (patch: Partial<ProfileDraft>) => setDraft({ ...draft, ...patch });
   return (
     <>
       <TopBar title="Profile" left={back ? "‹" : undefined} onLeft={back} />
       <Title>{title}</Title>
       <View style={styles.profileProgressTrack}><View style={[styles.profileProgressFill, { backgroundColor: theme.text, width: "76%" }]} /></View>
       <Pressable style={styles.avatarEditor} onPress={pickAvatar}>
-        <Avatar role={role} label={persona.initials} uri={avatarUri} large />
+        <Avatar role={role} label={initials} uri={avatarUri} large />
         <Text style={[styles.pencil, { backgroundColor: theme.accentStrong }]}>✎</Text>
       </Pressable>
       <View style={styles.twoColumn}>
         <View style={styles.fieldColumn}>
           <FieldLabel>First name</FieldLabel>
-          <Input value={persona.firstName} onChangeText={() => undefined} placeholder="First name" />
+          <Input value={draft.firstName} onChangeText={(value) => updateDraft({ firstName: value })} placeholder="First name" />
         </View>
         <View style={styles.fieldColumn}>
           <FieldLabel>Last name</FieldLabel>
-          <Input value={persona.lastName} onChangeText={() => undefined} placeholder="Last name" />
+          <Input value={draft.lastName} onChangeText={(value) => updateDraft({ lastName: value })} placeholder="Last name" />
         </View>
       </View>
       <FieldLabel>DOB</FieldLabel>
-      <Input value={role === "tutor" ? "14/04/2002" : "24/06/2010"} onChangeText={() => undefined} placeholder="DOB" />
+      <Input value={draft.dob} onChangeText={(value) => updateDraft({ dob: value })} placeholder="DD/MM/YYYY" />
       <FieldLabel>City</FieldLabel>
-      <Input value="Delhi" onChangeText={() => undefined} placeholder="City" />
+      <Input value={draft.city} onChangeText={(value) => updateDraft({ city: value })} placeholder="City" />
       <FieldLabel>Address of communication</FieldLabel>
-      <TextInput multiline value="South Delhi, near Green Park" onChangeText={() => undefined} placeholder="Address of communication" placeholderTextColor="#94A3B8" style={styles.textArea} />
+      <TextInput multiline value={draft.communicationAddress} onChangeText={(value) => updateDraft({ communicationAddress: value })} placeholder="Address of communication" placeholderTextColor="#94A3B8" style={styles.textArea} />
       <FieldLabel>Alternate phone number</FieldLabel>
-      <Input value="9999999999" onChangeText={() => undefined} placeholder="Alternate phone number" keyboardType="phone-pad" />
+      <Input value={draft.alternatePhone} onChangeText={(value) => updateDraft({ alternatePhone: value.replace(/\D/g, "").slice(0, 10) })} placeholder="Alternate phone number" keyboardType="phone-pad" />
       {role !== "parent" && (
         <>
           <FieldLabel>Stream</FieldLabel>
@@ -768,7 +875,7 @@ function ProfileForm({
           />
         </>
       )}
-      <Button role={role} label={cta} onPress={onSubmit} />
+      <Button role={role} label={cta} onPress={onSubmit} loading={loading} disabled={disabled} />
     </>
   );
 }
@@ -796,7 +903,7 @@ function TrackCard({ role, onPress }: { role: Role; onPress: () => void }) {
         <Text style={styles.trackTitle}>{title}</Text>
         <Text style={styles.trackCopy}>{copy}</Text>
       </View>
-      <Pressable onPress={onPress} style={styles.trackButton}>
+      <Pressable onPress={onPress} style={({ pressed }) => [styles.trackButton, pressed && styles.pressed]}>
         <LinearGradient colors={buttonGradient(role)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.trackButtonGradient}>
           <Text style={[styles.trackButtonText, { color: role === "tutor" ? "#201A00" : "#FFFFFF" }]}>{role === "student" ? "Search" : "Open"}</Text>
         </LinearGradient>
@@ -864,17 +971,18 @@ function Card({ children, role, onPress, selected }: { children: React.ReactNode
   );
 }
 
-function Button({ role, label, onPress, disabled, variant = "primary" }: { role: Role; label: string; onPress: () => void; disabled?: boolean; variant?: "primary" | "secondary" }) {
+function Button({ role, label, onPress, disabled, loading, variant = "primary" }: { role: Role; label: string; onPress: () => void; disabled?: boolean; loading?: boolean; variant?: "primary" | "secondary" }) {
   const theme = useRoleTheme(role);
   const primary = variant === "primary";
+  const inactive = disabled || loading;
   return (
-    <Pressable disabled={disabled} onPress={onPress} style={[styles.button, !primary && styles.secondaryButton, { borderColor: theme.accent, opacity: disabled ? 0.6 : 1 }]}>
+    <Pressable disabled={inactive} onPress={onPress} style={({ pressed }) => [styles.button, pressed && !inactive && styles.pressed, !primary && styles.secondaryButton, { borderColor: theme.accent, opacity: inactive ? 0.72 : 1 }]}>
       {primary ? (
-        <LinearGradient colors={buttonGradient(role, disabled)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.buttonGradient}>
-          <Text style={[styles.buttonText, { color: disabled ? "#8B95A1" : role === "tutor" ? "#201A00" : "#FFFFFF" }]}>{label}</Text>
+        <LinearGradient colors={buttonGradient(role, inactive)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.buttonGradient}>
+          {loading ? <ActivityIndicator color={role === "tutor" ? "#201A00" : "#FFFFFF"} /> : <Text style={[styles.buttonText, { color: disabled ? "#8B95A1" : role === "tutor" ? "#201A00" : "#FFFFFF" }]}>{label}</Text>}
         </LinearGradient>
       ) : (
-        <Text style={[styles.buttonText, { color: theme.text }]}>{label}</Text>
+        loading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.buttonText, { color: theme.text }]}>{label}</Text>
       )}
     </Pressable>
   );
@@ -911,7 +1019,7 @@ function Muted({ children }: { children: React.ReactNode }) {
 
 function Metric({ role, label, value, onPress }: { role: Role; label: string; value: string; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={styles.metric}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.metric, pressed && styles.pressed]}>
       <Text style={styles.metricValue}>{value}</Text>
       <Muted>{label}</Muted>
     </Pressable>
@@ -921,22 +1029,22 @@ function Metric({ role, label, value, onPress }: { role: Role; label: string; va
 function DashboardGrid({ role, cards, setScreen }: { role: Role; cards: DashboardCard[] | null; setScreen: (screen: AppScreen) => void }) {
   const metrics: Record<Role, Array<{ value: string; label: string; target: AppScreen }>> = {
     student: [
-      { value: "12", label: "Sessions", target: "sessions" },
-      { value: "₹199", label: "Payments", target: "payments" },
-      { value: "4.8", label: "Rating", target: "ratings" },
-      { value: "3", label: "Chat", target: "chat" }
+      { value: "0", label: "Sessions", target: "sessions" },
+      { value: "0", label: "Completed", target: "sessions" },
+      { value: "0", label: "Smart picks", target: "home" },
+      { value: "0", label: "Reminders", target: "events" }
     ],
     tutor: [
-      { value: "3", label: "Leads", target: "search" },
-      { value: "₹8.2k", label: "Payouts", target: "payments" },
-      { value: "4.9", label: "Rating", target: "ratings" },
-      { value: "5", label: "Chats", target: "chat" }
+      { value: "0", label: "Students", target: "roleHub" },
+      { value: "0", label: "Leads", target: "search" },
+      { value: "0", label: "Rating", target: "ratings" },
+      { value: "0", label: "Reminders", target: "events" }
     ],
     parent: [
-      { value: "86%", label: "Progress", target: "sessions" },
-      { value: "₹199", label: "Payments", target: "payments" },
-      { value: "4.8", label: "Tutor rating", target: "ratings" },
-      { value: "3", label: "Messages", target: "chat" }
+      { value: "0", label: "Surveys", target: "roleHub" },
+      { value: "0%", label: "Progress", target: "sessions" },
+      { value: "0", label: "Smart picks", target: "home" },
+      { value: "0", label: "Reminders", target: "events" }
     ]
   };
   const visibleCards = cards?.length ? cards : metrics[role];
@@ -957,7 +1065,8 @@ function ReminderComposer({
   setTitle,
   setDate,
   setTime,
-  onCreate
+  onCreate,
+  loading
 }: {
   role: Role;
   title: string;
@@ -967,6 +1076,7 @@ function ReminderComposer({
   setDate: (value: string) => void;
   setTime: (value: string) => void;
   onCreate: () => void;
+  loading?: boolean;
 }) {
   return (
     <View style={styles.reminderCard}>
@@ -1006,9 +1116,9 @@ function ReminderComposer({
           </View>
         </View>
       </View>
-      <Pressable onPress={onCreate} style={styles.reminderButton}>
+      <Pressable disabled={loading} onPress={onCreate} style={({ pressed }) => [styles.reminderButton, pressed && !loading && styles.pressed, loading && { opacity: 0.72 }]}>
         <LinearGradient colors={buttonGradient(role)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.reminderButtonGradient}>
-          <Text style={[styles.reminderButtonText, { color: role === "tutor" ? "#231F00" : "#FFFFFF" }]}>Create reminder</Text>
+          {loading ? <ActivityIndicator color={role === "tutor" ? "#231F00" : "#FFFFFF"} /> : <Text style={[styles.reminderButtonText, { color: role === "tutor" ? "#231F00" : "#FFFFFF" }]}>Create reminder</Text>}
         </LinearGradient>
       </Pressable>
     </View>
@@ -1042,10 +1152,10 @@ function ReminderSummary({
       </View>
       {!compact && (
         <View style={styles.reminderActionRow}>
-          <Pressable style={styles.reminderActionButton} onPress={onEdit}>
+          <Pressable style={({ pressed }) => [styles.reminderActionButton, pressed && styles.pressed]} onPress={onEdit}>
             <Text style={[styles.reminderActionText, { color: theme.text }]}>Edit</Text>
           </Pressable>
-          <Pressable style={styles.reminderActionButton} onPress={onDelete}>
+          <Pressable style={({ pressed }) => [styles.reminderActionButton, pressed && styles.pressed]} onPress={onDelete}>
             <Text style={[styles.reminderActionText, { color: theme.text }]}>Delete</Text>
           </Pressable>
         </View>
@@ -1066,7 +1176,7 @@ function formatReminderDateTime(value: string) {
   return `${Number(day)} ${monthName} ${year} • ${time.toLowerCase()}`;
 }
 
-function ResourceDetail({ role, resource, complete, back }: { role: Role; resource: Recommendation; complete: () => void; back: () => void }) {
+function ResourceDetail({ role, resource, complete, loading, back }: { role: Role; resource: Recommendation; complete: () => void; loading?: boolean; back: () => void }) {
   const theme = useRoleTheme(role);
   return (
     <>
@@ -1076,7 +1186,7 @@ function ResourceDetail({ role, resource, complete, back }: { role: Role; resour
       </View>
       <Title>{resource.title}</Title>
       <Muted>{resource.description}</Muted>
-      <Button role={role} label="Mark complete" onPress={complete} />
+      <Button role={role} label="Mark complete" onPress={complete} loading={loading} />
     </>
   );
 }
@@ -1114,6 +1224,9 @@ function FlashPlay({ role, index, answer, setAnswer, next, learnMore, complete }
 function Sessions({
   role,
   reminders,
+  programs,
+  selectedProgramId,
+  setSelectedProgramId,
   milestones,
   completedMilestone,
   setCompletedMilestone,
@@ -1121,28 +1234,45 @@ function Sessions({
 }: {
   role: Role;
   reminders: Reminder[];
+  programs: ProgramSummary[];
+  selectedProgramId: string | null;
+  setSelectedProgramId: (value: string | null) => void;
   milestones: ProgramMilestone[];
   completedMilestone: number;
   setCompletedMilestone: (value: number) => void;
   openResource: (item: Recommendation) => void;
 }) {
+  const selectedProgram = programs.find((program) => program.id === selectedProgramId) ?? programs[0];
   return (
     <>
       <Header role={role} personaName="Sessions" />
+      {role === "student" && programs.length > 0 ? (
+        <>
+          <FieldLabel>Program</FieldLabel>
+          <DropdownField
+            value={selectedProgram?.title ?? "Select program"}
+            options={programs.map((program) => program.title)}
+            onSelect={(title) => setSelectedProgramId(programs.find((program) => program.title === title)?.id ?? null)}
+          />
+        </>
+      ) : null}
       <Hero>
-        <CardTitle>{role === "student" ? "12 month NEET program" : role === "tutor" ? "Tutor growth program" : "Parent support program"}</CardTitle>
-        <Muted>Milestones unlock one by one. Each topic includes video, article, flashcard, and quiz.</Muted>
+        <CardTitle>{selectedProgram?.title ?? (role === "student" ? "Medical program" : role === "tutor" ? "Tutor growth program" : "Parent support program")}</CardTitle>
+        <Muted>{selectedProgram?.description ?? "Milestones unlock one by one. Each topic includes video, article, flashcard, and quiz."}</Muted>
       </Hero>
       {milestones.map((milestone) => {
         const locked = milestone.sequence > completedMilestone + 1;
+        const activityText = milestone.activities?.length
+          ? milestone.activities.map((activity) => capitalize(activity.type)).join(" • ")
+          : "Video • Article • Flashcard • Quiz";
         return (
           <Card key={milestone.id} role={role} onPress={() => {
             if (locked) return;
             setCompletedMilestone(Math.max(completedMilestone, milestone.sequence));
-            openResource({ id: milestone.id, role, type: "video", title: milestone.title, description: "Video • Article • Flashcard • Quiz", thumbnailLabel: "Milestone" });
+            openResource({ id: milestone.id, role, type: "video", title: milestone.title, description: activityText, thumbnailLabel: "Milestone" });
           }}>
             <CardTitle>{milestone.title}</CardTitle>
-            <Muted>{locked ? "Locked" : "Video • Article • Flashcard • Quiz"}</Muted>
+            <Muted>{locked ? "Locked" : activityText}</Muted>
           </Card>
         );
       })}
@@ -1157,6 +1287,26 @@ function Sessions({
           onDelete={() => undefined}
         />
       )) : <Muted>No sessions or reminders yet.</Muted>}
+    </>
+  );
+}
+
+function RoleHub({ role, back }: { role: Role; back: () => void }) {
+  const title = role === "tutor" ? "My Students" : role === "student" ? "My Tutors" : "My Surveys";
+  const items = role === "tutor"
+    ? ["No assigned students yet", "New student requests will appear here"]
+    : role === "student"
+      ? ["No tutors added yet", "Booked and shortlisted tutors will appear here"]
+      : ["No surveys yet", "Weekly progress surveys will appear here"];
+  return (
+    <>
+      <TopBar title={title} left="‹" onLeft={back} />
+      {items.map((item) => (
+        <Card key={item} role={role}>
+          <CardTitle>{item}</CardTitle>
+          <Muted>{role === "parent" ? "Survey history is empty for this account." : "Start from discovery or bookings to populate this list."}</Muted>
+        </Card>
+      ))}
     </>
   );
 }
@@ -1221,7 +1371,7 @@ function Account({
   return (
     <>
       <View style={styles.accountHeader}>
-        <Text style={styles.accountTitle}>Profile</Text>
+        <Text style={styles.accountTitle}>My Account</Text>
         <Pressable style={styles.headerIconButton} onPress={() => setScreen("ratings")}><Text style={styles.headerIconButtonText}>⚙</Text></Pressable>
       </View>
       <View style={styles.accountProfileCard}>
@@ -1238,6 +1388,7 @@ function Account({
         <Text style={styles.accountProgressText}>Profile completion 86%</Text>
       </View>
       <Button role={role} variant="secondary" label="Edit profile" onPress={() => setScreen("editProfile")} />
+      <Button role={role} variant="secondary" label="Payments" onPress={() => setScreen("payments")} />
       <Button role={role} variant="secondary" label="Security" onPress={openSecurity} />
       <Button role={role} variant="secondary" label="Sign out" onPress={signOut} />
     </>
@@ -1266,10 +1417,11 @@ function SimpleScreen({ title, role, back }: { title: string; role: Role; back: 
 
 function BottomNav({ role, screen, setScreen }: { role: Role; screen: AppScreen; setScreen: (screen: AppScreen) => void }) {
   const theme = useRoleTheme(role);
+  const hubLabel = role === "tutor" ? "My Students" : role === "student" ? "My Tutors" : "My Surveys";
   const items: Array<[AppScreen, string, string]> = [
     ["home", "Home", "⌂"],
     ["sessions", "Sessions", "▥"],
-    ["payments", "Pay", "▣"],
+    ["roleHub", hubLabel, "▣"],
     ["chat", "Chat", "▤"],
     ["account", "Account", "⌾"]
   ];
@@ -1289,8 +1441,8 @@ function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-async function apiGet<T>(path: string) {
-  return apiRequest<T>(path);
+async function apiGet<T>(path: string, accessToken?: string) {
+  return apiRequest<T>(path, { accessToken });
 }
 
 async function apiPost<T = unknown>(path: string, body: unknown, accessToken?: string) {
@@ -1301,15 +1453,16 @@ async function apiPost<T = unknown>(path: string, body: unknown, accessToken?: s
   });
 }
 
-async function apiPut<T = unknown>(path: string, body: unknown) {
+async function apiPut<T = unknown>(path: string, body: unknown, accessToken?: string) {
   return apiRequest<T>(path, {
     method: "PUT",
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    accessToken
   });
 }
 
-async function apiDelete(path: string) {
-  return apiRequest(path, { method: "DELETE" });
+async function apiDelete(path: string, accessToken?: string) {
+  return apiRequest(path, { method: "DELETE", accessToken });
 }
 
 async function apiRequest<T = unknown>(path: string, options: RequestInit & { accessToken?: string } = {}) {
@@ -1333,6 +1486,7 @@ const styles = StyleSheet.create({
   valueContent: { justifyContent: "space-between" },
   contentWithNav: { paddingBottom: 124 },
   flex: { flex: 1 },
+  pressed: { opacity: 0.82, transform: [{ scale: 0.98 }] },
   header: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   headerIcon: { backgroundColor: "rgba(255,255,255,0.78)", borderRadius: 15, fontSize: 18, fontWeight: "900", height: 39, lineHeight: 39, overflow: "hidden", textAlign: "center", width: 39 },
   topbar: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
@@ -1369,6 +1523,9 @@ const styles = StyleSheet.create({
   linkText: { fontWeight: "800", textDecorationLine: "underline" },
   fieldShell: { position: "relative" },
   eye: { alignItems: "center", backgroundColor: "#F1F5F9", borderRadius: 999, height: 34, justifyContent: "center", position: "absolute", right: 8, top: 8, width: 34 },
+  freshSigninTop: { alignItems: "center", flex: 1, justifyContent: "center", minHeight: 430 },
+  freshSigninLogo: { borderRadius: 28, height: 150, width: 150 },
+  freshSigninBrand: { color: "#202A35", fontSize: 31, fontWeight: "900", marginTop: 18 },
   brandRow: { alignItems: "center", flexDirection: "row", gap: 10, marginBottom: 8 },
   brandIcon: { borderRadius: 12, height: 34, width: 34 },
   brandTitle: { color: "#202A35", flex: 1, fontSize: 20, fontWeight: "900" },
@@ -1378,6 +1535,8 @@ const styles = StyleSheet.create({
   signinKicker: { color: "#536A86", fontSize: 12, fontWeight: "600" },
   signinName: { color: "#202A35", fontSize: 25, fontWeight: "900", lineHeight: 30 },
   signinCopy: { color: "#536A86", flexBasis: "100%", fontSize: 14, fontWeight: "600", lineHeight: 22 },
+  registerLink: { alignItems: "center", justifyContent: "center", minHeight: 28 },
+  registerLinkText: { color: "#0F5560", fontSize: 14, fontWeight: "900", textDecorationLine: "underline" },
   consentCard: { alignItems: "flex-start", backgroundColor: "rgba(255,255,255,0.88)", borderColor: "#D8E4EE", borderRadius: 19, borderWidth: 1, flexDirection: "row", gap: 12, padding: 18, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.06, shadowRadius: 18 },
   consentCheck: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#8A99A8", borderRadius: 3, borderWidth: 1, height: 13, justifyContent: "center", marginTop: 2, width: 13 },
   consentCheckText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900", lineHeight: 12 },

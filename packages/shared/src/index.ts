@@ -49,4 +49,20 @@ export interface ProgramMilestone {
   title: string;
   locked: boolean;
   resources: ResourceType[];
+  activities?: Array<{
+    id: string;
+    resourceId: string;
+    sequence: number;
+    type: ResourceType;
+    title: string;
+    description: string;
+    status: "pending" | "in_progress" | "complete";
+  }>;
+}
+
+export interface ProgramSummary {
+  id: string;
+  role: Role;
+  title: string;
+  description: string;
 }
