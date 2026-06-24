@@ -76,6 +76,7 @@ export default function Index() {
   const [screen, setScreen] = useState<AppScreen>("role");
   const [valueIndex, setValueIndex] = useState(0);
   const [consent, setConsent] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState(personas.student.phone.replace("+91", ""));
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [otpSeconds, setOtpSeconds] = useState(60);
   const [mpin, setMpin] = useState("");
@@ -113,6 +114,8 @@ export default function Index() {
   const roleReminders = reminders.filter((item) => item.role === role && item.status === "active");
   const otpComplete = otp.every((digit) => /^\d$/.test(digit));
   const otpValue = otp.join("");
+  const phoneForApi = `+91${phoneNumber.replace(/\D/g, "").slice(-10)}`;
+  const phoneComplete = phoneNumber.replace(/\D/g, "").length === 10;
   const mpinValid = /^\d{4,6}$/.test(mpin) && mpin === confirmMpin;
 
   useEffect(() => {
@@ -173,6 +176,7 @@ export default function Index() {
 
   function restartPrototype() {
     setRole("student");
+    setPhoneNumber(personas.student.phone.replace("+91", ""));
     setValueIndex(0);
     setConsent(false);
     setOtp(["", "", "", "", "", ""]);
@@ -200,7 +204,7 @@ export default function Index() {
 
   async function sendOtp() {
     try {
-      await apiPost("/api/v1/auth/register/start", { phone: persona.phone, role });
+      await apiPost("/api/v1/auth/register/start", { phone: phoneForApi, role });
       setApiNotice("");
       setScreen("otp");
     } catch {
@@ -211,7 +215,7 @@ export default function Index() {
   async function completeRegistration() {
     try {
       const response = await apiPost<{ data: AuthSession }>("/api/v1/auth/register/verify", {
-        phone: persona.phone,
+        phone: phoneForApi,
         otp: otpValue,
         role,
         profile: {
@@ -294,7 +298,11 @@ export default function Index() {
             <Muted>Start by choosing how you want to use myTution.</Muted>
           </Hero>
           {(["student", "tutor", "parent"] as Role[]).map((item) => (
-            <Card key={item} role={role} selected={role === item} onPress={() => setRole(item)}>
+            <Card key={item} role={role} selected={role === item} onPress={() => {
+              setRole(item);
+              setPhoneNumber(personas[item].phone.replace("+91", ""));
+              setConsent(false);
+            }}>
               <Avatar role={item} label={item[0].toUpperCase()} />
               <View style={styles.flex}>
                 <CardTitle>{capitalize(item)}</CardTitle>
@@ -336,9 +344,15 @@ export default function Index() {
           <Muted>Accept consent before entering your number. This will be stored with the current policy version.</Muted>
           <ConsentCard role={role} checked={consent} onPress={() => setConsent(!consent)} />
           <FieldLabel>Phone number</FieldLabel>
-          <Input editable={consent} value={persona.phone.replace("+91", "")} onChangeText={() => undefined} keyboardType="phone-pad" />
+          <Input
+            editable={consent}
+            value={phoneNumber}
+            onChangeText={(value) => setPhoneNumber(value.replace(/\D/g, "").slice(0, 10))}
+            keyboardType="phone-pad"
+            maxLength={10}
+          />
           {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
-          <Button disabled={!consent} role={role} label="Send OTP" onPress={sendOtp} />
+          <Button disabled={!consent || !phoneComplete} role={role} label="Send OTP" onPress={sendOtp} />
         </>
       );
     }
@@ -348,7 +362,7 @@ export default function Index() {
         <>
           <TopBar title="Verification" left="‹" onLeft={() => setScreen("phone")} />
           <Title>Enter OTP</Title>
-          <Muted>We sent a 6 digit code to {persona.phone}.</Muted>
+          <Muted>We sent a 6 digit code to {phoneForApi}.</Muted>
           <OtpInput value={otpValue} digits={otp} onChange={updateOtp} />
           <Button disabled={!otpComplete} role={role} label="Verify OTP" onPress={() => { setSecurityReturn("otp"); setScreen("mpin"); }} />
           <Text style={[styles.linkText, { color: theme.text }]}>Resend OTP in {otpSeconds}s {otpSeconds === 0 ? "Resend OTP" : ""}</Text>
