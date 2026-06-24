@@ -37,6 +37,7 @@ enum ActivityStatus {
 model User {
   id          String    @id @default(cuid())
   phone       String    @unique
+  passwordHash String?
   status      String    @default("active")
   sourceTag   String    @default("app")
   profiles    Profile[]

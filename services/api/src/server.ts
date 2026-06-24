@@ -56,7 +56,8 @@ app.post("/api/v1/auth/register/start", async (req, res) => {
 app.post("/api/v1/auth/register/verify", async (req, res) => {
   const phone = normalizePhone(req.body.phone);
   const role = readRole(req.body.role);
-  if (!phone || req.body.otp !== mockOtp) {
+  const password = String(req.body.password ?? "");
+  if (!phone || req.body.otp !== mockOtp || !isValidPassword(password)) {
     res.status(400).json({ error: "Something went wrong" });
     return;
   }
@@ -71,6 +72,7 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
   const user = await prisma.user.create({
     data: {
       phone,
+      passwordHash: await hashPassword(password),
       profiles: {
         create: {
           role,
@@ -110,6 +112,28 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
 
   const session = await createSession(user.id);
   res.status(201).json({ data: { userId: user.id, profileId: profile?.id, role, ...session } });
+});
+
+app.post("/api/v1/auth/login", async (req, res) => {
+  const phone = normalizePhone(req.body.phone);
+  const password = String(req.body.password ?? "");
+  const role = readRole(req.body.role);
+  if (!phone || !password) {
+    res.status(400).json({ error: "Something went wrong" });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { phone },
+    include: { profiles: { where: { role }, take: 1 } }
+  });
+  if (!user?.passwordHash || !(await verifyPassword(password, user.passwordHash)) || user.profiles.length === 0) {
+    res.status(401).json({ error: "Something went wrong" });
+    return;
+  }
+
+  const session = await createSession(user.id);
+  res.json({ data: { userId: user.id, profileId: user.profiles[0]?.id, role, ...session } });
 });
 
 app.post("/api/v1/auth/refresh", async (req, res) => {
@@ -678,6 +702,33 @@ function stringOrNull(input: unknown) {
 function readBearer(header: unknown) {
   const value = String(header ?? "");
   return value.startsWith("Bearer ") ? value.slice(7) : "";
+}
+
+function isValidPassword(password: string) {
+  return password.length >= 8;
+}
+
+async function hashPassword(password: string) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const key = await scryptAsync(password, salt);
+  return `scrypt:${salt}:${key.toString("hex")}`;
+}
+
+async function verifyPassword(password: string, storedHash: string) {
+  const [scheme, salt, keyHex] = storedHash.split(":");
+  if (scheme !== "scrypt" || !salt || !keyHex) return false;
+  const expected = Buffer.from(keyHex, "hex");
+  const actual = await scryptAsync(password, salt);
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
+function scryptAsync(password: string, salt: string) {
+  return new Promise<Buffer>((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (error, derivedKey) => {
+      if (error) reject(error);
+      else resolve(derivedKey);
+    });
+  });
 }
 
 function isAdminRequest(req: express.Request) {

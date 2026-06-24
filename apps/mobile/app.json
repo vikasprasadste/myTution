@@ -5,9 +5,9 @@
     "scheme": "mytution",
     "version": "0.1.0",
     "orientation": "portrait",
-    "icon": "./assets/myTution_icon.png",
+    "icon": "./assets/AppIcons/appstore.png",
     "splash": {
-      "image": "./assets/myTution_splash.png",
+      "image": "./assets/splash-screen.png",
       "resizeMode": "contain",
       "backgroundColor": "#FFFFFF"
     },
@@ -19,7 +19,11 @@
       "bundleIdentifier": "com.mytution.app"
     },
     "android": {
-      "package": "com.mytution.app"
+      "package": "com.mytution.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/AppIcons/playstore.png",
+        "backgroundColor": "#FFFFFF"
+      }
     },
     "web": {
       "bundler": "metro"
@@ -32,6 +36,9 @@
         "projectId": "98fe900a-48d0-4fbd-b5ed-d211e4c22960"
       }
     },
-    "owner": "flipour"
+    "owner": "flipour",
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ]
   }
 }

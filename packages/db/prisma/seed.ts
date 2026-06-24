@@ -1,4 +1,5 @@
 import "dotenv/config";
+import crypto from "node:crypto";
 import { ActivityStatus, PrismaClient, ResourceType, Role } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -31,6 +32,7 @@ async function main() {
   const user = await prisma.user.create({
     data: {
       phone: "+919876543210",
+      passwordHash: await hashPassword("Password@123"),
       sourceTag,
       profiles: {
         create: [
@@ -292,6 +294,16 @@ async function main() {
       }
     });
   }
+}
+
+function hashPassword(password: string) {
+  const salt = "mock_salt";
+  return new Promise<string>((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (error, derivedKey) => {
+      if (error) reject(error);
+      else resolve(`scrypt:${salt}:${derivedKey.toString("hex")}`);
+    });
+  });
 }
 
 main()

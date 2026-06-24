@@ -1,5 +1,6 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
 import type { Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role } from "@mytution/shared";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -21,10 +22,12 @@ type AppScreen =
   | "value"
   | "phone"
   | "otp"
+  | "createPassword"
   | "mpin"
   | "profile"
   | "editProfile"
   | "signin"
+  | "signinCredentials"
   | "home"
   | "search"
   | "sessions"
@@ -38,8 +41,8 @@ type AppScreen =
   | "flashPlay"
   | "ratings";
 
-const splash = require("../assets/myTution_splash.png");
-const icon = require("../assets/myTution_icon.png");
+const splash = require("../assets/splash-screen.png");
+const icon = require("../assets/AppIcons/appstore.png");
 
 type StreamKey = "junior" | "senior" | "ug" | "pg";
 type AuthSession = { accessToken: string; refreshToken: string; tokenType: string };
@@ -90,11 +93,14 @@ export default function Index() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [otpSeconds, setOtpSeconds] = useState(60);
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [signinPassword, setSigninPassword] = useState("");
   const [mpin, setMpin] = useState("");
   const [confirmMpin, setConfirmMpin] = useState("");
   const [showMpin, setShowMpin] = useState(false);
   const [biometricsEnabled, setBiometricsEnabled] = useState(true);
-  const [securityReturn, setSecurityReturn] = useState<"otp" | "account">("otp");
+  const [securityReturn, setSecurityReturn] = useState<"registration" | "signin" | "account">("registration");
   const [stream, setStream] = useState<StreamKey>("senior");
   const [specialization, setSpecialization] = useState("CBSE Class 10 Mathematics");
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>({
@@ -119,6 +125,7 @@ export default function Index() {
   const [reminderTitle, setReminderTitle] = useState("Math revision reminder");
   const [reminderDate, setReminderDate] = useState("24/06/2026");
   const [reminderTime, setReminderTime] = useState("06:30 PM");
+  const [picker, setPicker] = useState<null | { target: "dob" | "reminderDate" | "reminderTime"; mode: "date" | "time"; value: Date }>(null);
   const [recommendationsReady, setRecommendationsReady] = useState(false);
   const [selectedResource, setSelectedResource] = useState<Recommendation | null>(null);
   const [completedRecommendations, setCompletedRecommendations] = useState<string[]>([]);
@@ -132,6 +139,7 @@ export default function Index() {
   const otpComplete = otp.every((digit) => /^\d$/.test(digit));
   const otpValue = otp.join("");
   const mpinValid = /^\d{4,6}$/.test(mpin) && mpin === confirmMpin;
+  const passwordValid = password.length >= 8 && password === confirmPassword;
   const emptyPersona = useMemo<Persona>(() => ({
     role,
     firstName: "",
@@ -219,10 +227,13 @@ export default function Index() {
     setValueIndex(0);
     setConsent(false);
     setOtp(["", "", "", "", "", ""]);
+    setPassword("");
+    setConfirmPassword("");
+    setSigninPassword("");
     setMpin("");
     setConfirmMpin("");
     setBiometricsEnabled(true);
-    setSecurityReturn("otp");
+    setSecurityReturn("registration");
     setStream("senior");
     setSpecialization("CBSE Class 10 Mathematics");
     setAvatarUri(null);
@@ -263,6 +274,7 @@ export default function Index() {
       const response = await apiPost<{ data: AuthSession }>("/api/v1/auth/register/verify", {
         phone: phoneForApi,
         otp: otpValue,
+        password,
         role,
         profile: {
           firstName: profileDraft.firstName.trim(),
@@ -293,13 +305,35 @@ export default function Index() {
     }
   }
 
+  async function signInWithPassword() {
+    setLoadingAction("signin");
+    try {
+      const response = await apiPost<{ data: AuthSession }>("/api/v1/auth/login", {
+        phone: phoneForApi,
+        password: signinPassword,
+        role
+      });
+      setAuthSession(response.data);
+      setSecurityReturn("signin");
+      setMpin("");
+      setConfirmMpin("");
+      setApiNotice("");
+      setScreen("mpin");
+    } catch {
+      setApiNotice("Something went wrong");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
   async function createReminder() {
     setLoadingAction("createReminder");
+    const startsAt = combineReminderDateTime(reminderDate, reminderTime);
     const optimistic: Reminder = {
       id: `rem_${Date.now()}`,
       role,
       title: reminderTitle || "Untitled reminder",
-      startsAt: `${reminderDate} ${reminderTime}`,
+      startsAt,
       status: "active"
     };
     setReminders((items) => [...items, optimistic]);
@@ -307,7 +341,7 @@ export default function Index() {
       const response = await apiPost<{ data: Reminder }>("/api/v1/events-reminders", {
         role,
         title: optimistic.title,
-        startsAt: optimistic.startsAt
+        startsAt
       }, authSession?.accessToken);
       setReminders((items) => items.map((item) => item.id === optimistic.id ? response.data : item));
     } catch {
@@ -423,33 +457,55 @@ export default function Index() {
           <Title>Enter OTP</Title>
           <Muted>We sent a 6 digit code to {phoneForApi}.</Muted>
           <OtpInput value={otpValue} digits={otp} onChange={updateOtp} />
-          <Button disabled={!otpComplete} role={role} label="Verify OTP" onPress={() => { setSecurityReturn("otp"); setScreen("mpin"); }} />
+          <Button disabled={!otpComplete} role={role} label="Verify OTP" onPress={() => setScreen("createPassword")} />
           <Text style={[styles.linkText, { color: theme.text }]}>Resend OTP in {otpSeconds}s {otpSeconds === 0 ? "Resend OTP" : ""}</Text>
         </>
       );
     }
 
-    if (screen === "mpin") {
+    if (screen === "createPassword") {
       return (
         <>
-          <TopBar title="Security" left="‹" onLeft={() => setScreen(securityReturn === "account" ? "account" : "otp")} />
-          <Title>Set app MPIN</Title>
-          <Muted>Your MPIN protects account, booking, and payment actions.</Muted>
-          <FieldLabel>Create MPIN</FieldLabel>
+          <TopBar title="Password" left="‹" onLeft={() => setScreen("otp")} />
+          <Title>Create password</Title>
+          <Muted>Use this with your phone number to sign in later.</Muted>
+          <FieldLabel>Password</FieldLabel>
+          <Input secureTextEntry value={password} onChangeText={setPassword} placeholder="Minimum 8 characters" />
+          <FieldLabel>Confirm password</FieldLabel>
+          <Input secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} placeholder="Confirm password" />
+          <Muted>{passwordValid ? "Password confirmed." : "Passwords must match and be at least 8 characters."}</Muted>
+          <Button disabled={!passwordValid} role={role} label="Continue" onPress={() => { setSecurityReturn("registration"); setScreen("mpin"); }} />
+        </>
+      );
+    }
+
+    if (screen === "mpin") {
+      const signInMpin = securityReturn === "signin";
+      const canContinue = signInMpin ? mpin.length >= 4 : mpinValid;
+      return (
+        <>
+          <TopBar title="Security" left="‹" onLeft={() => setScreen(securityReturn === "account" ? "account" : securityReturn === "signin" ? "signinCredentials" : "createPassword")} />
+          <Title>{signInMpin ? "Enter app MPIN" : "Set app MPIN"}</Title>
+          <Muted>{signInMpin ? "Enter your local app MPIN to continue." : "Your MPIN protects account, booking, and payment actions."}</Muted>
+          <FieldLabel>{signInMpin ? "MPIN" : "Create MPIN"}</FieldLabel>
           <SecureField role={role} value={mpin} onChangeText={setMpin} visible={showMpin} onToggle={() => setShowMpin(!showMpin)} placeholder="Create MPIN" />
-          <FieldLabel>Confirm MPIN</FieldLabel>
-          <SecureField role={role} value={confirmMpin} onChangeText={setConfirmMpin} visible={showMpin} onToggle={() => setShowMpin(!showMpin)} placeholder="Confirm MPIN" />
-          <Muted>{mpinValid ? "MPIN confirmed." : "Enter matching 4-6 digit MPIN values."}</Muted>
-          <Pressable style={styles.biometricCard} onPress={() => setBiometricsEnabled(!biometricsEnabled)}>
-            <View style={styles.flex}>
-              <Text style={styles.biometricTitle}>Enable biometrics</Text>
-              <Text style={styles.biometricCopy}>Use Face ID or fingerprint where available.</Text>
-            </View>
-            <View style={[styles.smallCheck, biometricsEnabled && { backgroundColor: "#2563EB", borderColor: "#2563EB" }]}>
-              <Text style={styles.smallCheckText}>{biometricsEnabled ? "✓" : ""}</Text>
-            </View>
-          </Pressable>
-          <Button disabled={!mpinValid} role={role} label="Continue" onPress={() => setScreen(securityReturn === "account" ? "account" : "profile")} />
+          {!signInMpin && (
+            <>
+              <FieldLabel>Confirm MPIN</FieldLabel>
+              <SecureField role={role} value={confirmMpin} onChangeText={setConfirmMpin} visible={showMpin} onToggle={() => setShowMpin(!showMpin)} placeholder="Confirm MPIN" />
+              <Muted>{mpinValid ? "MPIN confirmed." : "Enter matching 4-6 digit MPIN values."}</Muted>
+              <Pressable style={styles.biometricCard} onPress={() => setBiometricsEnabled(!biometricsEnabled)}>
+                <View style={styles.flex}>
+                  <Text style={styles.biometricTitle}>Enable biometrics</Text>
+                  <Text style={styles.biometricCopy}>Use Face ID or fingerprint where available.</Text>
+                </View>
+                <View style={[styles.smallCheck, biometricsEnabled && { backgroundColor: "#2563EB", borderColor: "#2563EB" }]}>
+                  <Text style={styles.smallCheckText}>{biometricsEnabled ? "✓" : ""}</Text>
+                </View>
+              </Pressable>
+            </>
+          )}
+          <Button disabled={!canContinue} role={role} label="Continue" onPress={() => setScreen(securityReturn === "account" ? "account" : securityReturn === "signin" ? "home" : "profile")} />
         </>
       );
     }
@@ -463,6 +519,7 @@ export default function Index() {
           setDraft={setProfileDraft}
           avatarUri={avatarUri}
           pickAvatar={pickAvatar}
+          openDatePicker={() => setPicker({ target: "dob", mode: "date", value: parseDisplayDate(profileDraft.dob) ?? new Date(2010, 5, 24) })}
           stream={stream}
           specialization={specialization}
           setStream={(value) => {
@@ -488,6 +545,7 @@ export default function Index() {
           setDraft={setProfileDraft}
           avatarUri={avatarUri}
           pickAvatar={pickAvatar}
+          openDatePicker={() => setPicker({ target: "dob", mode: "date", value: parseDisplayDate(profileDraft.dob) ?? new Date(2010, 5, 24) })}
           stream={stream}
           specialization={specialization}
           setStream={(value) => {
@@ -535,7 +593,31 @@ export default function Index() {
     }
 
     if (screen === "signin") {
-      return <SignInScreen role={role} mode={signInMode} persona={persona} avatarUri={avatarUri} restart={restartPrototype} signIn={() => setScreen("home")} register={() => setScreen("role")} />;
+      return <SignInScreen role={role} mode={signInMode} persona={persona} avatarUri={avatarUri} restart={restartPrototype} signIn={() => setScreen(signInMode === "fresh" ? "signinCredentials" : "home")} register={() => setScreen("role")} />;
+    }
+
+    if (screen === "signinCredentials") {
+      return (
+        <>
+          <TopBar title="Sign in" left="‹" onLeft={() => setScreen("signin")} />
+          <Title>Sign in with phone</Title>
+          <Muted>Enter your registered phone number and password.</Muted>
+          <FieldLabel>Phone number</FieldLabel>
+          <Input
+            value={phoneNumber}
+            onChangeText={(value) => setPhoneNumber(value.replace(/\D/g, "").slice(0, 10))}
+            keyboardType="phone-pad"
+            maxLength={10}
+            placeholder="9876543210"
+          />
+          <FieldLabel>Password</FieldLabel>
+          <Input secureTextEntry value={signinPassword} onChangeText={setSigninPassword} placeholder="Password" />
+          {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
+          <View style={styles.bottomCta}>
+            <Button disabled={!phoneComplete || !signinPassword} loading={loadingAction === "signin"} role={role} label="Next" onPress={signInWithPassword} />
+          </View>
+        </>
+      );
     }
 
     if (screen === "home") {
@@ -582,6 +664,8 @@ export default function Index() {
               setTitle={setReminderTitle}
               setDate={setReminderDate}
               setTime={setReminderTime}
+              openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })}
+              openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })}
               onCreate={createReminder}
               loading={loadingAction === "createReminder"}
             />
@@ -615,7 +699,7 @@ export default function Index() {
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} openSecurity={() => { setSecurityReturn("account"); setScreen("mpin"); }} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} />;
-    if (screen === "sessions") return <Sessions role={role} reminders={roleReminders} programs={programs} selectedProgramId={selectedProgramId} setSelectedProgramId={setSelectedProgramId} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} setCompletedMilestone={setCompletedMilestone} openResource={(item) => { setSelectedResource(item); setScreen("resource"); }} />;
+    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedProgramId={selectedProgramId} setSelectedProgramId={setSelectedProgramId} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} setCompletedMilestone={setCompletedMilestone} openResource={(item) => { setSelectedResource(item); setScreen("resource"); }} />;
     if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen("home")} />;
     if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen("home")} />;
     if (screen === "flashPlay") return <FlashPlay role={role} index={flashIndex} answer={flashAnswer} setAnswer={setFlashAnswer} next={() => { setFlashIndex((flashIndex + 1) % flashcards.length); setFlashAnswer(false); }} learnMore={() => { setSelectedResource({ id: "article_quadratic", role, type: "article", title: "Quadratic equations deep dive", description: "Worked examples, formula use, and exam-style practice.", thumbnailLabel: "Article" }); setScreen("resource"); }} complete={markComplete} />;
@@ -631,6 +715,22 @@ export default function Index() {
         {renderScreen()}
       </ScrollView>
       {showNav && <BottomNav role={role} screen={screen} setScreen={setScreen} />}
+      {picker && (
+        <DateTimePicker
+          value={picker.value}
+          mode={picker.mode}
+          display="default"
+          onChange={(event, selectedDate) => {
+            const next = selectedDate ?? picker.value;
+            if (event.type !== "dismissed") {
+              if (picker.target === "dob") setProfileDraft((draft) => ({ ...draft, dob: formatDisplayDate(next) }));
+              if (picker.target === "reminderDate") setReminderDate(formatDisplayDate(next));
+              if (picker.target === "reminderTime") setReminderTime(formatDisplayTime(next));
+            }
+            setPicker(null);
+          }}
+        />
+      )}
     </LinearGradient>
   );
 }
@@ -797,6 +897,7 @@ function ProfileForm({
   setDraft,
   avatarUri,
   pickAvatar,
+  openDatePicker,
   stream,
   specialization,
   setStream,
@@ -814,6 +915,7 @@ function ProfileForm({
   setDraft: (value: ProfileDraft) => void;
   avatarUri: string | null;
   pickAvatar: () => void;
+  openDatePicker: () => void;
   stream: StreamKey;
   specialization: string;
   setStream: (value: StreamKey) => void;
@@ -849,7 +951,7 @@ function ProfileForm({
         </View>
       </View>
       <FieldLabel>DOB</FieldLabel>
-      <Input value={draft.dob} onChangeText={(value) => updateDraft({ dob: value })} placeholder="DD/MM/YYYY" />
+      <PickerField value={draft.dob || "Select DOB"} onPress={openDatePicker} />
       <FieldLabel>City</FieldLabel>
       <Input value={draft.city} onChangeText={(value) => updateDraft({ city: value })} placeholder="City" />
       <FieldLabel>Address of communication</FieldLabel>
@@ -881,14 +983,38 @@ function ProfileForm({
 }
 
 function DropdownField({ value, options, onSelect }: { value: string; options: string[]; onSelect: (value: string) => void }) {
-  function cycle() {
-    const index = options.indexOf(value);
-    onSelect(options[(index + 1) % options.length] ?? value);
-  }
+  const [expanded, setExpanded] = useState(false);
   return (
-    <Pressable style={styles.dropdownField} onPress={cycle}>
+    <View style={styles.dropdownWrap}>
+      <Pressable style={styles.dropdownField} onPress={() => setExpanded(!expanded)}>
+        <Text style={styles.dropdownText}>{value}</Text>
+        <Text style={styles.dropdownCaret}>{expanded ? "⌃" : "⌄"}</Text>
+      </Pressable>
+      {expanded && (
+        <View style={styles.dropdownList}>
+          {options.map((option) => (
+            <Pressable
+              key={option}
+              style={({ pressed }) => [styles.dropdownOption, option === value && styles.dropdownOptionSelected, pressed && styles.pressed]}
+              onPress={() => {
+                onSelect(option);
+                setExpanded(false);
+              }}
+            >
+              <Text style={styles.dropdownOptionText}>{option}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function PickerField({ value, onPress }: { value: string; onPress: () => void }) {
+  return (
+    <Pressable style={styles.dropdownField} onPress={onPress}>
       <Text style={styles.dropdownText}>{value}</Text>
-      <Text style={styles.dropdownCaret}>⌄</Text>
+      <Text style={styles.dropdownCaret}>▣</Text>
     </Pressable>
   );
 }
@@ -1029,7 +1155,7 @@ function Metric({ role, label, value, onPress }: { role: Role; label: string; va
 function DashboardGrid({ role, cards, setScreen }: { role: Role; cards: DashboardCard[] | null; setScreen: (screen: AppScreen) => void }) {
   const metrics: Record<Role, Array<{ value: string; label: string; target: AppScreen }>> = {
     student: [
-      { value: "0", label: "Sessions", target: "sessions" },
+      { value: "0", label: "My Miles", target: "sessions" },
       { value: "0", label: "Completed", target: "sessions" },
       { value: "0", label: "Smart picks", target: "home" },
       { value: "0", label: "Reminders", target: "events" }
@@ -1065,6 +1191,8 @@ function ReminderComposer({
   setTitle,
   setDate,
   setTime,
+  openDatePicker,
+  openTimePicker,
   onCreate,
   loading
 }: {
@@ -1075,6 +1203,8 @@ function ReminderComposer({
   setTitle: (value: string) => void;
   setDate: (value: string) => void;
   setTime: (value: string) => void;
+  openDatePicker: () => void;
+  openTimePicker: () => void;
   onCreate: () => void;
   loading?: boolean;
 }) {
@@ -1091,29 +1221,17 @@ function ReminderComposer({
       <View style={styles.reminderGrid}>
         <View style={styles.reminderField}>
           <Text style={styles.reminderLabel}>Date</Text>
-          <View style={styles.reminderInputShell}>
-            <TextInput
-              value={date}
-              onChangeText={setDate}
-              placeholder="24/06/2026"
-              placeholderTextColor="#94A3B8"
-              style={styles.reminderInlineInput}
-            />
+          <Pressable style={styles.reminderInputShell} onPress={openDatePicker}>
+            <Text style={styles.reminderInlineText}>{date}</Text>
             <Text style={styles.reminderAdornment}>▣</Text>
-          </View>
+          </Pressable>
         </View>
         <View style={styles.reminderField}>
           <Text style={styles.reminderLabel}>Time</Text>
-          <View style={styles.reminderInputShell}>
-            <TextInput
-              value={time}
-              onChangeText={setTime}
-              placeholder="06:30 PM"
-              placeholderTextColor="#94A3B8"
-              style={styles.reminderInlineInput}
-            />
+          <Pressable style={styles.reminderInputShell} onPress={openTimePicker}>
+            <Text style={styles.reminderInlineText}>{time}</Text>
             <Text style={styles.reminderAdornment}>◷</Text>
-          </View>
+          </Pressable>
         </View>
       </View>
       <Pressable disabled={loading} onPress={onCreate} style={({ pressed }) => [styles.reminderButton, pressed && !loading && styles.pressed, loading && { opacity: 0.72 }]}>
@@ -1223,7 +1341,6 @@ function FlashPlay({ role, index, answer, setAnswer, next, learnMore, complete }
 
 function Sessions({
   role,
-  reminders,
   programs,
   selectedProgramId,
   setSelectedProgramId,
@@ -1233,7 +1350,6 @@ function Sessions({
   openResource
 }: {
   role: Role;
-  reminders: Reminder[];
   programs: ProgramSummary[];
   selectedProgramId: string | null;
   setSelectedProgramId: (value: string | null) => void;
@@ -1245,7 +1361,7 @@ function Sessions({
   const selectedProgram = programs.find((program) => program.id === selectedProgramId) ?? programs[0];
   return (
     <>
-      <Header role={role} personaName="Sessions" />
+      <Header role={role} personaName="My Miles" />
       {role === "student" && programs.length > 0 ? (
         <>
           <FieldLabel>Program</FieldLabel>
@@ -1276,17 +1392,6 @@ function Sessions({
           </Card>
         );
       })}
-      <SectionTitle>Events & reminders</SectionTitle>
-      {reminders.length ? reminders.map((item) => (
-        <ReminderSummary
-          key={item.id}
-          role={role}
-          reminder={item}
-          compact
-          onEdit={() => undefined}
-          onDelete={() => undefined}
-        />
-      )) : <Muted>No sessions or reminders yet.</Muted>}
     </>
   );
 }
@@ -1420,7 +1525,7 @@ function BottomNav({ role, screen, setScreen }: { role: Role; screen: AppScreen;
   const hubLabel = role === "tutor" ? "My Students" : role === "student" ? "My Tutors" : "My Surveys";
   const items: Array<[AppScreen, string, string]> = [
     ["home", "Home", "⌂"],
-    ["sessions", "Sessions", "▥"],
+    ["sessions", "My Miles", "▥"],
     ["roleHub", hubLabel, "▣"],
     ["chat", "Chat", "▤"],
     ["account", "Account", "⌾"]
@@ -1439,6 +1544,40 @@ function BottomNav({ role, screen, setScreen }: { role: Role; screen: AppScreen;
 
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function formatDisplayDate(date: Date) {
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+}
+
+function formatDisplayTime(date: Date) {
+  const hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const displayHour = hours % 12 || 12;
+  return `${String(displayHour).padStart(2, "0")}:${minutes} ${suffix}`;
+}
+
+function parseDisplayDate(value: string) {
+  const match = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+  const [, day, month, year] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseDisplayTime(value: string) {
+  const match = value.match(/^(\d{2}):(\d{2})\s*(AM|PM)$/i);
+  const date = new Date();
+  if (!match) return date;
+  const [, hour, minute, suffix] = match;
+  const normalizedHour = (Number(hour) % 12) + (suffix.toUpperCase() === "PM" ? 12 : 0);
+  date.setHours(normalizedHour, Number(minute), 0, 0);
+  return date;
+}
+
+function combineReminderDateTime(date: string, time: string) {
+  return `${date} ${time}`;
 }
 
 async function apiGet<T>(path: string, accessToken?: string) {
@@ -1486,6 +1625,7 @@ const styles = StyleSheet.create({
   valueContent: { justifyContent: "space-between" },
   contentWithNav: { paddingBottom: 124 },
   flex: { flex: 1 },
+  bottomCta: { flex: 1, justifyContent: "flex-end", minHeight: 260 },
   pressed: { opacity: 0.82, transform: [{ scale: 0.98 }] },
   header: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   headerIcon: { backgroundColor: "rgba(255,255,255,0.78)", borderRadius: 15, fontSize: 18, fontWeight: "900", height: 39, lineHeight: 39, overflow: "hidden", textAlign: "center", width: 39 },
@@ -1562,9 +1702,14 @@ const styles = StyleSheet.create({
   twoColumn: { flexDirection: "row", gap: 10 },
   fieldColumn: { flex: 1, gap: 7, minWidth: 0 },
   textArea: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 16, borderWidth: 1, color: "#111827", minHeight: 78, padding: 14, textAlignVertical: "top" },
+  dropdownWrap: { gap: 8 },
   dropdownField: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 10, justifyContent: "space-between", minHeight: 50, paddingHorizontal: 14 },
   dropdownText: { color: "#111827", flex: 1, fontSize: 14, fontWeight: "600" },
   dropdownCaret: { color: "#111827", fontSize: 18, fontWeight: "900" },
+  dropdownList: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, overflow: "hidden" },
+  dropdownOption: { borderBottomColor: "#EEF3F7", borderBottomWidth: 1, minHeight: 44, justifyContent: "center", paddingHorizontal: 14 },
+  dropdownOptionSelected: { backgroundColor: "#F2FAFC" },
+  dropdownOptionText: { color: "#111827", fontSize: 14, fontWeight: "700" },
   trackCard: {
     alignItems: "center",
     borderRadius: 22,
@@ -1676,6 +1821,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12
   },
   reminderInlineInput: {
+    color: "#111827",
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700"
+  },
+  reminderInlineText: {
     color: "#111827",
     flex: 1,
     fontSize: 14,
