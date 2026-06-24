@@ -17,6 +17,7 @@ coverage/
 
 .DS_Store
 *.log
+*_debug_log.txt
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

@@ -11,7 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#FFFFFF"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mytution.app"
@@ -24,6 +26,12 @@
     },
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "98fe900a-48d0-4fbd-b5ed-d211e4c22960"
+      }
+    },
+    "owner": "flipour"
   }
 }
