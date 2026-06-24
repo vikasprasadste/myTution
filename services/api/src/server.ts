@@ -323,7 +323,7 @@ app.get("/api/v1/dis/dashboard", async (req, res) => {
   });
 });
 
-app.get("/api/v1/payments/methods", (_req, res) => {
+app.get("/api/v1/payments/methods", (_req: express.Request, res: express.Response) => {
   res.json({
     data: [
       { id: "upi_1", type: "upi", label: "apoorv@upi" },
