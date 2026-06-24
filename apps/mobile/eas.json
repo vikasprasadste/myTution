@@ -1,27 +1,39 @@
 {
   "cli": {
-    "version": ">= 13.0.0"
+    "version": ">= 13.0.0",
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "http://localhost:4000"
+        "EXPO_PUBLIC_API_BASE_URL": "http://localhost:4000",
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
       }
     },
     "preview": {
       "android": {
         "buildType": "apk"
       },
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+      }
     },
     "simulator": {
       "ios": {
         "simulator": true
+      },
+      "env": {
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
       }
     },
-    "production": {}
+    "production": {
+      "env": {
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+      }
+    }
   },
   "submit": {
     "production": {}
