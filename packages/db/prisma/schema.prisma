@@ -1,0 +1,244 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  student
+  tutor
+  parent
+  admin
+}
+
+enum ResourceType {
+  video
+  article
+  flashcard
+  quiz
+}
+
+enum ReminderStatus {
+  active
+  completed
+  cancelled
+}
+
+enum ActivityStatus {
+  pending
+  in_progress
+  complete
+}
+
+model User {
+  id          String    @id @default(cuid())
+  phone       String    @unique
+  status      String    @default("active")
+  sourceTag   String    @default("app")
+  profiles    Profile[]
+  userManagementRecords UserManagement[]
+  reminders   Reminder[]
+  authSessions AuthSession[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model MobileClient {
+  id           String        @id @default(cuid())
+  clientId     String        @unique
+  name         String
+  status       String        @default("active")
+  sourceTag    String        @default("app")
+  authSessions AuthSession[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model AuthSession {
+  id                  String       @id @default(cuid())
+  userId              String
+  mobileClientId      String
+  accessToken         String       @unique
+  refreshToken        String       @unique
+  revokedAt           DateTime?
+  accessTokenExpiresAt DateTime
+  refreshTokenExpiresAt DateTime
+  sourceTag           String       @default("app")
+  user                User         @relation(fields: [userId], references: [id])
+  mobileClient        MobileClient @relation(fields: [mobileClientId], references: [id])
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@index([userId, revokedAt])
+}
+
+model Profile {
+  id                 String             @id @default(cuid())
+  userId             String
+  role               Role
+  firstName          String
+  lastName           String
+  dob                DateTime?
+  city               String?
+  communicationAddress String?
+  alternatePhone     String?
+  avatarUrl          String?
+  stream             String?
+  specialization     String?
+  sourceTag          String             @default("app")
+  user               User               @relation(fields: [userId], references: [id])
+  reminders          Reminder[]
+  programProgress    ProgramProgress[]
+  resourceProgress   ResourceProgress[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([userId, role])
+}
+
+model UserManagement {
+  id                   String   @id @default(cuid())
+  userId               String
+  role                 Role
+  firstName            String
+  lastName             String
+  dob                  DateTime?
+  city                 String?
+  communicationAddress String?
+  alternatePhone       String?
+  avatarUrl            String?
+  stream               String?
+  specialization       String?
+  sourceTag            String   @default("app")
+  user                 User     @relation(fields: [userId], references: [id])
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([userId, role])
+  @@index([role, city])
+}
+
+model Recommendation {
+  id             String       @id @default(cuid())
+  role           Role
+  type           ResourceType
+  title          String
+  description    String
+  thumbnailLabel String
+  content        Resource?    @relation(fields: [resourceId], references: [id])
+  resourceId     String?
+  sourceTag      String       @default("app")
+  createdAt      DateTime     @default(now())
+}
+
+model Resource {
+  id               String             @id @default(cuid())
+  type             ResourceType
+  title            String
+  description      String
+  body             String?
+  recommendations  Recommendation[]
+  flashcards       Flashcard[]
+  milestoneActivities MilestoneActivity[]
+  progress         ResourceProgress[]
+  sourceTag        String             @default("app")
+  createdAt        DateTime           @default(now())
+}
+
+model Flashcard {
+  id               String   @id @default(cuid())
+  resourceId        String
+  sequence          Int
+  question          String
+  answer            String
+  relatedArticleId  String?
+  sourceTag         String   @default("app")
+  resource          Resource @relation(fields: [resourceId], references: [id])
+}
+
+model Reminder {
+  id        String         @id @default(cuid())
+  userId    String
+  profileId String
+  role      Role
+  title     String
+  startsAt  DateTime
+  status    ReminderStatus @default(active)
+  sourceTag String         @default("app")
+  user      User           @relation(fields: [userId], references: [id])
+  profile   Profile        @relation(fields: [profileId], references: [id])
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([profileId, startsAt, status])
+}
+
+model Program {
+  id          String             @id @default(cuid())
+  role        Role
+  title       String
+  description String
+  sourceTag   String             @default("app")
+  milestones  ProgramMilestone[]
+  progress    ProgramProgress[]
+}
+
+model ProgramMilestone {
+  id        String   @id @default(cuid())
+  programId String
+  sequence  Int
+  title     String
+  sourceTag String   @default("app")
+  program   Program  @relation(fields: [programId], references: [id])
+  activities MilestoneActivity[]
+
+  @@unique([programId, sequence])
+}
+
+model MilestoneActivity {
+  id          String         @id @default(cuid())
+  milestoneId String
+  resourceId  String
+  sequence    Int
+  type        ResourceType
+  title       String
+  description String
+  status      ActivityStatus @default(pending)
+  sourceTag   String         @default("app")
+  milestone   ProgramMilestone @relation(fields: [milestoneId], references: [id])
+  resource    Resource       @relation(fields: [resourceId], references: [id])
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([milestoneId, sequence])
+}
+
+model ProgramProgress {
+  id                         String   @id @default(cuid())
+  profileId                  String
+  programId                  String
+  unlockedMilestoneSequence  Int      @default(1)
+  completedMilestoneSequence Int      @default(0)
+  sourceTag                  String   @default("app")
+  profile                    Profile  @relation(fields: [profileId], references: [id])
+  program                    Program  @relation(fields: [programId], references: [id])
+
+  @@unique([profileId, programId])
+}
+
+model ResourceProgress {
+  id          String    @id @default(cuid())
+  profileId   String
+  resourceId  String
+  status      String    @default("started")
+  completedAt DateTime?
+  sourceTag   String    @default("app")
+  profile     Profile   @relation(fields: [profileId], references: [id])
+  resource    Resource  @relation(fields: [resourceId], references: [id])
+
+  @@unique([profileId, resourceId])
+}

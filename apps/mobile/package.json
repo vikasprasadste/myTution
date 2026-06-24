@@ -1,0 +1,39 @@
+{
+  "name": "@mytution/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mytution/config": "0.1.0",
+    "@mytution/shared": "0.1.0",
+    "@tanstack/react-query": "^5.62.11",
+    "expo": "^53.0.0",
+    "expo-constants": "~17.1.8",
+    "expo-image-picker": "~16.1.4",
+    "expo-linear-gradient": "^56.0.4",
+    "expo-linking": "~7.1.7",
+    "expo-local-authentication": "~16.0.5",
+    "expo-notifications": "~0.31.4",
+    "expo-router": "~5.1.11",
+    "expo-secure-store": "~14.2.4",
+    "expo-status-bar": "~2.2.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-native": "0.79.6",
+    "react-native-safe-area-context": "5.4.0",
+    "react-native-screens": "~4.11.1",
+    "react-native-web": "^0.20.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.0.10",
+    "typescript": "~5.8.3"
+  }
+}

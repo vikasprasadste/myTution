@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: mytution-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mytution
+      POSTGRES_PASSWORD: mytution
+      POSTGRES_DB: mytution
+    ports:
+      - "5432:5432"
+    volumes:
+      - mytution-postgres:/var/lib/postgresql/data
+
+volumes:
+  mytution-postgres:

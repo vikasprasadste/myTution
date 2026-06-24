@@ -1,0 +1,1644 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>myTution Interactive Prototype</title>
+  <style>
+    :root {
+      --teal: #066b6b;
+      --teal-2: #0b8b83;
+      --sun: #f6b73c;
+      --ink: #1f2933;
+      --muted: #64748b;
+      --line: #d8e0e8;
+      --bg: #eef3f6;
+      --surface: #ffffff;
+      --role-01: #f8eefc;
+      --role-03: #f2e1f9;
+      --role-06: #e4e5fa;
+      --role-10: #edd4f7;
+      --role-text: #4b2760;
+      --role-mid: #c9b4f5;
+      --role-strong: #8f6bd8;
+      --green: #23885e;
+      --red: #c53030;
+      --blue: #2563eb;
+      --violet: #6d5bd0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: var(--ink);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 18% 8%, rgba(255, 255, 255, .92), transparent 26%),
+        linear-gradient(135deg, #d8eef4, #f6edf8 50%, #fff8d7);
+      display: grid;
+      place-items: center;
+    }
+
+    .phone {
+      width: min(100vw, 410px);
+      height: min(100vh, 860px);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .78), rgba(255, 255, 255, .3)),
+        var(--bg);
+      border: 1px solid #b7c5cf;
+      border-radius: 34px;
+      overflow: hidden;
+      box-shadow: 0 34px 90px rgba(15, 23, 42, .28);
+      position: relative;
+    }
+
+    .role-tutor {
+      --role-01: #fefef7;
+      --role-03: #fbfbe5;
+      --role-06: #f8f7cc;
+      --role-10: #f3f2aa;
+      --role-text: #625900;
+      --role-mid: #d8cf46;
+      --role-strong: #9b8700;
+    }
+
+    .role-student {
+      --role-01: #fdfbfe;
+      --role-03: #faf2fd;
+      --role-06: #e4e5fa;
+      --role-10: #edd4f7;
+      --role-text: #4b2760;
+      --role-mid: #c9b4f5;
+      --role-strong: #8f6bd8;
+    }
+
+    .role-parent {
+      --role-01: #f7fcfd;
+      --role-03: #eefafb;
+      --role-06: #e1f5f9;
+      --role-10: #cceff4;
+      --role-text: #115e68;
+      --role-mid: #8fdde8;
+      --role-strong: #1596a4;
+    }
+
+    .app {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .status {
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 22px 0;
+      font-size: 12px;
+      font-weight: 700;
+      color: #0f172a;
+      background: rgba(255, 255, 255, .72);
+      backdrop-filter: blur(18px);
+    }
+
+    .screen {
+      display: none;
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px;
+      padding-bottom: 124px;
+      background:
+        radial-gradient(circle at 12% 0%, var(--role-03), transparent 32%),
+        radial-gradient(circle at 92% 14%, var(--role-10), transparent 24%);
+    }
+
+    .screen.active { display: block; }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 20px;
+    }
+
+    .logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 13px;
+      background: white;
+      display: grid;
+      place-items: center;
+      font-weight: 900;
+      box-shadow: 0 12px 22px rgba(15, 23, 42, .12);
+      overflow: hidden;
+    }
+
+    .logo img { width: 100%; height: 100%; object-fit: cover; }
+
+    .icon-btn, .back {
+      width: 40px;
+      height: 40px;
+      border: 1px solid var(--role-06);
+      background: linear-gradient(135deg, rgba(255, 255, 255, .92), var(--role-03));
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      color: var(--role-text);
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 10px 22px rgba(15, 23, 42, .08);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 34px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+      line-height: 26px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 21px;
+      font-size: 14px;
+    }
+
+    .stack { display: grid; gap: 12px; }
+    .row { display: flex; align-items: center; gap: 10px; }
+    .spread { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+    .card {
+      background: rgba(255, 255, 255, .86);
+      border: 1px solid rgba(214, 225, 235, .88);
+      border-radius: 20px;
+      padding: 15px;
+      box-shadow: 0 16px 34px rgba(15, 23, 42, .08);
+      backdrop-filter: blur(16px);
+    }
+
+    .role-card {
+      display: grid;
+      grid-template-columns: 44px 1fr 22px;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+    }
+
+    .role-card.selected {
+      border-color: var(--role-10);
+      box-shadow: 0 18px 36px rgba(15, 23, 42, .12), inset 0 0 0 2px var(--role-06);
+      background: linear-gradient(135deg, white, var(--role-03));
+    }
+
+    .role-icon, .avatar, .thumb {
+      width: 44px;
+      height: 44px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      color: #102a43;
+      font-weight: 800;
+      flex: none;
+      box-shadow: 0 12px 24px rgba(15, 23, 42, .12);
+    }
+
+    .student { background: linear-gradient(135deg, #fdfbfe, #e4e5fa 55%, #edd4f7); }
+    .tutor { background: linear-gradient(135deg, #fefef7, #f8f7cc 55%, #f3f2aa); }
+    .parent { background: linear-gradient(135deg, #f7fcfd, #e1f5f9 55%, #cceff4); }
+    .math { background: linear-gradient(135deg, #fdfbfe, #f2e1f9, #edd4f7); }
+    .science { background: linear-gradient(135deg, #fefef7, #f8f7cc, #f3f2aa); }
+    .english { background: linear-gradient(135deg, #f7fcfd, #d9f3f7, #cceff4); }
+
+    .tiny { font-size: 12px; color: var(--muted); line-height: 16px; }
+    .label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 6px; color: #334155; }
+
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid rgba(203, 213, 225, .9);
+      border-radius: 16px;
+      padding: 12px;
+      background: rgba(255, 255, 255, .9);
+      color: var(--ink);
+      font-size: 14px;
+      outline: none;
+    }
+
+    textarea { min-height: 74px; resize: vertical; }
+    input:focus, select:focus, textarea:focus { border-color: var(--role-10); box-shadow: 0 0 0 4px var(--role-03); }
+
+    .btn {
+      border: 0;
+      border-radius: 16px;
+      min-height: 48px;
+      padding: 0 16px;
+      font-weight: 800;
+      font-size: 14px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .btn.primary {
+      background: linear-gradient(135deg, var(--role-strong), var(--role-mid));
+      color: #fff;
+      box-shadow: 0 16px 28px color-mix(in srgb, var(--role-strong) 28%, transparent);
+    }
+    .role-tutor .btn.primary { color: #231f00; }
+    .btn.secondary { background: rgba(255, 255, 255, .88); color: var(--role-text); border: 1px solid var(--role-06); box-shadow: 0 10px 22px rgba(15, 23, 42, .06); }
+    .btn.sun { background: linear-gradient(135deg, var(--role-10), var(--role-06)); color: var(--role-text); box-shadow: 0 14px 24px rgba(15, 23, 42, .1); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+    .chip {
+      white-space: nowrap;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, .88);
+      border-radius: 999px;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #334155;
+    }
+    .chip.active { border-color: var(--role-10); background: var(--role-03); color: var(--role-text); }
+
+    .hero-panel {
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, .82), rgba(255, 255, 255, .18)),
+        linear-gradient(135deg, var(--role-01), var(--role-06), var(--role-10));
+      border: 1px solid rgba(255, 255, 255, .82);
+      border-radius: 24px;
+      padding: 18px;
+      box-shadow: 0 22px 46px rgba(15, 23, 42, .12);
+    }
+
+    .carousel {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 74%;
+      overflow-x: auto;
+      gap: 12px;
+      padding-bottom: 4px;
+    }
+
+    .rec {
+      min-height: 116px;
+      display: grid;
+      grid-template-columns: 54px 1fr;
+      gap: 12px;
+      align-items: start;
+      background: linear-gradient(145deg, rgba(255, 255, 255, .94), rgba(255, 255, 255, .66));
+      border: 1px solid rgba(255, 255, 255, .8);
+      border-radius: 22px;
+      padding: 13px;
+      box-shadow: 0 16px 34px rgba(15, 23, 42, .1);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 7px;
+      border-radius: 999px;
+      background: var(--role-03);
+      color: var(--role-text);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .tutor-card {
+      display: grid;
+      grid-template-columns: 52px 1fr;
+      gap: 12px;
+      cursor: pointer;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric strong { display: block; font-size: 20px; }
+    .metric span { font-size: 12px; color: var(--muted); }
+
+    .bottom-nav {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      bottom: 16px;
+      background: #242424;
+      border: 1px solid rgba(255, 255, 255, .1);
+      border-radius: 34px;
+      backdrop-filter: blur(20px);
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      padding: 12px 8px;
+      box-shadow: 0 18px 42px rgba(15, 23, 42, .32);
+    }
+
+    .nav-item {
+      border: 0;
+      background: transparent;
+      color: #b69ef3;
+      font-size: 11px;
+      font-weight: 800;
+      display: grid;
+      gap: 3px;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    .nav-item.active { color: #fff; }
+    .nav-ico { font-size: 22px; line-height: 22px; }
+
+    .hide-nav .bottom-nav { display: none; }
+    .hide-nav .screen { padding-bottom: 18px; }
+    .hidden { display: none !important; }
+
+    .progress {
+      height: 6px;
+      border-radius: 99px;
+      background: #d9e3ea;
+      overflow: hidden;
+      margin: 10px 0 18px;
+    }
+
+    .progress > span { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--role-10)); width: 35%; }
+
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .slot {
+      min-height: 48px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .86);
+      padding: 7px;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .slot.active { border-color: var(--role-10); background: var(--role-03); }
+    .slot strong { display: block; font-size: 13px; }
+
+    .message {
+      max-width: 82%;
+      padding: 10px;
+      border-radius: 18px;
+      font-size: 13px;
+      line-height: 18px;
+      background: white;
+      border: 1px solid var(--line);
+    }
+
+    .message.me { margin-left: auto; background: var(--role-03); border-color: var(--role-10); }
+
+    .toast {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      bottom: 82px;
+      background: #102a43;
+      color: white;
+      border-radius: 16px;
+      padding: 12px;
+      font-size: 13px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: .2s ease;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    .avatar-editor {
+      display: grid;
+      place-items: center;
+      gap: 10px;
+      margin: 4px 0 8px;
+    }
+
+    .avatar-large {
+      width: 66px;
+      height: 66px;
+      border-radius: 24px;
+      font-size: 20px;
+      position: relative;
+      overflow: visible;
+    }
+
+    .avatar-large img, .profile-avatar-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: inherit;
+      display: block;
+    }
+
+    .pencil {
+      position: absolute;
+      right: -6px;
+      bottom: -6px;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      border: 2px solid white;
+      background: linear-gradient(135deg, var(--role-strong), var(--role-mid));
+      color: white;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      box-shadow: 0 10px 20px rgba(15, 23, 42, .2);
+    }
+
+    .role-tutor .pencil { color: #231f00; }
+
+    .avatar-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+
+    .avatar-actions .btn {
+      min-height: 38px;
+      width: auto;
+      padding: 0 12px;
+      font-size: 12px;
+    }
+
+    .event-form {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .event-form label:first-child { grid-column: 1 / -1; }
+
+    .reminder-card {
+      background: rgba(255, 255, 255, .94);
+      border: 1px solid #d8e0e8;
+      border-radius: 22px;
+      padding: 16px;
+      box-shadow: 0 12px 24px rgba(15, 23, 42, .08);
+    }
+
+    .reminder-card .label {
+      margin-bottom: 7px;
+    }
+
+    .reminder-title-input {
+      min-height: 43px;
+      border-radius: 18px;
+      border-color: #c9d6e4;
+      background: #fff;
+    }
+
+    .reminder-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .reminder-input-shell {
+      min-height: 48px;
+      border: 1px solid #c9d6e4;
+      border-radius: 18px;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+    }
+
+    .reminder-input-shell input {
+      border: 0;
+      box-shadow: none;
+      padding: 0;
+      min-height: auto;
+      font-weight: 700;
+    }
+
+    .reminder-adornment {
+      color: #111827;
+      font-weight: 900;
+    }
+
+    .reminder-summary-card {
+      background: rgba(255, 255, 255, .94);
+      border: 1px solid #dde7ef;
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 10px 22px rgba(15, 23, 42, .08);
+    }
+
+    .reminder-summary-title {
+      color: #26313f;
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .reminder-summary-meta {
+      color: #64748b;
+      font-size: 14px;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+
+    .reminder-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 13px;
+    }
+
+    .reminder-action {
+      min-height: 47px;
+      border: 1px solid #dde7ef;
+      border-radius: 15px;
+      background: #fff;
+      color: var(--role-text);
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .view-all-reminders {
+      min-height: 49px;
+      border: 1px solid #dde7ef;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .94);
+      color: var(--role-text);
+      font-weight: 900;
+      box-shadow: 0 8px 18px rgba(15, 23, 42, .05);
+      cursor: pointer;
+    }
+
+    .splash-art, .prop-art, .resource-banner {
+      width: 100%;
+      min-height: 180px;
+      border-radius: 28px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, white, var(--role-03), var(--role-10));
+      box-shadow: 0 22px 46px rgba(15, 23, 42, .12);
+      overflow: hidden;
+    }
+
+    .splash-art img {
+      width: min(76%, 260px);
+      border-radius: 28px;
+      filter: drop-shadow(0 18px 32px rgba(15, 23, 42, .18));
+    }
+
+    .prop-art span, .resource-banner span {
+      font-size: 58px;
+      filter: drop-shadow(0 14px 22px rgba(15, 23, 42, .14));
+    }
+
+    .link-btn {
+      border: 0;
+      background: transparent;
+      color: var(--role-text);
+      font-weight: 800;
+      text-decoration: underline;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .field-shell {
+      position: relative;
+    }
+
+    .eye {
+      position: absolute;
+      right: 10px;
+      top: 30px;
+      width: 34px;
+      height: 34px;
+      border: 0;
+      border-radius: 999px;
+      background: var(--role-03);
+      color: var(--role-text);
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .resource-player {
+      min-height: 190px;
+      border-radius: 28px;
+      background: linear-gradient(135deg, #18181b, #343434);
+      color: white;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 22px 46px rgba(15, 23, 42, .2);
+    }
+
+    .flashcard {
+      min-height: 220px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      font-size: 19px;
+      font-weight: 800;
+      line-height: 27px;
+      background: linear-gradient(135deg, white, var(--role-03));
+    }
+
+    .program-step {
+      cursor: pointer;
+      opacity: .56;
+    }
+
+    .program-step.unlocked { opacity: 1; }
+
+    .nav-svg {
+      width: 24px;
+      height: 24px;
+      display: block;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .shimmer {
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(100deg, rgba(255, 255, 255, .62), var(--role-03), rgba(255, 255, 255, .72));
+      background-size: 220% 100%;
+      animation: shimmer 1.8s ease-in-out infinite;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 160% 0; }
+      100% { background-position: -60% 0; }
+    }
+
+    .mini-bars {
+      display: grid;
+      gap: 7px;
+    }
+
+    .mini-bars span {
+      height: 8px;
+      border-radius: 999px;
+      display: block;
+      background: rgba(255, 255, 255, .76);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .44);
+    }
+
+    @media (max-width: 430px) {
+      body { display: block; background: var(--bg); }
+      .phone {
+        width: 100vw;
+        height: 100vh;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="phone hide-nav role-student" id="phone">
+    <div class="app">
+      <div class="status"><span>9:41</span><span>myTution</span><span>▰ ▰</span></div>
+
+      <section class="screen" id="signin">
+        <div class="topbar">
+          <div class="brand"><div class="logo"><img src="assets/myTution_icon.png" alt="myTution"></div><span>myTution</span></div>
+          <button class="icon-btn" onclick="restartPrototype()">↻</button>
+        </div>
+        <div class="hero-panel stack">
+          <div class="row">
+            <div class="avatar student" id="signinAvatar">A</div>
+            <div>
+              <p class="tiny">Welcome back</p>
+              <h1 id="signinName" style="margin:0">Apoorv Gulati</h1>
+            </div>
+          </div>
+          <p id="signinRoleText">Student profile is ready. Sign in with MPIN to continue.</p>
+        </div>
+        <div class="stack" style="margin-top:16px">
+          <label><span class="label">MPIN</span><input inputmode="numeric" type="password" value="1234"></label>
+          <button class="btn primary" onclick="signin()">Sign in</button>
+          <button class="btn secondary" onclick="restartPrototype()">Restart prototype</button>
+        </div>
+      </section>
+
+      <section class="screen active" id="role">
+        <div class="topbar">
+          <div class="brand"><div class="logo"><img src="assets/myTution_icon.png" alt="myTution"></div><span>myTution</span></div>
+        </div>
+        <div class="hero-panel stack">
+          <div class="splash-art"><img src="assets/myTution_splash.png" alt="myTution splash"></div>
+          <h1>Find the right tutor, class, and schedule.</h1>
+          <p>Start by choosing how you want to use myTution.</p>
+        </div>
+        <div class="stack" style="margin-top:16px">
+          <div class="card role-card selected" data-role="student">
+            <div class="role-icon student">S</div>
+            <div><strong>Student</strong><p>Discover tutors and book trial classes.</p></div><span>✓</span>
+          </div>
+          <div class="card role-card" data-role="tutor">
+            <div class="role-icon tutor">T</div>
+            <div><strong>Tutor</strong><p>Get leads, manage calendar, and receive payments.</p></div><span></span>
+          </div>
+          <div class="card role-card" data-role="parent">
+            <div class="role-icon parent">P</div>
+            <div><strong>Parent</strong><p>Track classes, payments, and tutor progress.</p></div><span></span>
+          </div>
+          <button class="btn primary" onclick="go('value')">Continue</button>
+        </div>
+      </section>
+
+      <section class="screen" id="value">
+        <div class="topbar"><button class="back" onclick="go('role')">‹</button><strong>Why myTution</strong><button class="link-btn" id="skipValue" onclick="go('phone')">Skip</button></div>
+        <div class="prop-art" id="valueArt"><span>🎓</span></div>
+        <h1 id="valueTitle" style="margin-top:18px">Built for students</h1>
+        <p id="valueDesc">Find verified tutors for home or online classes.</p>
+        <div class="stack" style="margin-top:16px">
+          <button class="btn primary" id="valueNext" onclick="nextValueProp()">Next</button>
+        </div>
+      </section>
+
+      <section class="screen" id="phoneEntry">
+        <div class="topbar"><button class="back" onclick="go('value')">‹</button><strong>Consent</strong><span></span></div>
+        <h1>Register with phone</h1>
+        <p>Accept consent before entering your number. This will be stored with the current policy version.</p>
+        <div class="card row" style="align-items:flex-start;margin:16px 0">
+          <input id="consent" type="checkbox" style="width:20px;margin-top:2px" onchange="togglePhone()">
+          <label for="consent" class="tiny">I agree to the Terms, Privacy Policy, and communication consent for OTP, class, payment, and account updates.</label>
+        </div>
+        <label class="label">Phone number</label>
+        <input id="phoneInput" disabled inputmode="tel" value="9876543210">
+        <button id="sendOtp" class="btn primary" style="margin-top:14px" disabled onclick="go('otp')">Send OTP</button>
+      </section>
+
+      <section class="screen" id="otp">
+        <div class="topbar"><button class="back" onclick="go('phone')">‹</button><strong>Verification</strong><span></span></div>
+        <h1>Enter OTP</h1>
+        <p>We sent a 6 digit code to +91 98765 43210.</p>
+        <div class="row" style="margin:18px 0">
+          <input class="otp-digit" maxlength="1" inputmode="numeric" oninput="validateOtp()" style="text-align:center;font-size:22px;font-weight:800">
+          <input class="otp-digit" maxlength="1" inputmode="numeric" oninput="validateOtp()" style="text-align:center;font-size:22px;font-weight:800">
+          <input class="otp-digit" maxlength="1" inputmode="numeric" oninput="validateOtp()" style="text-align:center;font-size:22px;font-weight:800">
+          <input class="otp-digit" maxlength="1" inputmode="numeric" oninput="validateOtp()" style="text-align:center;font-size:22px;font-weight:800">
+          <input class="otp-digit" maxlength="1" inputmode="numeric" oninput="validateOtp()" style="text-align:center;font-size:22px;font-weight:800">
+          <input class="otp-digit" maxlength="1" inputmode="numeric" oninput="validateOtp()" style="text-align:center;font-size:22px;font-weight:800">
+        </div>
+        <button class="btn primary" id="verifyOtp" disabled onclick="go('mpin')">Verify OTP</button>
+        <p class="tiny" style="margin-top:12px">Resend OTP in <span id="otpTimer">60</span>s <button class="link-btn" id="resendOtp" disabled onclick="startOtpTimer()">Resend OTP</button></p>
+      </section>
+
+      <section class="screen" id="mpin">
+        <div class="topbar"><button class="back" onclick="go('otp')">‹</button><strong>Security</strong><span></span></div>
+        <h1>Set app MPIN</h1>
+        <p>Your MPIN protects account, booking, and payment actions.</p>
+        <div class="stack" style="margin-top:16px">
+          <label class="field-shell"><span class="label">Create MPIN</span><input id="mpinInput" inputmode="numeric" maxlength="6" type="password" oninput="validateMpin()"><button class="eye" type="button" onclick="togglePassword('mpinInput', this)">◉</button></label>
+          <label class="field-shell"><span class="label">Confirm MPIN</span><input id="confirmMpinInput" inputmode="numeric" maxlength="6" type="password" oninput="validateMpin()"><button class="eye" type="button" onclick="togglePassword('confirmMpinInput', this)">◉</button></label>
+          <p class="tiny" id="mpinHelp">Enter a 4-6 digit MPIN and confirm it.</p>
+          <div class="card spread">
+            <div><strong>Enable biometrics</strong><p>Use Face ID or fingerprint where available.</p></div>
+            <input type="checkbox" checked style="width:22px">
+          </div>
+          <button class="btn primary" id="mpinContinue" disabled onclick="go('profile')">Continue</button>
+        </div>
+      </section>
+
+      <section class="screen" id="profile">
+        <div class="topbar"><span></span><strong>Profile</strong><span></span></div>
+        <h1>Complete your profile</h1>
+        <div class="progress"><span style="width:78%"></span></div>
+        <div class="stack">
+          <div class="avatar-editor">
+            <div class="avatar avatar-large student" id="profileAvatar">A<button class="pencil" onclick="toggleAvatarActions()" aria-label="Edit avatar">✎</button></div>
+            <div class="avatar-actions hidden" id="avatarActions">
+              <button class="btn secondary" onclick="openCamera()">Camera</button>
+              <button class="btn secondary" onclick="openGallery()">Gallery</button>
+            </div>
+            <input id="cameraInput" class="hidden" type="file" accept="image/*" capture="user" onchange="loadAvatar(event)">
+            <input id="galleryInput" class="hidden" type="file" accept="image/*" onchange="loadAvatar(event)">
+          </div>
+          <div class="row"><label><span class="label">First name</span><input id="firstName" value="Apoorv"></label><label><span class="label">Last name</span><input id="lastName" value="Gulati"></label></div>
+          <label><span class="label">DOB</span><input type="date" value="2002-04-14"></label>
+          <label><span class="label">City</span><input value="Delhi"></label>
+          <label><span class="label">Address of communication</span><textarea>South Delhi, near Green Park</textarea></label>
+          <label><span class="label">Alternate phone number</span><input value="9999999999"></label>
+          <div class="stack" id="educationFields">
+            <label><span class="label">Stream</span><select id="stream" onchange="populateSpecs()"><option value="junior">Junior</option><option value="senior" selected>Senior</option><option value="ug">UG</option><option value="pg">PG</option></select></label>
+            <label><span class="label">Specialization</span><select id="spec"></select></label>
+          </div>
+          <button class="btn primary" onclick="finishOnboarding()">Finish registration</button>
+        </div>
+      </section>
+
+      <section class="screen" id="home">
+        <div class="topbar">
+          <div><p class="tiny" id="greeting">Good Afternoon</p><h2 id="homeName" style="margin:0">Apoorv Gulati</h2></div>
+          <button class="icon-btn" onclick="toast('No new notifications')">⌁</button>
+        </div>
+        <div class="hero-panel spread">
+          <div><strong id="homeHero">Find a CBSE Math tutor</strong><p id="homeHeroSub">AI match found 12 tutors near South Delhi.</p></div>
+          <button class="btn sun" style="width:auto;min-height:40px" onclick="go('search')">Search</button>
+        </div>
+        <div class="card shimmer" id="smartLoader" style="margin-top:12px">
+          <div class="spread">
+            <div class="mini-bars" style="width:62%"><span></span><span style="width:72%"></span></div>
+            <span class="pill">Loading smart picks</span>
+          </div>
+        </div>
+        <div id="recommendationSection" class="hidden">
+          <h2 style="margin-top:18px">Recommended for you</h2>
+          <div class="carousel" id="recommendationCarousel"></div>
+        </div>
+        <h2 style="margin-top:18px">Events & reminders</h2>
+        <div class="reminder-card stack" id="createReminderCard">
+          <label><span class="label">Title</span><input class="reminder-title-input" id="eventTitle" value="Math revision reminder"></label>
+          <div class="reminder-grid">
+            <label><span class="label">Date</span><div class="reminder-input-shell"><input id="eventDate" value="24/06/2026"><span class="reminder-adornment">▣</span></div></label>
+            <label><span class="label">Time</span><div class="reminder-input-shell"><input id="eventTime" value="06:30 PM"><span class="reminder-adornment">◷</span></div></label>
+          </div>
+          <button class="btn primary" onclick="createReminder()">Create reminder</button>
+        </div>
+        <div class="stack" id="homeEvents" style="margin-top:12px"></div>
+        <h2 style="margin-top:18px">Today</h2>
+        <div class="card spread">
+          <div><strong>Trial with Neha Verma</strong><p>Tomorrow, 6:00 PM • Online</p></div>
+          <span class="pill">Pending</span>
+        </div>
+        <h2 style="margin-top:18px" id="dashboardTitle">Student dashboard</h2>
+        <div class="metric-grid" id="homeMetrics"></div>
+      </section>
+
+      <section class="screen" id="search">
+        <div class="topbar"><h2 style="margin:0">Tutor discovery</h2><button class="icon-btn" onclick="toast('Filters updated')">☰</button></div>
+        <input placeholder="Search tutors by subject" value="Mathematics">
+        <div class="chips" style="margin:12px 0">
+          <span class="chip active">Class 10</span><span class="chip">CBSE</span><span class="chip">South Delhi</span><span class="chip">Online</span><span class="chip">Home</span><span class="chip">English</span><span class="chip">Female</span><span class="chip">5+ yrs</span><span class="chip">4.5+</span>
+        </div>
+        <div class="stack">
+          <div class="card tutor-card" onclick="openTutor('Neha Verma','NV','4.8','7 yrs','₹700/hr','94%')">
+            <div class="avatar math">NV</div><div><div class="spread"><strong>Neha Verma</strong><span class="pill">94% match</span></div><p>CBSE Math • Class 9-12 • Online/Home</p><div class="row" style="margin-top:8px"><span class="pill">★ 4.8</span><span class="pill">7 yrs</span><span class="pill">₹700/hr</span></div></div>
+          </div>
+          <div class="card tutor-card" onclick="openTutor('Rahul Menon','RM','4.7','5 yrs','₹600/hr','89%')">
+            <div class="avatar science">RM</div><div><div class="spread"><strong>Rahul Menon</strong><span class="pill">89% match</span></div><p>Math + Physics • ICSE/CBSE • Online</p><div class="row" style="margin-top:8px"><span class="pill">★ 4.7</span><span class="pill">5 yrs</span><span class="pill">₹600/hr</span></div></div>
+          </div>
+          <div class="card tutor-card" onclick="openTutor('Ananya Iyer','AI','4.9','9 yrs','₹900/hr','87%')">
+            <div class="avatar english">AI</div><div><div class="spread"><strong>Ananya Iyer</strong><span class="pill">87% match</span></div><p>Advanced Math • IB/IGCSE • Online</p><div class="row" style="margin-top:8px"><span class="pill">★ 4.9</span><span class="pill">9 yrs</span><span class="pill">₹900/hr</span></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="tutorProfile">
+        <div class="topbar"><button class="back" onclick="go('search')">‹</button><strong>Tutor profile</strong><span></span></div>
+        <div class="card stack">
+          <div class="row"><div class="avatar math" id="tpAvatar">NV</div><div><h2 id="tpName" style="margin:0">Neha Verma</h2><p id="tpMeta">★ 4.8 • 7 yrs • ₹700/hr</p></div></div>
+          <div class="chips"><span class="chip active">Verified</span><span class="chip">CBSE</span><span class="chip">Math</span><span class="chip">English/Hindi</span></div>
+          <p id="tpReason">Matches CBSE Class 10 Mathematics, evening availability, and preferred budget.</p>
+        </div>
+        <div class="stack" style="margin-top:12px">
+          <div class="card"><strong>Availability</strong><p>Tomorrow 6:00 PM, Thu 7:00 PM, Sat 11:00 AM</p></div>
+          <div class="card"><strong>Reviews</strong><p>“Clear explanations and very patient with algebra fundamentals.”</p></div>
+          <div class="row"><button class="btn secondary" onclick="go('chat')">Chat</button><button class="btn primary" onclick="go('booking')">Book trial</button></div>
+        </div>
+      </section>
+
+      <section class="screen" id="booking">
+        <div class="topbar"><button class="back" onclick="go('tutorProfile')">‹</button><strong>Trial class</strong><span></span></div>
+        <h1>Book a trial</h1>
+        <div class="stack">
+          <div><span class="label">Mode</span><div class="chips"><span class="chip active">Online</span><span class="chip">Home tuition</span></div></div>
+          <div><span class="label">Choose slot</span><div class="calendar-grid"><div class="slot active"><strong>Wed</strong><span class="tiny">6 PM</span></div><div class="slot"><strong>Thu</strong><span class="tiny">7 PM</span></div><div class="slot"><strong>Sat</strong><span class="tiny">11 AM</span></div><div class="slot"><strong>Sun</strong><span class="tiny">4 PM</span></div></div></div>
+          <label><span class="label">Class notes</span><textarea>Focus on algebra basics and exam problem solving.</textarea></label>
+          <div class="card spread"><div><strong>Trial fee</strong><p>Includes platform confirmation</p></div><strong>₹199</strong></div>
+          <button class="btn primary" onclick="go('payments')">Continue to payment</button>
+        </div>
+      </section>
+
+      <section class="screen" id="payments">
+        <div class="topbar"><button class="back" onclick="go('booking')">‹</button><strong>Payments</strong><span></span></div>
+        <h1>Confirm payment</h1>
+        <div class="stack">
+          <div class="card"><div class="spread"><span>Trial class</span><strong>₹199</strong></div><div class="spread"><span>Platform fee</span><strong>₹0</strong></div><hr style="border:0;border-top:1px solid var(--line)"><div class="spread"><strong>Total</strong><strong>₹199</strong></div></div>
+          <div class="chips"><span class="chip active">UPI</span><span class="chip">Card</span><span class="chip">NetBanking</span><span class="chip">Wallet</span></div>
+          <button class="btn primary" onclick="confirmBooking()">Pay and confirm</button>
+        </div>
+      </section>
+
+      <section class="screen" id="calendar">
+        <div class="topbar"><h2 style="margin:0">Calendar</h2><button class="icon-btn" onclick="toast('Availability synced')">↻</button></div>
+        <div class="stack">
+          <div class="card spread"><div><strong>Tomorrow, 6:00 PM</strong><p>Trial with Neha Verma • Online</p></div><span class="pill">Confirmed</span></div>
+          <div class="card spread"><div><strong>Friday, 5:00 PM</strong><p>Physics demo • Home tuition</p></div><span class="pill">Requested</span></div>
+          <div class="card spread"><div><strong>Saturday, 11:00 AM</strong><p>Math revision • Online</p></div><span class="pill">Open</span></div>
+        </div>
+      </section>
+
+      <section class="screen" id="events">
+        <div class="topbar"><h2 style="margin:0">Events & reminders</h2><button class="icon-btn" onclick="go('home')">⌂</button></div>
+        <div class="stack" id="eventsList"></div>
+      </section>
+
+      <section class="screen" id="resourceDetail">
+        <div class="topbar"><button class="back" onclick="go('home')">‹</button><strong id="resourceKind">Resource</strong><span></span></div>
+        <div id="resourceMedia"></div>
+        <h1 id="resourceTitle" style="margin-top:18px">Resource title</h1>
+        <p id="resourceDesc">Resource description</p>
+        <div class="stack" style="margin-top:16px">
+          <button class="btn primary" onclick="markResourceComplete()">Mark complete</button>
+        </div>
+      </section>
+
+      <section class="screen" id="flashcardLanding">
+        <div class="topbar"><button class="back" onclick="go('home')">‹</button><strong>Flash cards</strong><span></span></div>
+        <div class="resource-banner"><span>▧</span></div>
+        <h1 style="margin-top:18px" id="flashTitle">NEET Biology quick cards</h1>
+        <p id="flashDesc">Tap through key questions. Flip each card to reveal the answer.</p>
+        <button class="btn primary" style="margin-top:16px" onclick="startFlashcards()">Start flashcard</button>
+      </section>
+
+      <section class="screen" id="flashcardPlay">
+        <div class="topbar"><button class="back" onclick="go('flashcardLanding')">‹</button><strong id="flashProgress">Card 1 of 10</strong><span></span></div>
+        <div class="card flashcard" id="flashCard" onclick="flipFlashcard()">Question appears here</div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn secondary" onclick="openRelatedArticle()">Learn more</button>
+          <button class="btn primary" onclick="nextFlashcard()">Next</button>
+        </div>
+        <button class="btn secondary" style="margin-top:10px" onclick="markResourceComplete()">Mark complete</button>
+      </section>
+
+      <section class="screen" id="program">
+        <div class="topbar"><h2 style="margin:0" id="programTitle">Sessions</h2><button class="icon-btn" onclick="toast('Program synced')">↻</button></div>
+        <div class="hero-panel stack">
+          <strong id="programHero">12 month NEET program</strong>
+          <p id="programDesc">Milestones unlock one by one. Each topic includes video, article, flashcard, and quiz.</p>
+        </div>
+        <div class="stack" id="programList" style="margin-top:14px"></div>
+        <h2 style="margin-top:18px">Events & reminders</h2>
+        <div class="stack" id="programEvents"></div>
+      </section>
+
+      <section class="screen" id="paymentMethods">
+        <div class="topbar"><h2 style="margin:0">Payments</h2><button class="icon-btn" onclick="toast('Payment settings saved')">✓</button></div>
+        <div class="stack">
+          <div class="card spread"><div><strong>UPI</strong><p>apoorv@upi</p></div><button class="link-btn" onclick="toast('UPI removed')">Delete</button></div>
+          <div class="card spread"><div><strong>Card</strong><p>Visa ending 4242</p></div><button class="link-btn" onclick="toast('Card removed')">Delete</button></div>
+          <button class="btn primary" onclick="toast('Add payment method flow')">Add card / UPI</button>
+        </div>
+      </section>
+
+      <section class="screen" id="ratings">
+        <div class="topbar"><h2 style="margin:0">Ratings & reviews</h2><button class="icon-btn" onclick="go('home')">⌂</button></div>
+        <div class="stack">
+          <div class="card"><strong>4.8 average rating</strong><p>Teaching quality, punctuality, communication, and value are tracked separately.</p></div>
+          <div class="card"><strong>Neha Verma</strong><p>Clear explanations and very patient with algebra fundamentals.</p></div>
+          <div class="card"><strong>Self review</strong><p>Profile trust score improved after verified avatar and complete schedule.</p></div>
+        </div>
+      </section>
+
+      <section class="screen" id="chat">
+        <div class="topbar"><button class="back" onclick="go('tutorProfile')">‹</button><strong>Chat</strong><button class="icon-btn" onclick="toast('Thread reported to support')">!</button></div>
+        <div class="card"><strong>Booking context</strong><p>Trial class • Tomorrow 6:00 PM • Online</p></div>
+        <div class="stack" style="margin-top:12px">
+          <div class="message">Hi Apoorv, I can help with algebra and board exam patterns.</div>
+          <div class="message me">Great. Can we start with quadratic equations?</div>
+          <div class="message">Yes. I will bring a short diagnostic worksheet.</div>
+        </div>
+        <div class="row" style="margin-top:14px"><input value="Sounds good, thank you!"><button class="btn primary" style="width:68px" onclick="toast('Message sent')">Send</button></div>
+      </section>
+
+      <section class="screen" id="dashboard">
+        <div class="topbar"><h2 style="margin:0" id="dashHead">Dashboard</h2><button class="icon-btn" onclick="toast('Dashboard refreshed')">↻</button></div>
+        <div class="metric-grid" id="dashMetrics"></div>
+        <div class="stack" style="margin-top:12px" id="dashList"></div>
+      </section>
+
+      <section class="screen" id="profileTab">
+        <div class="topbar"><h2 style="margin:0">Profile</h2><button class="icon-btn" onclick="toast('Settings opened')">⚙</button></div>
+        <div class="card stack">
+          <div class="row"><div class="avatar student">A</div><div><strong>Apoorv Sharma</strong><p id="profileRoleText">Student • Senior • CBSE Class 10 Math</p></div></div>
+          <div class="progress"><span style="width:86%"></span></div>
+          <p>Profile completion 86%</p>
+        </div>
+        <div class="stack" style="margin-top:12px">
+          <button class="btn secondary" onclick="go('profile')">Edit profile</button>
+          <button class="btn secondary" onclick="toast('MPIN and biometrics settings')">Security</button>
+          <button class="btn secondary" onclick="signout()">Sign out</button>
+        </div>
+      </section>
+
+      <nav class="bottom-nav">
+        <button class="nav-item active" data-tab="home" onclick="tab('home', this)"><span class="nav-ico"><svg class="nav-svg" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10.5V21h14V10.5"/><path d="M9 21v-6h6v6"/></svg></span>Home</button>
+        <button class="nav-item" data-tab="program" onclick="tab('program', this)"><span class="nav-ico"><svg class="nav-svg" viewBox="0 0 24 24"><path d="M7 4v16"/><path d="M17 4v16"/><path d="M7 8h10"/><path d="M7 16h10"/></svg></span>Sessions</button>
+        <button class="nav-item" data-tab="paymentMethods" onclick="tab('paymentMethods', this)"><span class="nav-ico"><svg class="nav-svg" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M3 10h18"/><path d="M7 15h4"/></svg></span>Pay</button>
+        <button class="nav-item" data-tab="chat" onclick="tab('chat', this)"><span class="nav-ico"><svg class="nav-svg" viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8"/><path d="M8 13h5"/></svg></span>Chat</button>
+        <button class="nav-item" data-tab="profileTab" onclick="tab('profileTab', this)"><span class="nav-ico"><svg class="nav-svg" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.8-4 14.2-4 16 0"/></svg></span>Account</button>
+      </nav>
+      <div class="toast" id="toast"></div>
+    </div>
+  </main>
+
+  <script>
+    const state = {
+      role: 'student',
+      tutor: 'Neha Verma',
+      signedOut: false,
+      avatarDataUrl: '',
+      valueIndex: 0,
+      otpSeconds: 60,
+      otpTimer: null,
+      recommendationTimer: null,
+      currentResource: null,
+      flashIndex: 0,
+      flashShowingAnswer: false,
+      completedMilestone: 0,
+      events: {
+        student: [],
+        tutor: [],
+        parent: []
+      }
+    };
+    const personas = {
+      tutor: {
+        firstName: 'Ankit',
+        lastName: 'Sharma',
+        initials: 'AS',
+        profile: 'Tutor • Senior Math Specialist • South Delhi',
+        signin: 'Tutor profile is ready. Sign in with MPIN to manage leads.',
+        phone: '9876543210',
+        avatarClass: 'tutor'
+      },
+      student: {
+        firstName: 'Apoorv',
+        lastName: 'Gulati',
+        initials: 'AG',
+        profile: 'Student • Senior • CBSE Class 10 Math',
+        signin: 'Student profile is ready. Sign in with MPIN to continue.',
+        phone: '9876543210',
+        avatarClass: 'student'
+      },
+      parent: {
+        firstName: 'Sarmishtha',
+        lastName: 'Gulati',
+        initials: 'SG',
+        profile: 'Parent • Apoorv Gulati • Class 10',
+        signin: 'Parent dashboard is ready. Sign in with MPIN to continue.',
+        phone: '9998887776',
+        avatarClass: 'parent'
+      }
+    };
+    const specs = {
+      junior: ['Class 1-5 Foundation', 'Class 6-8 Mathematics', 'Class 6-8 Science', 'English Reading'],
+      senior: ['CBSE Class 10 Mathematics', 'ICSE Class 10 Science', 'Class 11-12 Physics', 'Class 11-12 Commerce'],
+      ug: ['B.Com Accounting', 'B.Tech Computer Science', 'BA Economics', 'B.Sc Mathematics'],
+      pg: ['MBA Finance', 'M.Sc Statistics', 'MA English', 'M.Tech Data Science']
+    };
+    const props = {
+      student: [
+        { icon: '🎓', title: 'Find verified tutors', desc: 'Discover trusted home and online tutors by class, board, language, rating, and availability.' },
+        { icon: '🗓', title: 'Book trial classes', desc: 'Compare tutors, chat safely, and book trial sessions with transparent pricing.' },
+        { icon: '✨', title: 'Learn with smart picks', desc: 'Get personalized videos, articles, flashcards, and tutor matches for your goals.' }
+      ],
+      tutor: [
+        { icon: '📚', title: 'Receive qualified leads', desc: 'Get matched with students by subject, location, mode, language, and schedule.' },
+        { icon: '🗓', title: 'Run your teaching day', desc: 'Manage sessions, reminders, chat, reviews, and availability from one place.' },
+        { icon: '₹', title: 'Grow with trust', desc: 'Build a verified profile, collect ratings, and track payments and payouts.' }
+      ],
+      parent: [
+        { icon: '👨‍👩‍👧', title: 'Track learning clearly', desc: 'Follow sessions, tutor notes, attendance, and payment activity for your child.' },
+        { icon: '✓', title: 'Approve with confidence', desc: 'Review tutor trust signals, trial classes, and upcoming reminders before committing.' },
+        { icon: '🔔', title: 'Stay on top of classes', desc: 'Use reminders for fees, classes, parent approvals, and study follow-ups.' }
+      ]
+    };
+    const recommendations = {
+      student: [
+        { type: 'video', icon: '▶', label: 'Video', title: 'Class 10 algebra refresh', desc: '8 min practice guide', style: 'math' },
+        { type: 'flashcard', icon: 'F', label: 'Flash card', title: 'Quadratic equations', desc: '10 quick revision cards', style: 'student' },
+        { type: 'article', icon: 'A', label: 'Article', title: 'CBSE board prep planner', desc: 'Weekly study rhythm', style: 'english' },
+        { type: 'video', icon: '▶', label: 'Video', title: 'NEET biology warm-up', desc: 'Cell biology basics', style: 'science' },
+        { type: 'article', icon: '✓', label: 'Practice', title: 'Trial class checklist', desc: 'Questions to ask tutors', style: 'parent' }
+      ],
+      tutor: [
+        { type: 'article', icon: 'L', label: 'Lead', title: '3 students need Math tutors', desc: 'Respond before 7 PM', style: 'tutor' },
+        { type: 'video', icon: '₹', label: 'Earnings', title: 'Payout readiness tips', desc: 'Reduce failed settlements', style: 'science' },
+        { type: 'flashcard', icon: 'C', label: 'Cards', title: 'Tutor demo prompts', desc: '10 trial class cards', style: 'math' },
+        { type: 'article', icon: 'R', label: 'Review', title: 'How to request reviews', desc: 'Improve profile trust', style: 'english' },
+        { type: 'video', icon: 'V', label: 'Verify', title: 'Verified profile walkthrough', desc: 'Unlock verified badge', style: 'tutor' }
+      ],
+      parent: [
+        { type: 'article', icon: 'P', label: 'Progress', title: 'Apoorv’s weekly learning view', desc: 'Attendance and notes', style: 'parent' },
+        { type: 'video', icon: '₹', label: 'Payment', title: 'Upcoming tuition payments', desc: 'Receipts and approvals', style: 'science' },
+        { type: 'article', icon: 'S', label: 'Safety', title: 'Tutor trust checklist', desc: 'Verification signals', style: 'student' },
+        { type: 'flashcard', icon: 'C', label: 'Cards', title: 'Parent trial checklist', desc: '10 questions to ask', style: 'english' },
+        { type: 'article', icon: 'N', label: 'Notes', title: 'Teacher preparation notes', desc: 'What to review at home', style: 'parent' }
+      ]
+    };
+    const flashcards = [
+      ['What is the standard form of a quadratic equation?', 'ax² + bx + c = 0, where a is not 0.'],
+      ['What does the discriminant tell us?', 'b² - 4ac tells the nature of roots.'],
+      ['When are roots real and equal?', 'When the discriminant is 0.'],
+      ['When are roots real and distinct?', 'When the discriminant is greater than 0.'],
+      ['When are roots imaginary?', 'When the discriminant is less than 0.'],
+      ['What is factorisation used for?', 'To express a quadratic as product of two linear factors.'],
+      ['What is completing the square?', 'A method to rewrite a quadratic into square form.'],
+      ['What is the quadratic formula?', 'x = (-b ± √(b² - 4ac)) / 2a.'],
+      ['Why graph a quadratic?', 'To inspect roots, vertex, and direction visually.'],
+      ['What is the vertex?', 'The turning point of the parabola.']
+    ];
+    const programMilestones = [
+      'Month 1: NEET Biology foundations',
+      'Month 2: Cell structure and biomolecules',
+      'Month 3: Plant physiology',
+      'Month 4: Human physiology',
+      'Month 5: Genetics basics',
+      'Month 6: Evolution and ecology',
+      'Month 7: Organic chemistry essentials',
+      'Month 8: Physical chemistry numericals',
+      'Month 9: Mechanics revision',
+      'Month 10: Electricity and magnetism',
+      'Month 11: Full syllabus tests',
+      'Month 12: Final exam strategy'
+    ];
+
+    function go(id) {
+      const screenId = id === 'phone' ? 'phoneEntry' : id;
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.getElementById(screenId).classList.add('active');
+      const authScreens = ['signin', 'role', 'value', 'phoneEntry', 'otp', 'mpin', 'profile'];
+      document.getElementById('phone').classList.toggle('hide-nav', authScreens.includes(screenId));
+      updateNav(screenId);
+      if (screenId === 'value') renderValueProps();
+      if (screenId === 'otp') startOtpTimer();
+      if (screenId === 'signin') renderSignin();
+      if (screenId === 'profile') renderProfileDefaults();
+      if (screenId === 'events') renderEventsScreen();
+      if (screenId === 'program') renderProgram();
+      if (screenId === 'dashboard') renderDashboard();
+    }
+
+    function tab(id, el) {
+      go(id);
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      el.classList.add('active');
+    }
+
+    function updateNav(id) {
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.tab === id));
+    }
+
+    document.querySelectorAll('.role-card').forEach(card => {
+      card.addEventListener('click', () => {
+        state.role = card.dataset.role;
+        document.querySelectorAll('.role-card').forEach(c => { c.classList.remove('selected'); c.querySelector('span:last-child').textContent = ''; });
+        card.classList.add('selected');
+        card.querySelector('span:last-child').textContent = '✓';
+        applyRoleTheme();
+        renderProfileDefaults();
+        state.valueIndex = 0;
+      });
+    });
+
+    function renderValueProps() {
+      const prop = props[state.role][state.valueIndex];
+      const last = state.valueIndex === props[state.role].length - 1;
+      document.getElementById('valueArt').innerHTML = `<span>${prop.icon}</span>`;
+      document.getElementById('valueTitle').textContent = prop.title;
+      document.getElementById('valueDesc').textContent = prop.desc;
+      document.getElementById('skipValue').classList.toggle('hidden', last);
+      document.getElementById('valueNext').textContent = last ? 'Get started' : 'Next';
+    }
+
+    function nextValueProp() {
+      if (state.valueIndex >= props[state.role].length - 1) {
+        go('phone');
+        return;
+      }
+      state.valueIndex += 1;
+      renderValueProps();
+    }
+
+    function togglePhone() {
+      const checked = document.getElementById('consent').checked;
+      document.getElementById('phoneInput').disabled = !checked;
+      document.getElementById('sendOtp').disabled = !checked;
+    }
+
+    function startOtpTimer() {
+      state.otpSeconds = 60;
+      validateOtp();
+      clearInterval(state.otpTimer);
+      document.getElementById('resendOtp').disabled = true;
+      document.getElementById('otpTimer').textContent = state.otpSeconds;
+      state.otpTimer = setInterval(() => {
+        state.otpSeconds -= 1;
+        document.getElementById('otpTimer').textContent = Math.max(state.otpSeconds, 0);
+        if (state.otpSeconds <= 0) {
+          clearInterval(state.otpTimer);
+          document.getElementById('resendOtp').disabled = false;
+        }
+      }, 1000);
+    }
+
+    function validateOtp() {
+      const digits = [...document.querySelectorAll('.otp-digit')].map(input => input.value.trim());
+      document.getElementById('verifyOtp').disabled = digits.some(digit => !/^\d$/.test(digit));
+    }
+
+    function validateMpin() {
+      const mpin = document.getElementById('mpinInput').value.trim();
+      const confirm = document.getElementById('confirmMpinInput').value.trim();
+      const valid = /^\d{4,6}$/.test(mpin) && mpin === confirm;
+      document.getElementById('mpinContinue').disabled = !valid;
+      document.getElementById('mpinHelp').textContent = valid ? 'MPIN confirmed.' : 'Enter matching 4-6 digit MPIN values.';
+    }
+
+    function togglePassword(id, button) {
+      const input = document.getElementById(id);
+      input.type = input.type === 'password' ? 'text' : 'password';
+      button.textContent = input.type === 'password' ? '◉' : '◎';
+    }
+
+    function populateSpecs() {
+      const stream = document.getElementById('stream').value;
+      document.getElementById('spec').innerHTML = specs[stream].map(s => `<option>${s}</option>`).join('');
+    }
+
+    function finishOnboarding() {
+      renderHome();
+      go('home');
+      toast('Registration successful');
+    }
+
+    function renderHome() {
+      applyRoleTheme();
+      const person = personas[state.role];
+      const titles = { student: 'Student dashboard', tutor: 'Tutor dashboard', parent: 'Parent dashboard' };
+      const hero = {
+        student: 'Find a CBSE Math tutor',
+        tutor: '3 new qualified leads',
+        parent: 'Track Apoorv’s next class'
+      };
+      const heroSub = {
+        student: 'AI match found 12 tutors near South Delhi.',
+        tutor: 'Students match your Math, CBSE, and evening availability.',
+        parent: 'Attendance, payment, and tutor notes are ready.'
+      };
+      document.getElementById('homeName').textContent = `${person.firstName} ${person.lastName}`;
+      document.getElementById('dashboardTitle').textContent = titles[state.role];
+      document.getElementById('homeHero').textContent = hero[state.role];
+      document.getElementById('homeHeroSub').textContent = heroSub[state.role];
+      const metricMap = {
+        student: [['12', 'AI tutor matches', 'search'], ['2', 'Trial requests', 'program'], ['4.8', 'Avg match rating', 'ratings'], ['₹199', 'Trial due', 'paymentMethods']],
+        tutor: [['3', 'New leads', 'search'], ['6', 'Classes this week', 'program'], ['₹8.2k', 'Pending payout', 'paymentMethods'], ['4.8', 'Rating', 'ratings']],
+        parent: [['1', 'Linked student', 'profileTab'], ['4', 'Classes this week', 'program'], ['₹199', 'Due now', 'paymentMethods'], ['96%', 'Attendance', 'program']]
+      };
+      document.getElementById('homeMetrics').innerHTML = metricMap[state.role].map(m => `<div class="card metric" onclick="go('${m[2]}')"><strong>${m[0]}</strong><span>${m[1]}</span></div>`).join('');
+      loadRecommendations();
+      renderHomeEvents();
+      document.getElementById('profileRoleText').textContent = person.profile;
+      const profileAvatar = document.querySelector('#profileTab .avatar');
+      renderAvatar(profileAvatar, false);
+      profileAvatar.className = `avatar ${person.avatarClass}`;
+      document.querySelector('#profileTab strong').textContent = `${person.firstName} ${person.lastName}`;
+    }
+
+    function openTutor(name, initials, rating, exp, price, match) {
+      state.tutor = name;
+      document.getElementById('tpName').textContent = name;
+      document.getElementById('tpAvatar').textContent = initials;
+      document.getElementById('tpMeta').textContent = `★ ${rating} • ${exp} • ${price}`;
+      document.getElementById('tpReason').textContent = `${match} match based on subject, board, language, budget, and availability.`;
+      go('tutorProfile');
+    }
+
+    function confirmBooking() {
+      go('calendar');
+      toast('Trial booked and payment confirmed');
+    }
+
+    function renderDashboard() {
+      applyRoleTheme();
+      const heads = { student: 'Student dashboard', tutor: 'Tutor dashboard', parent: 'Parent dashboard' };
+      document.getElementById('dashHead').textContent = heads[state.role];
+      const metrics = {
+        student: [['2', 'Bookings', 'program'], ['5', 'Recommendations', 'home'], ['1', 'Payment due', 'paymentMethods'], ['3', 'Chats', 'chat']],
+        tutor: [['9', 'Leads', 'search'], ['18', 'Hours booked', 'program'], ['₹22k', 'Month earnings', 'paymentMethods'], ['92%', 'Profile score', 'ratings']],
+        parent: [['1', 'Child linked', 'profileTab'], ['4', 'Upcoming', 'program'], ['₹3.4k', 'Paid this month', 'paymentMethods'], ['2', 'Tutor notes', 'ratings']]
+      };
+      const list = {
+        student: ['Trial class confirmed with Neha Verma', 'AI recommends 5 Math tutors', 'Review Rahul Menon after demo'],
+        tutor: ['Accept trial request from Apoorv', 'Add weekend availability', 'Payout expected Friday'],
+        parent: ['Apoorv has a trial tomorrow', 'Payment receipt generated', 'Neha shared class preparation notes']
+      };
+      document.getElementById('dashMetrics').innerHTML = metrics[state.role].map(m => `<div class="card metric" onclick="go('${m[2]}')"><strong>${m[0]}</strong><span>${m[1]}</span></div>`).join('');
+      document.getElementById('dashList').innerHTML = list[state.role].map(x => `<div class="card spread"><p>${x}</p><span class="pill">Open</span></div>`).join('');
+    }
+
+    function renderProfileDefaults() {
+      const person = personas[state.role];
+      document.getElementById('firstName').value = person.firstName;
+      document.getElementById('lastName').value = person.lastName;
+      document.getElementById('phoneInput').value = person.phone;
+      document.getElementById('educationFields').classList.toggle('hidden', state.role === 'parent');
+      const avatar = document.getElementById('profileAvatar');
+      avatar.className = `avatar avatar-large ${person.avatarClass}`;
+      renderAvatar(avatar, true);
+    }
+
+    function renderSignin() {
+      const person = personas[state.role];
+      applyRoleTheme();
+      document.getElementById('signinName').textContent = `${person.firstName} ${person.lastName}`;
+      document.getElementById('signinRoleText').textContent = person.signin;
+      const avatar = document.getElementById('signinAvatar');
+      avatar.className = `avatar ${person.avatarClass}`;
+      renderAvatar(avatar, false);
+    }
+
+    function signout() {
+      renderSignin();
+      go('signin');
+      toast('Signed out');
+    }
+
+    function signin() {
+      renderHome();
+      go('home');
+      toast('Signed in');
+    }
+
+    function restartPrototype() {
+      state.role = 'student';
+      state.tutor = 'Neha Verma';
+      state.avatarDataUrl = '';
+      document.getElementById('consent').checked = false;
+      togglePhone();
+      document.querySelectorAll('.role-card').forEach(card => {
+        const selected = card.dataset.role === 'student';
+        card.classList.toggle('selected', selected);
+        card.querySelector('span:last-child').textContent = selected ? '✓' : '';
+      });
+      applyRoleTheme();
+      renderProfileDefaults();
+      renderHome();
+      go('role');
+      toast('Prototype restarted');
+    }
+
+    function applyRoleTheme() {
+      const phone = document.getElementById('phone');
+      phone.classList.remove('role-tutor', 'role-student', 'role-parent');
+      phone.classList.add(`role-${state.role}`);
+    }
+
+    function loadRecommendations() {
+      const loader = document.getElementById('smartLoader');
+      const section = document.getElementById('recommendationSection');
+      const carousel = document.getElementById('recommendationCarousel');
+      if (!loader || !section || !carousel) return;
+      loader.classList.remove('hidden');
+      section.classList.add('hidden');
+      carousel.innerHTML = '';
+      clearTimeout(state.recommendationTimer);
+      state.recommendationTimer = setTimeout(() => {
+        carousel.innerHTML = recommendations[state.role].map((item, index) => `<div class="rec" onclick="openResource(${index})"><div class="thumb ${item.style}">${item.icon}</div><div><span class="pill">${item.label}</span><strong style="display:block;margin-top:8px">${item.title}</strong><p>${item.desc}</p></div></div>`).join('');
+        loader.classList.add('hidden');
+        section.classList.remove('hidden');
+      }, 2000);
+    }
+
+    function renderHomeEvents() {
+      const events = [...state.events[state.role]].sort((a, b) => `${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`));
+      const target = document.getElementById('homeEvents');
+      const form = document.getElementById('createReminderCard');
+      if (form) form.classList.toggle('hidden', events.length > 0);
+      if (!target) return;
+      if (!events.length) {
+        target.innerHTML = '<div class="card"><strong>No reminders yet</strong><p>Create one for a class, payment, lead follow-up, or study plan.</p></div>';
+        return;
+      }
+      const visible = events.slice(0, 2).map(eventCard).join('');
+      const more = `<button class="view-all-reminders" onclick="go('events')">View all reminders</button>`;
+      target.innerHTML = visible + more;
+    }
+
+    function renderEventsScreen() {
+      const events = [...state.events[state.role]].sort((a, b) => `${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`));
+      document.getElementById('eventsList').innerHTML = events.length
+        ? events.map(eventCard).join('')
+        : '<div class="card"><strong>No reminders yet</strong><p>Create reminders from Home and they will appear here.</p></div>';
+    }
+
+    function eventCard(event, index) {
+      const actualIndex = state.events[state.role].indexOf(event);
+      return `<div class="reminder-summary-card"><div class="spread"><div><div class="reminder-summary-title">${event.title}</div><div class="reminder-summary-meta">${formatDate(event.date)} • ${formatTime(event.time)}</div></div><span class="pill">${capitalize(state.role)}</span></div><div class="reminder-actions"><button class="reminder-action" onclick="editReminder(${actualIndex})">Edit</button><button class="reminder-action" onclick="deleteReminder(${actualIndex})">Delete</button></div></div>`;
+    }
+
+    function createReminder() {
+      const title = document.getElementById('eventTitle').value.trim() || 'Untitled reminder';
+      const date = document.getElementById('eventDate').value || '2026-06-24';
+      const time = document.getElementById('eventTime').value || '09:00';
+      state.events[state.role].push({ title, date, time });
+      renderHomeEvents();
+      toast('Reminder created');
+    }
+
+    function editReminder(index) {
+      const event = state.events[state.role][index];
+      if (!event) return;
+      document.getElementById('eventTitle').value = event.title;
+      document.getElementById('eventDate').value = event.date;
+      document.getElementById('eventTime').value = event.time;
+      state.events[state.role].splice(index, 1);
+      go('home');
+      renderHomeEvents();
+      toast('Edit reminder details');
+    }
+
+    function deleteReminder(index) {
+      state.events[state.role].splice(index, 1);
+      renderHomeEvents();
+      renderEventsScreen();
+      renderProgram();
+      toast('Reminder deleted');
+    }
+
+    function formatDate(value) {
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
+        const [day, month, year] = value.split('/');
+        const monthName = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(month) - 1] || month;
+        return `${Number(day)} ${monthName} ${year}`;
+      }
+      const date = new Date(`${value}T00:00:00`);
+      return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    function formatTime(value) {
+      if (/[AP]M$/i.test(value)) {
+        return value.replace(/^0/, '').toLowerCase();
+      }
+      const [hours, minutes] = value.split(':').map(Number);
+      const date = new Date();
+      date.setHours(hours, minutes, 0, 0);
+      return date.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+    }
+
+    function openResource(index) {
+      const item = recommendations[state.role][index];
+      state.currentResource = item;
+      if (item.type === 'flashcard') {
+        document.getElementById('flashTitle').textContent = item.title;
+        document.getElementById('flashDesc').textContent = item.desc;
+        go('flashcardLanding');
+        return;
+      }
+      document.getElementById('resourceKind').textContent = item.label;
+      document.getElementById('resourceTitle').textContent = item.title;
+      document.getElementById('resourceDesc').textContent = item.desc;
+      document.getElementById('resourceMedia').innerHTML = item.type === 'video'
+        ? `<div class="resource-player"><div style="text-align:center"><div style="font-size:54px">▶</div><strong>${item.title}</strong><p style="color:#d1d5db">${item.desc}</p></div></div>`
+        : `<div class="resource-banner"><span>${item.icon}</span></div>`;
+      go('resourceDetail');
+    }
+
+    function markResourceComplete() {
+      toast('Resource marked complete');
+      go('home');
+    }
+
+    function startFlashcards() {
+      state.flashIndex = 0;
+      state.flashShowingAnswer = false;
+      renderFlashcard();
+      go('flashcardPlay');
+    }
+
+    function renderFlashcard() {
+      const pair = flashcards[state.flashIndex];
+      document.getElementById('flashProgress').textContent = `Card ${state.flashIndex + 1} of ${flashcards.length}`;
+      document.getElementById('flashCard').textContent = state.flashShowingAnswer ? pair[1] : pair[0];
+    }
+
+    function flipFlashcard() {
+      state.flashShowingAnswer = !state.flashShowingAnswer;
+      renderFlashcard();
+    }
+
+    function nextFlashcard() {
+      state.flashIndex = (state.flashIndex + 1) % flashcards.length;
+      state.flashShowingAnswer = false;
+      renderFlashcard();
+    }
+
+    function openRelatedArticle() {
+      document.getElementById('resourceKind').textContent = 'Article';
+      document.getElementById('resourceTitle').textContent = 'Quadratic equations deep dive';
+      document.getElementById('resourceDesc').textContent = 'Worked examples, formula use, and exam-style practice.';
+      document.getElementById('resourceMedia').innerHTML = `<div class="resource-banner"><span>A</span></div>`;
+      go('resourceDetail');
+    }
+
+    function renderProgram() {
+      const title = state.role === 'student' ? '12 month NEET program' : state.role === 'tutor' ? 'Tutor growth program' : 'Parent support program';
+      document.getElementById('programHero').textContent = title;
+      document.getElementById('programDesc').textContent = state.role === 'student'
+        ? 'Milestones unlock one by one. Each topic includes video, article, flashcard, and quiz.'
+        : 'Each milestone includes role-specific video, article, flashcard, and quiz activities.';
+      document.getElementById('programList').innerHTML = programMilestones.map((title, index) => {
+        const unlocked = index <= state.completedMilestone;
+        const action = unlocked ? `openProgramMilestone(${index})` : `toast('Complete previous milestone first')`;
+        return `<div class="card program-step ${unlocked ? 'unlocked' : ''}" onclick="${action}"><div class="spread"><div><strong>${title}</strong><p>Video • Article • Flashcard • Quiz</p></div><span class="pill">${unlocked ? 'Open' : 'Locked'}</span></div></div>`;
+      }).join('');
+      document.getElementById('programEvents').innerHTML = state.events[state.role].length
+        ? state.events[state.role].map(eventCard).join('')
+        : '<div class="card"><strong>No sessions or reminders yet</strong><p>Create a reminder from Home to see it here.</p></div>';
+    }
+
+    function openProgramMilestone(index) {
+      state.completedMilestone = Math.max(state.completedMilestone, index + 1);
+      document.getElementById('resourceKind').textContent = 'Milestone';
+      document.getElementById('resourceTitle').textContent = programMilestones[index];
+      document.getElementById('resourceDesc').textContent = 'Start with video, continue to article, flashcards, and quiz.';
+      document.getElementById('resourceMedia').innerHTML = `<div class="resource-player"><div style="text-align:center"><div style="font-size:54px">▶</div><strong>${programMilestones[index]}</strong><p style="color:#d1d5db">Video • Article • Flashcard • Quiz</p></div></div>`;
+      go('resourceDetail');
+    }
+
+    function toggleAvatarActions() {
+      document.getElementById('avatarActions').classList.toggle('hidden');
+    }
+
+    function openCamera() {
+      document.getElementById('cameraInput').click();
+    }
+
+    function openGallery() {
+      document.getElementById('galleryInput').click();
+    }
+
+    function loadAvatar(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        state.avatarDataUrl = reader.result;
+        renderProfileDefaults();
+        renderSignin();
+        renderHome();
+        document.getElementById('avatarActions').classList.add('hidden');
+        toast('Avatar updated');
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function renderAvatar(element, editable) {
+      const person = personas[state.role];
+      if (state.avatarDataUrl) {
+        element.innerHTML = `<img src="${state.avatarDataUrl}" alt="${person.firstName} avatar">${editable ? '<button class="pencil" onclick="toggleAvatarActions()" aria-label="Edit avatar">✎</button>' : ''}`;
+      } else {
+        element.innerHTML = `${person.initials}${editable ? '<button class="pencil" onclick="toggleAvatarActions()" aria-label="Edit avatar">✎</button>' : ''}`;
+      }
+    }
+
+    function toast(text) {
+      const t = document.getElementById('toast');
+      t.textContent = text;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 1700);
+    }
+
+    function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+    populateSpecs();
+    applyRoleTheme();
+    renderProfileDefaults();
+    renderValueProps();
+    renderHome();
+  </script>
+</body>
+</html>

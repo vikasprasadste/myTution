@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@mytution/config": ["packages/config/src/index.ts"],
+      "@mytution/shared": ["packages/shared/src/index.ts"],
+      "@mytution/db": ["packages/db/src/index.ts"]
+    }
+  }
+}
