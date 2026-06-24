@@ -84,7 +84,7 @@ Recommended Render settings:
 ```text
 Root Directory: .
 Runtime: Node
-Build Command: npm install && npm run db:generate && npm run build --workspace services/api
+Build Command: npm install --include=dev && npm run db:generate && npm run build --workspace services/api
 Start Command: npm run start --workspace services/api
 ```
 
@@ -94,6 +94,7 @@ Render environment variables:
 DATABASE_URL="YOUR_NEON_DATABASE_URL"
 DIRECT_URL="YOUR_NEON_DATABASE_URL"
 NODE_ENV="production"
+NPM_CONFIG_PRODUCTION="false"
 ```
 
 Do not set `PORT`; Render provides it.

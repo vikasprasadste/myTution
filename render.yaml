@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: mytution-api
+    runtime: node
+    rootDir: .
+    buildCommand: npm install --include=dev && npm run db:generate && npm run build --workspace services/api
+    startCommand: npm run start --workspace services/api
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
