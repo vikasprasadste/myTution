@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role, TutorSearchResult } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role, TutorSearchResult, UserListItem, UserProfileDetails } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
@@ -53,10 +53,12 @@ const icon = require("../assets/AppIcons/appstore.png");
 type StreamKey = "junior" | "senior" | "ug" | "pg";
 type AuthSession = { accessToken: string; refreshToken: string; tokenType: string };
 type DashboardCard = { value: string; label: string; target: AppScreen };
-type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number };
+type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number; milestoneTitle?: string; required?: boolean };
+type JourneyActivity = SelectedActivity & { milestoneTitle: string; milestoneSequence: number; activitySequence: number; required: boolean; status: "pending" | "in_progress" | "complete" };
 type QuizQuestion = { id: string; prompt: string; options: string[]; answerIndex: number; learnMore: string };
 type QuizPayload = { resourceId: string; title: string; description: string; questions: QuizQuestion[] };
 type SignInMode = "fresh" | "returning";
+type TutorFilterOptions = { subjects: string[]; locations: string[]; grades: string[]; boards: string[]; modes: string[]; languages: string[]; genders: string[]; experience: string[]; ratings: string[] };
 type ProfileDraft = {
   firstName: string;
   lastName: string;
@@ -96,6 +98,7 @@ const flashcards = [
 export default function Index() {
   const [role, setRole] = useState<Role>("student");
   const [screen, setScreen] = useState<AppScreen>("signin");
+  const [showAppSplash, setShowAppSplash] = useState(true);
   const [signInMode, setSignInMode] = useState<SignInMode>("fresh");
   const [valueIndex, setValueIndex] = useState(0);
   const [consent, setConsent] = useState(false);
@@ -128,6 +131,7 @@ export default function Index() {
   const [dashboardCards, setDashboardCards] = useState<DashboardCard[] | null>(null);
   const [apiMilestones, setApiMilestones] = useState<ProgramMilestone[] | null>(null);
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
+  const [selectedPrograms, setSelectedPrograms] = useState<ProgramSummary[]>([]);
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
   const [draftProgramId, setDraftProgramId] = useState<string | null>(null);
   const [programModalVisible, setProgramModalVisible] = useState(false);
@@ -147,6 +151,7 @@ export default function Index() {
   const [selectedMilestone, setSelectedMilestone] = useState<ProgramMilestone | null>(null);
   const [selectedResource, setSelectedResource] = useState<SelectedActivity | null>(null);
   const [tutorResults, setTutorResults] = useState<TutorSearchResult[]>([]);
+  const [tutorFilterOptions, setTutorFilterOptions] = useState<TutorFilterOptions>({ subjects: [], locations: [], grades: [], boards: [], modes: [], languages: [], genders: [], experience: [], ratings: [] });
   const [batchClasses, setBatchClasses] = useState<BatchClass[]>([]);
   const [batchRequests, setBatchRequests] = useState<BatchRequestSummary[]>([]);
   const [tutorSearchLoading, setTutorSearchLoading] = useState(false);
@@ -184,6 +189,12 @@ export default function Index() {
   );
 
   const roleReminders = reminders.filter((item) => item.role === role && item.status === "active");
+  const homeMilestones = apiMilestones ?? programMilestones;
+  const journeyActivities = useMemo(() => buildJourneyActivities(role, homeMilestones), [homeMilestones, role]);
+  const carouselLimit = Number.isFinite(appConfig.home?.maxActivitiesPerCarousel) ? appConfig.home.maxActivitiesPerCarousel : 5;
+  const forYouTodayActivities = journeyActivities.filter((activity) => activity.required && activity.status !== "complete").slice(0, carouselLimit);
+  const nextStepActivities = journeyActivities.filter((activity) => !activity.required && activity.status !== "complete").slice(0, carouselLimit);
+  const programComplete = homeMilestones.length > 0 && homeMilestones.every((milestone) => (milestone.activities ?? []).length > 0 && (milestone.activities ?? []).every((activity) => activity.status === "complete"));
 
   useEffect(() => {
     if (screen !== "otp") return undefined;
@@ -201,10 +212,11 @@ export default function Index() {
 
   useEffect(() => {
     if (screen !== "sessions" || programModalSeen || !programs.length) return;
+    if (role === "student" && selectedPrograms.length > 0) return;
     setDraftProgramId(selectedProgramId ?? programs[0]?.id ?? null);
     setProgramMenuOpen(false);
     setProgramModalVisible(true);
-  }, [programModalSeen, programs, screen, selectedProgramId]);
+  }, [programModalSeen, programs, role, screen, selectedProgramId, selectedPrograms.length]);
 
   useEffect(() => {
     if (!programToast) return undefined;
@@ -216,6 +228,11 @@ export default function Index() {
     if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
   }, []);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setShowAppSplash(false), 2600);
+    return () => clearTimeout(timer);
+  }, []);
+
 
   useEffect(() => {
     if (screen === "search" && role === "student") refreshTutorSearch({ subject: "Mathematics" });
@@ -225,24 +242,41 @@ export default function Index() {
     }
   }, [screen, role, authSession?.accessToken]);
 
-  function prepareProgram(nextProgramId?: string | null) {
+  async function prepareProgram(nextProgramId?: string | null) {
     const resolvedProgramId = nextProgramId ?? draftProgramId ?? selectedProgramId ?? programs[0]?.id ?? null;
     if (!resolvedProgramId) return;
     if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
     setProgramPreparing(true);
     setPendingProgramId(resolvedProgramId);
     setProgramMenuOpen(false);
-    setSelectedProgramId(resolvedProgramId);
-    setProgramRefreshKey((value) => value + 1);
     programTimeoutRef.current = setTimeout(() => {
       setProgramPreparing(false);
       setPendingProgramId(null);
       setProgramToast("Program setup timed out. Please try again.");
     }, 15000);
+    try {
+      if (role === "student") {
+        const response = await apiPost<{ programs: ProgramSummary[]; selectedPrograms: ProgramSummary[]; maxSelectedPrograms: number }>("/api/v1/education-plan/programs/select", {
+          role,
+          programId: resolvedProgramId
+        }, authSession?.accessToken);
+        setPrograms(response.programs);
+        setSelectedPrograms(response.selectedPrograms);
+      }
+      setSelectedProgramId(resolvedProgramId);
+      setProgramRefreshKey((value) => value + 1);
+    } catch {
+      if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
+      setProgramPreparing(false);
+      setPendingProgramId(null);
+      setApiNotice("Program could not be added. Students can select up to 3 programs.");
+    }
   }
 
   function openProgramPicker() {
-    setDraftProgramId(selectedProgramId ?? programs[0]?.id ?? null);
+    const selectedIds = new Set(selectedPrograms.map((program) => program.id));
+    const nextProgram = role === "student" ? programs.find((program) => !selectedIds.has(program.id)) : programs.find((program) => program.id === selectedProgramId) ?? programs[0];
+    setDraftProgramId(nextProgram?.id ?? selectedProgramId ?? programs[0]?.id ?? null);
     setProgramMenuOpen(false);
     setProgramModalVisible(true);
   }
@@ -257,9 +291,10 @@ export default function Index() {
           apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`),
           token ? apiGet<{ data: Reminder[] }>(`/api/v1/events-reminders?role=${role}`, token) : Promise.resolve({ data: [] }),
           token ? apiGet<{ data: { cards: DashboardCard[] } }>(`/api/v1/dis/dashboard?role=${role}`, token) : Promise.resolve({ data: { cards: [] } }),
-          apiGet<{ data: ProgramSummary[] }>(`/api/v1/education-plan/programs?role=${role}`)
+          apiGet<{ data: ProgramSummary[]; selectedPrograms?: ProgramSummary[]; maxSelectedPrograms?: number }>(`/api/v1/education-plan/programs?role=${role}`, token)
         ]);
-        const programId = selectedProgramId ?? programList.data[0]?.id ?? null;
+        const selectedFromApi = programList.selectedPrograms ?? programList.data.filter((program) => program.selected);
+        const programId = selectedProgramId ?? selectedFromApi[0]?.id ?? (role === "student" ? null : programList.data[0]?.id ?? null);
         const plan = programId
           ? await apiGet<{ data: { milestones: ProgramMilestone[]; completedMilestoneSequence: number } }>(`/api/v1/education-plan/current?role=${role}&programId=${programId}`, token)
           : { data: { milestones: [], completedMilestoneSequence: 0 } };
@@ -269,6 +304,7 @@ export default function Index() {
         setReminders(eventData.data);
         setDashboardCards(dashboard.data.cards);
         setPrograms(programList.data);
+        setSelectedPrograms(selectedFromApi);
         setSelectedProgramId(programId);
         setApiMilestones(plan.data.milestones);
         setCompletedMilestone(plan.data.completedMilestoneSequence);
@@ -310,13 +346,16 @@ export default function Index() {
     if (!result.canceled) setAvatarUri(result.assets[0]?.uri ?? null);
   }
 
-  async function refreshTutorSearch(filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string } = {}) {
+  async function refreshTutorSearch(filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string; language?: string; gender?: string; experience?: string; rating?: string } = {}) {
     setTutorSearchLoading(true);
     try {
-      const params = new URLSearchParams();
-      Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
-      const response = await apiGet<{ data: TutorSearchResult[] }>("/api/v1/usermanagement/tutors" + (params.toString() ? "?" + params.toString() : ""), authSession?.accessToken);
-      setTutorResults(response.data);
+      const listResponse = await apiGet<{ data: UserListItem[] }>("/api/v1/usermanagement/users?Role=Tutor", authSession?.accessToken);
+      const profiles = await Promise.all(
+        listResponse.data.map((item) => apiGet<{ data: UserProfileDetails }>(`/api/v1/usermanagement/getUserProfile?userId=${encodeURIComponent(item.id)}&Role=Tutor`, authSession?.accessToken))
+      );
+      const tutors = profiles.map((item) => userProfileToTutorResult(item.data));
+      setTutorFilterOptions(buildTutorFilterOptions(tutors));
+      setTutorResults(filterTutorResults(tutors, filters));
       setApiNotice("");
     } catch {
       setTutorResults([]);
@@ -403,6 +442,7 @@ export default function Index() {
     setDashboardCards(null);
     setApiMilestones(null);
     setPrograms([]);
+    setSelectedPrograms([]);
     setSelectedProgramId(null);
     setAuthSession(null);
     setApiNotice("");
@@ -457,7 +497,8 @@ export default function Index() {
         profileLabel: role === "parent" ? "Parent • myTution" : `${capitalize(role)} • ${stream} • ${specialization}`
       });
       setApiNotice("");
-      setScreen("home");
+      setProgramModalSeen(false);
+      setScreen("sessions");
     } catch {
       setApiNotice("Something went wrong");
     } finally {
@@ -761,7 +802,7 @@ export default function Index() {
               </Pressable>
             </>
           )}
-          <Button disabled={!canContinue} role={role} label="Continue" onPress={() => setScreen(securityReturn === "account" ? "account" : securityReturn === "signin" ? "home" : "profile")} />
+          <Button disabled={!canContinue} role={role} label="Continue" onPress={() => setScreen(securityReturn === "account" ? "account" : securityReturn === "signin" ? "sessions" : "profile")} />
         </>
       );
     }
@@ -848,7 +889,7 @@ export default function Index() {
       );
     }
 
-    if (screen === "signin") {
+  if (screen === "signin") {
       return <SignInScreen role={role} mode={signInMode} persona={persona} avatarUri={avatarUri} restart={restartPrototype} signIn={() => setScreen(signInMode === "fresh" ? "signinCredentials" : "home")} register={() => setScreen("role")} />;
     }
 
@@ -883,7 +924,22 @@ export default function Index() {
           {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
           <TrackCard role={role} onPress={() => setScreen(role === "student" ? "search" : "sessions")} />
 
-          {isFeatureEnabled("recommendations", role) && (
+          {role === "student" ? (
+            <>
+              {programComplete ? <ProgramCompletedCard role={role} onPress={() => setScreen("sessions")} /> : <ProgramJourneyCard role={role} milestones={homeMilestones} completedMilestone={completedMilestone} onPress={() => setScreen("sessions")} />}
+              {!recommendationsReady ? (
+                <View style={styles.smartPickCard}>
+                  <ActivityIndicator color={theme.accentStrong} />
+                  <Muted>Loading program activities</Muted>
+                </View>
+              ) : (
+                <>
+                  <JourneyResourceCarousel title="For you today" role={role} items={forYouTodayActivities} emptyCopy="No required activities pending." onPress={openResource} />
+                  <JourneyResourceCarousel title="Next steps" role={role} items={nextStepActivities} emptyCopy="No supporting activities pending." onPress={openResource} />
+                </>
+              )}
+            </>
+          ) : isFeatureEnabled("recommendations", role) && (
             <>
               {!recommendationsReady ? (
                 <View style={styles.smartPickCard}>
@@ -948,7 +1004,7 @@ export default function Index() {
       );
     }
 
-    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} loading={tutorSearchLoading} requestBatch={requestBatch} requestLoading={loadingAction} search={refreshTutorSearch} back={() => setScreen("home")} />;
+    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} requestLoading={loadingAction} search={refreshTutorSearch} back={() => setScreen("home")} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} />;
@@ -956,7 +1012,7 @@ export default function Index() {
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} openSecurity={() => { setSecurityReturn("account"); setScreen("mpin"); }} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} />;
-    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedProgramId={selectedProgramId} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} />;
+    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} />;
     if (screen === "milestoneDetail" && selectedMilestone) return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} />;
     if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} completedTopic={completedTopic} nextTopic={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} myMiles={() => { setCompletedTopic(null); setSelectedResource(null); setScreen("sessions"); }} />;
     if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "home")} />;
@@ -969,6 +1025,10 @@ export default function Index() {
   }
 
   const showNav = ["home", "sessions", "roleHub", "chat", "account"].includes(screen);
+
+  if (showAppSplash) {
+    return <AppSplash />;
+  }
 
   return (
     <LinearGradient colors={screenGradient(role)} style={styles.shell}>
@@ -996,6 +1056,7 @@ export default function Index() {
         role={role}
         visible={programModalVisible}
         programs={programs}
+        selectedPrograms={selectedPrograms}
         selectedProgramId={draftProgramId ?? selectedProgramId}
         setSelectedProgramId={setDraftProgramId}
         preparing={programPreparing}
@@ -1007,6 +1068,14 @@ export default function Index() {
         </View>
       ) : null}
     </LinearGradient>
+  );
+}
+
+function AppSplash() {
+  return (
+    <View style={styles.appSplashShell}>
+      <Image source={splash} style={styles.appSplashImage} resizeMode="cover" />
+    </View>
   );
 }
 
@@ -1056,9 +1125,10 @@ function SignInScreen({
   if (mode === "fresh") {
     return (
       <>
-        <View style={styles.freshSigninTop}>
+        <View style={styles.signinHero}>
           <Image source={icon} style={styles.freshSigninLogo} resizeMode="contain" />
           <Text style={styles.freshSigninBrand}>myTution</Text>
+          <Text style={styles.freshSigninCopy}>Sign in to continue your learning journey.</Text>
         </View>
         <Button role={role} label="Sign in" onPress={signIn} />
         <Pressable style={({ pressed }) => [styles.registerLink, pressed && styles.pressed]} onPress={register}>
@@ -1328,6 +1398,142 @@ function RecommendationTile({ role, item, onPress }: { role: Role; item: Recomme
         <Text style={styles.recTitle}>{item.title}</Text>
         <Text style={styles.recMeta}>{item.description}</Text>
       </View>
+    </Pressable>
+  );
+}
+
+
+function buildJourneyActivities(role: Role, milestones: ProgramMilestone[]): JourneyActivity[] {
+  return milestones
+    .flatMap((milestone) => {
+      const activities = milestone.activities ?? [];
+      const requiredLimit = Math.min(5, activities.length);
+      return activities.map((activity) => ({
+        id: activity.resourceId,
+        role,
+        type: activity.type,
+        title: activity.title,
+        description: activity.description,
+        thumbnailLabel: activityTypeLabel(activity.type),
+        milestoneId: milestone.id,
+        activityId: activity.id,
+        activitySequence: activity.sequence,
+        milestoneSequence: milestone.sequence,
+        milestoneTitle: milestone.title,
+        required: activity.sequence <= requiredLimit,
+        status: activity.status
+      }));
+    })
+    .sort((a, b) => a.milestoneSequence - b.milestoneSequence || a.activitySequence - b.activitySequence);
+}
+
+function activityTypeLabel(type: string) {
+  if (type === "questionnaire") return "Assessment";
+  if (type === "article") return "Article Education material";
+  if (type === "video") return "Video Education material";
+  if (type === "flashcard") return "Flashcards Education material";
+  if (type === "quiz") return "Quiz Education material";
+  if (type === "survey") return "Feedback survey";
+  if (type === "todo") return "Task/activities";
+  return capitalize(type);
+}
+
+function activityGlyph(type: string) {
+  if (type === "video") return "▶";
+  if (type === "article") return "A";
+  if (type === "flashcard") return "▤";
+  if (type === "quiz") return "?";
+  if (type === "survey") return "S";
+  if (type === "todo") return "✓";
+  return "P";
+}
+
+function ProgramJourneyCard({ role, milestones, completedMilestone, onPress }: { role: Role; milestones: ProgramMilestone[]; completedMilestone: number; onPress: () => void }) {
+  const theme = useRoleTheme(role);
+  const available = milestones.filter((milestone) => !milestone.locked).length;
+  const completed = milestones.filter((milestone) => (milestone.activities ?? []).length > 0 && (milestone.activities ?? []).every((activity) => activity.status === "complete")).length || completedMilestone;
+  const inProgress = milestones.filter((milestone) => {
+    const activities = milestone.activities ?? [];
+    const done = activities.filter((activity) => activity.status === "complete").length;
+    return done > 0 && done < activities.length;
+  }).length;
+  const current = milestones.find((milestone) => !milestone.locked && (milestone.activities ?? []).some((activity) => activity.status !== "complete")) ?? milestones[0];
+  const currentIndex = current ? milestones.findIndex((milestone) => milestone.id === current.id) : 0;
+  return (
+    <Pressable style={({ pressed }) => [styles.programJourneyCard, pressed && styles.pressed]} onPress={onPress}>
+      <View style={styles.programJourneyTop}>
+        <View style={styles.flex}>
+          <Text style={styles.programJourneyTitle}>Program journey</Text>
+          <Text style={styles.programJourneyCopy}>{current ? "Current topic: " + current.title : "Select a program to begin."}</Text>
+        </View>
+        <Text style={[styles.programJourneyAction, { color: theme.text }]}>Open</Text>
+      </View>
+      <View style={styles.programTracker}>
+        {milestones.slice(0, 8).map((milestone, index) => {
+          const activities = milestone.activities ?? [];
+          const complete = activities.length > 0 && activities.every((activity) => activity.status === "complete");
+          const active = index === currentIndex;
+          return <View key={milestone.id} style={[styles.programTrackerDot, complete && { backgroundColor: "#16A34A", borderColor: "#16A34A" }, active && { backgroundColor: theme.accentStrong, borderColor: theme.accentStrong, transform: [{ scale: 1.25 }] }]} />;
+        })}
+      </View>
+      <View style={styles.programStatsRow}>
+        <ProgramStat value={String(available)} label="Available" />
+        <ProgramStat value={String(inProgress)} label="In progress" />
+        <ProgramStat value={String(completed)} label="Completed" />
+      </View>
+    </Pressable>
+  );
+}
+
+function ProgramStat({ value, label }: { value: string; label: string }) {
+  return (
+    <View style={styles.programStat}>
+      <Text style={styles.programStatValue}>{value}</Text>
+      <Text style={styles.programStatLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function ProgramCompletedCard({ role, onPress }: { role: Role; onPress: () => void }) {
+  const theme = useRoleTheme(role);
+  return (
+    <Pressable style={({ pressed }) => [styles.programCompletedCard, pressed && styles.pressed]} onPress={onPress}>
+      <Text style={styles.programCompletedIcon}>✓</Text>
+      <Text style={styles.programCompletedTitle}>Program complete</Text>
+      <Text style={styles.programCompletedCopy}>Congratulations. You have completed every topic in this program.</Text>
+      <Text style={[styles.programJourneyAction, { color: theme.text }]}>Review journey</Text>
+    </Pressable>
+  );
+}
+
+function JourneyResourceCarousel({ title, role, items, emptyCopy, onPress }: { title: string; role: Role; items: JourneyActivity[]; emptyCopy: string; onPress: (item: SelectedActivity) => void }) {
+  return (
+    <>
+      <SectionTitle>{title}</SectionTitle>
+      {items.length ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.carousel}>
+          {items.map((item) => <JourneyResourceTile key={(item.milestoneId ?? "") + "-" + (item.activityId ?? "")} role={role} item={item} onPress={() => onPress(item)} />)}
+        </ScrollView>
+      ) : (
+        <View style={styles.emptyInlineCard}>
+          <Text style={styles.todayTitle}>All caught up</Text>
+          <Text style={styles.todayMeta}>{emptyCopy}</Text>
+        </View>
+      )}
+    </>
+  );
+}
+
+function JourneyResourceTile({ role, item, onPress }: { role: Role; item: JourneyActivity; onPress: () => void }) {
+  const theme = useRoleTheme(role);
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.journeyResourceCard, pressed && styles.pressed]}>
+      <View style={[styles.journeyResourceImage, { backgroundColor: theme.surface }]}>
+        <Text style={[styles.journeyResourceGlyph, { color: theme.text }]}>{activityGlyph(item.type)}</Text>
+      </View>
+      <Text style={styles.journeyResourceTopic}>{item.milestoneSequence}. {item.milestoneTitle}</Text>
+      <Text style={styles.journeyResourceTitle}>{item.title}</Text>
+      <Text style={styles.journeyResourceType}>{activityTypeLabel(item.type)}</Text>
     </Pressable>
   );
 }
@@ -1762,7 +1968,9 @@ function ActivityRow({ activity, onPress }: { activity: NonNullable<ProgramMiles
 function Sessions({
   role,
   programs,
+  selectedPrograms,
   selectedProgramId,
+  switchProgram,
   milestones,
   completedMilestone,
   openMilestone,
@@ -1773,7 +1981,9 @@ function Sessions({
 }: {
   role: Role;
   programs: ProgramSummary[];
+  selectedPrograms: ProgramSummary[];
   selectedProgramId: string | null;
+  switchProgram: (programId: string) => void;
   milestones: ProgramMilestone[];
   completedMilestone: number;
   openMilestone: (milestone: ProgramMilestone) => void;
@@ -1783,7 +1993,7 @@ function Sessions({
   archiveProgram: () => void;
 }) {
   const theme = useRoleTheme(role);
-  const selectedProgram = programs.find((program) => program.id === selectedProgramId) ?? programs[0];
+  const selectedProgram = selectedPrograms.find((program) => program.id === selectedProgramId) ?? programs.find((program) => program.id === selectedProgramId) ?? selectedPrograms[0] ?? programs[0];
   const programTitle = selectedProgram?.title ?? (role === "student" ? "Medical program" : role === "tutor" ? "Tutor growth program" : "Parent support program");
   const programDescription = selectedProgram?.description ?? "Milestones unlock one by one. Each topic includes video, article, flashcard, and quiz.";
 
@@ -1810,6 +2020,19 @@ function Sessions({
         <Text style={styles.milesSummaryTitle}>{programTitle}</Text>
         <Text style={styles.milesSummaryCopy}>{programDescription}</Text>
       </View>
+      {role === "student" && selectedPrograms.length > 0 ? (
+        <View style={styles.selectedProgramPanel}>
+          <FieldLabel>Selected programs ({selectedPrograms.length}/3)</FieldLabel>
+          <DropdownField
+            value={selectedProgram?.title ?? "Select program"}
+            options={selectedPrograms.map((program) => program.title)}
+            onSelect={(title) => {
+              const program = selectedPrograms.find((item) => item.title === title);
+              if (program) switchProgram(program.id);
+            }}
+          />
+        </View>
+      ) : null}
       <View style={styles.milesTimeline}>
         {milestones.map((milestone, index) => {
           const locked = milestone.sequence > completedMilestone + 1;
@@ -1882,6 +2105,7 @@ function ProgramPickerModal({
   role,
   visible,
   programs,
+  selectedPrograms,
   selectedProgramId,
   setSelectedProgramId,
   preparing,
@@ -1890,13 +2114,18 @@ function ProgramPickerModal({
   role: Role;
   visible: boolean;
   programs: ProgramSummary[];
+  selectedPrograms: ProgramSummary[];
   selectedProgramId: string | null;
   setSelectedProgramId: (value: string | null) => void;
   preparing: boolean;
   onContinue: () => void;
 }) {
   const theme = useRoleTheme(role);
-  const selectedProgram = programs.find((program) => program.id === selectedProgramId) ?? programs[0];
+  const selectedIds = new Set(selectedPrograms.map((program) => program.id));
+  const availablePrograms = role === "student" ? programs.filter((program) => !selectedIds.has(program.id)) : programs;
+  const modalPrograms = availablePrograms.length ? availablePrograms : programs;
+  const selectedProgram = modalPrograms.find((program) => program.id === selectedProgramId) ?? modalPrograms[0];
+  const selectionFull = role === "student" && selectedPrograms.length >= 3 && availablePrograms.length === 0;
   return (
     <Modal visible={visible} transparent animationType="fade">
       <BlurView intensity={95} tint="dark" style={styles.modalBackdrop}>
@@ -1909,15 +2138,15 @@ function ProgramPickerModal({
           ) : (
             <>
               <Text style={styles.programModalTitle}>Choose your program</Text>
-              <Text style={styles.programModalCopy}>Select the plan you want to follow in My Miles.</Text>
+              <Text style={styles.programModalCopy}>{role === "student" ? `Select up to 3 programs to follow in My Miles. Current selection: ${selectedPrograms.length}/3.` : "Select the plan you want to follow in My Miles."}</Text>
               <FieldLabel>Program</FieldLabel>
               <DropdownField
-                value={selectedProgram?.title ?? "Select program"}
-                options={programs.map((program) => program.title)}
-                onSelect={(title) => setSelectedProgramId(programs.find((program) => program.title === title)?.id ?? null)}
+                value={selectionFull ? "Maximum 3 programs selected" : selectedProgram?.title ?? "Select program"}
+                options={selectionFull ? ["Maximum 3 programs selected"] : modalPrograms.map((program) => program.title)}
+                onSelect={(title) => setSelectedProgramId(modalPrograms.find((program) => program.title === title)?.id ?? null)}
               />
               <View style={styles.modalBottomCta}>
-                <Button role={role} label="Continue" onPress={onContinue} disabled={!selectedProgram} />
+                <Button role={role} label="Continue" onPress={onContinue} disabled={!selectedProgram || selectionFull} />
               </View>
             </>
           )}
@@ -1930,6 +2159,7 @@ function ProgramPickerModal({
 function TutorDiscovery({
   role,
   tutors,
+  options,
   loading,
   requestBatch,
   requestLoading,
@@ -1938,29 +2168,48 @@ function TutorDiscovery({
 }: {
   role: Role;
   tutors: TutorSearchResult[];
+  options: TutorFilterOptions;
   loading: boolean;
   requestBatch: (batchId: string) => void;
   requestLoading: string | null;
-  search: (filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string }) => void;
+  search: (filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string; language?: string; gender?: string; experience?: string; rating?: string }) => void;
   back: () => void;
 }) {
-  const [subject, setSubject] = useState("Mathematics");
-  const [location, setLocation] = useState("Delhi");
-  const [board, setBoard] = useState("CBSE");
-  const [mode, setMode] = useState("Online");
+  const any = "Any";
+  const [subject, setSubject] = useState(any);
+  const [location, setLocation] = useState(any);
+  const [grade, setGrade] = useState(any);
+  const [board, setBoard] = useState(any);
+  const [mode, setMode] = useState(any);
+  const [language, setLanguage] = useState(any);
+  const [gender, setGender] = useState(any);
+  const [experience, setExperience] = useState(any);
+  const [rating, setRating] = useState(any);
+  const cleaned = (value: string) => value === any ? undefined : value;
   return (
     <>
       <TopBar title="Tutor discovery" left="‹" onLeft={back} />
       <View style={styles.searchPanel}>
-        <View style={styles.row}>
-          <Input compact value={subject} onChangeText={setSubject} placeholder="Subject" />
-          <Input compact value={location} onChangeText={setLocation} placeholder="Location" />
-        </View>
-        <View style={styles.row}>
-          <Input compact value={board} onChangeText={setBoard} placeholder="Board" />
-          <Input compact value={mode} onChangeText={setMode} placeholder="Mode" />
-        </View>
-        <Button role={role} label="Search tutors" loading={loading} onPress={() => search({ subject, location, board, mode })} />
+        <FilterDropdown label="Subject" value={subject} options={[any, ...options.subjects]} onSelect={setSubject} />
+        <FilterDropdown label="Class / grade" value={grade} options={[any, ...options.grades]} onSelect={setGrade} />
+        <FilterDropdown label="Board" value={board} options={[any, ...options.boards]} onSelect={setBoard} />
+        <FilterDropdown label="Location" value={location} options={[any, ...options.locations]} onSelect={setLocation} />
+        <FilterDropdown label="Mode" value={mode} options={[any, ...options.modes]} onSelect={setMode} />
+        <FilterDropdown label="Language" value={language} options={[any, ...options.languages]} onSelect={setLanguage} />
+        <FilterDropdown label="Gender" value={gender} options={[any, ...options.genders]} onSelect={setGender} />
+        <FilterDropdown label="Experience" value={experience} options={[any, ...options.experience]} onSelect={setExperience} />
+        <FilterDropdown label="Rating" value={rating} options={[any, ...options.ratings]} onSelect={setRating} />
+        <Button role={role} label="Search tutors" loading={loading} onPress={() => search({
+          subject: cleaned(subject),
+          location: cleaned(location),
+          grade: cleaned(grade),
+          board: cleaned(board),
+          mode: cleaned(mode),
+          language: cleaned(language),
+          gender: cleaned(gender),
+          experience: cleaned(experience),
+          rating: cleaned(rating)
+        })} />
       </View>
       {loading ? <ActivityIndicator /> : null}
       {tutors.map((tutor) => (
@@ -1988,6 +2237,15 @@ function TutorDiscovery({
       ))}
       {!loading && !tutors.length ? <Muted>No tutors found. Try another subject or location.</Muted> : null}
     </>
+  );
+}
+
+function FilterDropdown({ label, value, options, onSelect }: { label: string; value: string; options: string[]; onSelect: (value: string) => void }) {
+  return (
+    <View style={styles.dropdownWrap}>
+      <FieldLabel>{label}</FieldLabel>
+      <DropdownField value={value} options={dedupe(options).length ? dedupe(options) : ["Any"]} onSelect={onSelect} />
+    </View>
   );
 }
 
@@ -2205,6 +2463,69 @@ function combineReminderDateTime(date: string, time: string) {
   return `${date} ${time}`;
 }
 
+function userProfileToTutorResult(profile: UserProfileDetails): TutorSearchResult {
+  return {
+    id: profile.profileId,
+    tutorProfileId: profile.profileId,
+    profileId: profile.profileId,
+    name: profile.name,
+    initials: profile.initials,
+    headline: profile.headline ?? "Tutor",
+    subjects: profile.subjects ?? dedupe(profile.tutionDetails.map((item) => item.subject)),
+    boards: profile.boards ?? dedupe(profile.tutionDetails.map((item) => item.board)),
+    grades: profile.grades ?? dedupe(profile.tutionDetails.map((item) => item.grade)),
+    languages: profile.languages ?? dedupe(profile.tutionDetails.flatMap((item) => item.language)),
+    mode: profile.mode ?? dedupe(profile.tutionDetails.map((item) => item.mode)),
+    experienceYears: profile.experienceYears ?? Math.max(0, ...profile.tutionDetails.map((item) => item.experienceYears)),
+    rating: profile.rating ?? Math.max(0, ...profile.tutionDetails.map((item) => item.rating)),
+    hourlyRate: profile.hourlyRate ?? profile.tutionDetails[0]?.hourlyRate ?? 0,
+    gender: profile.gender ?? profile.tutionDetails[0]?.gender ?? "",
+    location: profile.location ?? profile.tutionDetails[0]?.location ?? profile.city ?? "",
+    bio: profile.bio ?? "",
+    batches: profile.batches ?? [],
+    tutionDetails: profile.tutionDetails
+  };
+}
+
+function buildTutorFilterOptions(tutors: TutorSearchResult[]): TutorFilterOptions {
+  const details = tutors.flatMap((tutor) => tutor.tutionDetails ?? []);
+  return {
+    subjects: dedupe(details.map((item) => item.subject)),
+    locations: dedupe(details.map((item) => item.location)),
+    grades: dedupe(details.map((item) => item.grade)),
+    boards: dedupe(details.map((item) => item.board)),
+    modes: dedupe(details.map((item) => item.mode)),
+    languages: dedupe(details.flatMap((item) => item.language)),
+    genders: dedupe(details.map((item) => item.gender)),
+    experience: dedupe(details.map((item) => `${item.experienceYears}+ years`), (a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10)),
+    ratings: dedupe(details.map((item) => `${item.rating.toFixed(1)}+`), (a, b) => Number.parseFloat(a) - Number.parseFloat(b))
+  };
+}
+
+function filterTutorResults(tutors: TutorSearchResult[], filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string; language?: string; gender?: string; experience?: string; rating?: string }) {
+  return tutors.filter((tutor) => {
+    const details = tutor.tutionDetails?.length ? tutor.tutionDetails : [];
+    if (!details.length) return true;
+    return details.some((item) => {
+      if (filters.subject && item.subject !== filters.subject) return false;
+      if (filters.location && item.location !== filters.location) return false;
+      if (filters.grade && item.grade !== filters.grade) return false;
+      if (filters.board && item.board !== filters.board) return false;
+      if (filters.mode && item.mode !== filters.mode) return false;
+      if (filters.language && !item.language.includes(filters.language)) return false;
+      if (filters.gender && item.gender !== filters.gender) return false;
+      if (filters.experience && item.experienceYears < Number.parseInt(filters.experience, 10)) return false;
+      if (filters.rating && item.rating < Number.parseFloat(filters.rating)) return false;
+      return true;
+    });
+  });
+}
+
+function dedupe(values: string[], sorter?: (a: string, b: string) => number) {
+  const unique = Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+  return unique.sort(sorter ?? ((a, b) => a.localeCompare(b)));
+}
+
 async function apiGet<T>(path: string, accessToken?: string) {
   return apiRequest<T>(path, { accessToken });
 }
@@ -2244,6 +2565,8 @@ async function apiRequest<T = unknown>(path: string, options: RequestInit & { ac
 }
 
 const styles = StyleSheet.create({
+  appSplashShell: { backgroundColor: "#FFFFFF", flex: 1 },
+  appSplashImage: { height: "100%", width: "100%" },
   shell: { flex: 1 },
   content: { flexGrow: 1, gap: 14, padding: 20, paddingTop: 58 },
   homeContent: { gap: 16, paddingHorizontal: 16 },
@@ -2294,9 +2617,11 @@ const styles = StyleSheet.create({
   linkText: { fontWeight: "800", textDecorationLine: "underline" },
   fieldShell: { position: "relative" },
   eye: { alignItems: "center", backgroundColor: "#F1F5F9", borderRadius: 999, height: 34, justifyContent: "center", position: "absolute", right: 8, top: 8, width: 34 },
+  signinHero: { alignItems: "center", flex: 1, justifyContent: "center", minHeight: 430, paddingBottom: 20 },
   freshSigninTop: { alignItems: "center", flex: 1, justifyContent: "center", minHeight: 430 },
   freshSigninLogo: { borderRadius: 28, height: 150, width: 150 },
   freshSigninBrand: { color: "#202A35", fontSize: 31, fontWeight: "900", marginTop: 18 },
+  freshSigninCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 21, marginTop: 10, textAlign: "center" },
   brandRow: { alignItems: "center", flexDirection: "row", gap: 10, marginBottom: 8 },
   brandIcon: { borderRadius: 12, height: 34, width: 34 },
   brandTitle: { color: "#202A35", flex: 1, fontSize: 20, fontWeight: "900" },
@@ -2361,6 +2686,27 @@ const styles = StyleSheet.create({
   trackButtonText: { fontSize: 14, fontWeight: "900" },
   smartPickCard: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.9)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, flexDirection: "row", gap: 12, minHeight: 86, padding: 16 },
   carousel: { gap: 12, paddingBottom: 8 },
+  programJourneyCard: { backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 14, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
+  programJourneyTop: { alignItems: "center", flexDirection: "row", gap: 12 },
+  programJourneyTitle: { color: "#202A35", fontSize: 18, fontWeight: "900", lineHeight: 23 },
+  programJourneyCopy: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19, marginTop: 2 },
+  programJourneyAction: { fontSize: 13, fontWeight: "900" },
+  programTracker: { flexDirection: "row", gap: 8, paddingVertical: 4 },
+  programTrackerDot: { backgroundColor: "#FFFFFF", borderColor: "#C8D4E3", borderRadius: 999, borderWidth: 2, height: 14, width: 14 },
+  programStatsRow: { flexDirection: "row", gap: 10 },
+  programStat: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 14, borderWidth: 1, flex: 1, padding: 10 },
+  programStatValue: { color: "#111827", fontSize: 20, fontWeight: "900", lineHeight: 24 },
+  programStatLabel: { color: "#536A86", fontSize: 11, fontWeight: "800", lineHeight: 15, marginTop: 2 },
+  programCompletedCard: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.95)", borderColor: "#BFE7C8", borderRadius: 22, borderWidth: 1, gap: 8, padding: 18, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
+  programCompletedIcon: { backgroundColor: "#DCFCE7", borderRadius: 999, color: "#16A34A", fontSize: 26, fontWeight: "900", height: 50, lineHeight: 50, overflow: "hidden", textAlign: "center", width: 50 },
+  programCompletedTitle: { color: "#111827", fontSize: 20, fontWeight: "900", lineHeight: 25 },
+  programCompletedCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
+  journeyResourceCard: { backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: 22, borderWidth: 1, gap: 8, minHeight: 210, padding: 14, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.07, shadowRadius: 16, width: 214 },
+  journeyResourceImage: { alignItems: "center", borderRadius: 16, height: 78, justifyContent: "center" },
+  journeyResourceGlyph: { fontSize: 32, fontWeight: "900" },
+  journeyResourceTopic: { color: "#64748B", fontSize: 12, fontWeight: "800", lineHeight: 16 },
+  journeyResourceTitle: { color: "#111827", fontSize: 16, fontWeight: "900", lineHeight: 21 },
+  journeyResourceType: { color: "#536A86", fontSize: 12, fontWeight: "800", lineHeight: 16, marginTop: "auto" },
   recCard: {
     alignItems: "center",
     backgroundColor: "#FFFFFF",
@@ -2425,6 +2771,7 @@ const styles = StyleSheet.create({
   bottomCtaInline: { marginTop: 26 },
   milesSummaryTitle: { color: "#202A35", fontSize: 17, fontWeight: "900", lineHeight: 22 },
   milesSummaryCopy: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19 },
+  selectedProgramPanel: { backgroundColor: "rgba(255,255,255,0.82)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, padding: 12 },
   milesTimeline: { gap: 10, paddingBottom: 18, paddingTop: 10 },
   mileRow: { flexDirection: "row", minHeight: 148 },
   mileRail: { alignItems: "center", marginRight: 12, width: 44 },

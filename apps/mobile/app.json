@@ -8,7 +8,7 @@
     "icon": "./assets/AppIcons/appstore.png",
     "splash": {
       "image": "./assets/splash-screen.png",
-      "resizeMode": "contain",
+      "resizeMode": "cover",
       "backgroundColor": "#FFFFFF"
     },
     "assetBundlePatterns": [

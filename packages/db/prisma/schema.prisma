@@ -108,6 +108,7 @@ model Profile {
   programProgress    ProgramProgress[]
   resourceProgress   ResourceProgress[]
   activityProgress   ActivityProgress[]
+  studentProgramSelections StudentProgramSelection[]
   tutorProfile       TutorProfile?
   studentBatchRequests BatchRequest[] @relation("StudentBatchRequests")
   studentBatchEnrollments BatchEnrollment[] @relation("StudentBatchEnrollments")
@@ -287,6 +288,23 @@ model Program {
   sourceTag   String             @default("app")
   milestones  ProgramMilestone[]
   progress    ProgramProgress[]
+  studentSelections StudentProgramSelection[]
+}
+
+model StudentProgramSelection {
+  id        String   @id @default(cuid())
+  profileId String
+  programId String
+  status    String   @default("active")
+  sourceTag String   @default("app")
+  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  program   Program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([profileId, programId])
+  @@index([profileId, status])
+  @@index([programId, status])
 }
 
 model ProgramMilestone {

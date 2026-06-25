@@ -65,6 +65,7 @@ export interface ProgramSummary {
   role: Role;
   title: string;
   description: string;
+  selected?: boolean;
 }
 
 
@@ -104,6 +105,53 @@ export interface TutorSearchResult {
   location: string;
   bio: string;
   batches: TutorBatchSummary[];
+  tutionDetails?: TutionDetail[];
+}
+
+export interface TutionDetail {
+  id: string;
+  subject: string;
+  grade: string;
+  board: string;
+  mode: string;
+  course: string;
+  schedule: string;
+  classroomLocation: string | null;
+  onlineVideoLink: string | null;
+  language: string[];
+  gender: string;
+  location: string;
+  experienceYears: number;
+  rating: number;
+  hourlyRate: number;
+}
+
+export interface UserListItem {
+  id: string;
+  profileId: string;
+  role: Role;
+  name: string;
+  initials: string;
+  city: string | null;
+}
+
+export interface UserProfileDetails extends UserListItem {
+  firstName: string;
+  lastName: string;
+  headline?: string;
+  subjects?: string[];
+  boards?: string[];
+  grades?: string[];
+  languages?: string[];
+  mode?: string[];
+  experienceYears?: number;
+  rating?: number;
+  hourlyRate?: number;
+  gender?: string;
+  location?: string;
+  bio?: string;
+  tutionDetails: TutionDetail[];
+  batches?: TutorBatchSummary[];
 }
 
 export interface BatchClass {

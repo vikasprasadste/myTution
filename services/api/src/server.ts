@@ -6,7 +6,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { featureFlags, isFeatureEnabled } from "@mytution/config";
 import { prisma } from "@mytution/db";
-import type { ResourceType, Role } from "@mytution/shared";
+import type { ProgramSummary, ResourceType, Role } from "@mytution/shared";
 
 const app = express();
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
@@ -228,6 +228,7 @@ app.delete("/api/v1/admin/users/by-phone", async (req, res) => {
   const profileIds = user.profiles.map((profile) => profile.id);
   const result = await prisma.$transaction(async (tx) => {
     const resourceProgress = await tx.resourceProgress.deleteMany({ where: { profileId: { in: profileIds } } });
+    const studentProgramSelections = await tx.studentProgramSelection.deleteMany({ where: { profileId: { in: profileIds } } });
     const programProgress = await tx.programProgress.deleteMany({ where: { profileId: { in: profileIds } } });
     const reminders = await tx.reminder.deleteMany({ where: { userId: user.id } });
     const userManagement = await tx.userManagement.deleteMany({ where: { userId: user.id } });
@@ -242,6 +243,7 @@ app.delete("/api/v1/admin/users/by-phone", async (req, res) => {
         reminders: reminders.count,
         userManagement: userManagement.count,
         resourceProgress: resourceProgress.count,
+        studentProgramSelections: studentProgramSelections.count,
         programProgress: programProgress.count,
         profiles: profiles.count,
         users: 1
@@ -272,6 +274,46 @@ app.get("/api/v1/usermanagement/profile", async (req, res) => {
     return;
   }
   res.json({ data: profile });
+});
+
+app.get("/api/v1/usermanagement/users", async (req, res) => {
+  const role = readRole(req.query.Role ?? req.query.role);
+  const profiles = await prisma.profile.findMany({
+    where: { role },
+    include: { user: true },
+    orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
+    take: 100
+  });
+  res.json({ data: profiles.map(toUserListItem) });
+});
+
+app.get("/api/v1/usermanagement/getUserProfile", async (req, res) => {
+  const userId = stringOrNull(req.query.userId);
+  const role = req.query.Role || req.query.role ? readRole(req.query.Role ?? req.query.role) : undefined;
+  if (!userId) {
+    res.status(400).json({ error: "userId is required" });
+    return;
+  }
+  const profile = await prisma.profile.findFirst({
+    where: { userId, ...(role ? { role } : {}) },
+    include: {
+      user: true,
+      tutorProfile: {
+        include: {
+          batches: {
+            orderBy: { startsAt: "asc" },
+            include: { requests: true, enrollments: true }
+          }
+        }
+      }
+    },
+    orderBy: { createdAt: "asc" }
+  });
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+  res.json({ data: toUserProfileDetails(profile) });
 });
 
 app.put("/api/v1/usermanagement/profile", async (req, res) => {
@@ -545,7 +587,14 @@ app.get("/api/v1/education-plan/current", async (req, res) => {
 app.get("/api/v1/education-plan/programs", async (req, res) => {
   const role = readRole(req.query.role);
   if (role === "student") {
-    res.json({ data: medicalProgramCatalog.map(({ milestones: _milestones, ...program }) => program) });
+    const userId = await readUserId(req);
+    const profile = await findProfile(role, userId);
+    const programs = await listProgramSummaries(role, profile?.id);
+    res.json({
+      data: programs,
+      selectedPrograms: programs.filter((program) => program.selected),
+      maxSelectedPrograms: 3
+    });
     return;
   }
   const programs = await prisma.program.findMany({
@@ -554,6 +603,63 @@ app.get("/api/v1/education-plan/programs", async (req, res) => {
     select: { id: true, role: true, title: true, description: true }
   });
   res.json({ data: programs });
+});
+
+app.post("/api/v1/education-plan/programs/select", async (req, res) => {
+  const role = readRole(req.body.role);
+  const userId = await readUserId(req);
+  if (role !== "student") {
+    res.status(400).json({ error: "Program selection is only available for students" });
+    return;
+  }
+  const profile = await findProfile("student", userId);
+  if (!profile) {
+    res.status(404).json({ error: "Student profile not found" });
+    return;
+  }
+  const programId = String(req.body.programId ?? "");
+  const program = await prisma.program.findFirst({ where: { id: programId, role } });
+  if (!program) {
+    res.status(404).json({ error: "Program not found" });
+    return;
+  }
+  const existing = await prisma.studentProgramSelection.findUnique({
+    where: { profileId_programId: { profileId: profile.id, programId } }
+  });
+  const activeCount = await prisma.studentProgramSelection.count({
+    where: { profileId: profile.id, status: "active" }
+  });
+  if (!existing && activeCount >= 3) {
+    res.status(409).json({ error: "A student can select a maximum of 3 programs" });
+    return;
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const selection = await tx.studentProgramSelection.upsert({
+      where: { profileId_programId: { profileId: profile.id, programId } },
+      update: { status: "active", sourceTag: "app" },
+      create: { profileId: profile.id, programId, status: "active", sourceTag: "app" }
+    });
+    const progress = await tx.programProgress.upsert({
+      where: { profileId_programId: { profileId: profile.id, programId } },
+      update: {},
+      create: {
+        profileId: profile.id,
+        programId,
+        unlockedMilestoneSequence: 1,
+        completedMilestoneSequence: 0,
+        sourceTag: "app"
+      }
+    });
+    return { selection, progress };
+  });
+  const programs = await listProgramSummaries(role, profile.id);
+  res.status(existing ? 200 : 201).json({
+    data: result,
+    programs,
+    selectedPrograms: programs.filter((item) => item.selected),
+    maxSelectedPrograms: 3
+  });
 });
 
 app.get("/api/v1/programs/current", async (req, res) => {
@@ -786,6 +892,17 @@ function splitCsv(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function toUserListItem(profile: any) {
+  return {
+    id: profile.userId,
+    profileId: profile.id,
+    role: profile.role,
+    name: profile.firstName + " " + profile.lastName,
+    initials: (profile.firstName.charAt(0) + profile.lastName.charAt(0)).toUpperCase(),
+    city: profile.city
+  };
+}
+
 function classReadyLink(batch: { startsAt: Date; onlineLink?: string | null }) {
   if (!batch.onlineLink) return null;
   const diffMs = batch.startsAt.getTime() - Date.now();
@@ -811,7 +928,56 @@ function toTutorSearchResult(tutor: any) {
     gender: tutor.gender,
     location: tutor.location,
     bio: tutor.bio,
-    batches: tutor.batches.map(toBatchSummary)
+    batches: tutor.batches.map(toBatchSummary),
+    tutionDetails: tutor.batches.map((batch: any) => toTutionDetail(batch, tutor))
+  };
+}
+
+function toUserProfileDetails(profile: any) {
+  const tutorProfile = profile.tutorProfile;
+  const base = {
+    ...toUserListItem(profile),
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    tutionDetails: []
+  };
+  if (!tutorProfile) return base;
+  return {
+    ...base,
+    headline: tutorProfile.headline,
+    subjects: splitCsv(tutorProfile.subjects),
+    boards: splitCsv(tutorProfile.boards),
+    grades: splitCsv(tutorProfile.grades),
+    languages: splitCsv(tutorProfile.languages),
+    mode: splitCsv(tutorProfile.mode),
+    experienceYears: tutorProfile.experienceYears,
+    rating: tutorProfile.rating,
+    hourlyRate: tutorProfile.hourlyRate,
+    gender: tutorProfile.gender,
+    location: tutorProfile.location,
+    bio: tutorProfile.bio,
+    batches: tutorProfile.batches.map(toBatchSummary),
+    tutionDetails: tutorProfile.batches.map((batch: any) => toTutionDetail(batch, tutorProfile))
+  };
+}
+
+function toTutionDetail(batch: any, tutor: any) {
+  return {
+    id: batch.id,
+    subject: batch.subject,
+    grade: batch.grade,
+    board: batch.board,
+    mode: batch.mode,
+    course: batch.course,
+    schedule: batch.schedule,
+    classroomLocation: batch.classroomLocation,
+    onlineVideoLink: classReadyLink(batch),
+    language: splitCsv(tutor.languages),
+    gender: tutor.gender,
+    location: tutor.location,
+    experienceYears: tutor.experienceYears,
+    rating: tutor.rating,
+    hourlyRate: tutor.hourlyRate
   };
 }
 
@@ -887,6 +1053,30 @@ function toTutorBatchClass(batch: any) {
     })) ?? [],
     pendingRequests: batch.requests?.filter((request: any) => request.status === "pending").length ?? 0
   };
+}
+
+async function listProgramSummaries(role: Role, profileId?: string | null): Promise<ProgramSummary[]> {
+  const selections = profileId
+    ? await prisma.studentProgramSelection.findMany({
+      where: { profileId, status: "active" },
+      select: { programId: true }
+    })
+    : [];
+  const selectedIds = new Set(selections.map((selection) => selection.programId));
+  const programs = await prisma.program.findMany({
+    where: { role },
+    orderBy: { title: "asc" },
+    select: { id: true, role: true, title: true, description: true }
+  });
+  if (programs.length) {
+    return programs.map((program) => ({ ...program, role: readRole(program.role), selected: selectedIds.has(program.id) }));
+  }
+  if (role !== "student") return [];
+  return medicalProgramCatalog.map(({ milestones: _milestones, ...program }) => ({
+    ...program,
+    role: "student" as const,
+    selected: selectedIds.has(program.id)
+  }));
 }
 
 async function getEducationPlan(role: Role, userId?: string | null, programId?: string | null) {
@@ -1057,7 +1247,8 @@ function toReminder(item: {
 }
 
 function readRole(input: unknown): Role {
-  return input === "tutor" || input === "parent" || input === "student" ? input : "student";
+  const value = String(input ?? "").toLowerCase();
+  return value === "tutor" || value === "parent" || value === "student" ? value : "student";
 }
 
 function normalizePhone(input: unknown) {

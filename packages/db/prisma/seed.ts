@@ -15,6 +15,7 @@ async function main() {
   await prisma.flashcard.deleteMany();
   await prisma.resourceProgress.deleteMany();
   await prisma.resource.deleteMany();
+  await prisma.studentProgramSelection.deleteMany();
   await prisma.programProgress.deleteMany();
   await prisma.programMilestone.deleteMany();
   await prisma.program.deleteMany();
@@ -410,6 +411,13 @@ async function main() {
 
   const studentProfile = user.profiles.find((profile) => profile.role === Role.student);
   if (studentProfile) {
+    await prisma.studentProgramSelection.create({
+      data: {
+        profileId: studentProfile.id,
+        programId: createdPrograms[0].id,
+        sourceTag
+      }
+    });
     await prisma.programProgress.create({
       data: {
         profileId: studentProfile.id,
