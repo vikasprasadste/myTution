@@ -95,6 +95,7 @@ model Profile {
   reminders          Reminder[]
   programProgress    ProgramProgress[]
   resourceProgress   ResourceProgress[]
+  activityProgress   ActivityProgress[]
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -208,8 +209,8 @@ model MilestoneActivity {
   type        ResourceType
   title       String
   description String
-  status      ActivityStatus @default(pending)
   sourceTag   String         @default("app")
+  progress    ActivityProgress[]
   milestone   ProgramMilestone @relation(fields: [milestoneId], references: [id])
   resource    Resource       @relation(fields: [resourceId], references: [id])
   createdAt   DateTime       @default(now())
@@ -242,4 +243,20 @@ model ResourceProgress {
   resource    Resource  @relation(fields: [resourceId], references: [id])
 
   @@unique([profileId, resourceId])
+}
+
+model ActivityProgress {
+  id          String         @id @default(cuid())
+  profileId   String
+  activityId  String
+  status      ActivityStatus @default(in_progress)
+  completedAt DateTime?
+  sourceTag   String         @default("app")
+  profile     Profile        @relation(fields: [profileId], references: [id])
+  activity    MilestoneActivity @relation(fields: [activityId], references: [id])
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([profileId, activityId])
+  @@index([profileId, status])
 }

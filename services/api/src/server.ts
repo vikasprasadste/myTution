@@ -412,6 +412,82 @@ app.post("/api/v1/resources/:id/complete", async (req, res) => {
   res.json({ data: progress });
 });
 
+app.post("/api/v1/education-plan/activities/:id/complete", async (req, res) => {
+  const role = readRole(req.body.role);
+  const userId = await readUserId(req);
+  const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const activity = await tx.milestoneActivity.findUnique({
+      where: { id: req.params.id },
+      include: { milestone: { include: { program: true, activities: true } } }
+    });
+    if (!activity || activity.milestone.program.role !== role) return null;
+
+    const completedActivity = await tx.activityProgress.upsert({
+      where: { profileId_activityId: { profileId: profile.id, activityId: activity.id } },
+      update: { status: "complete", completedAt: new Date() },
+      create: {
+        profileId: profile.id,
+        activityId: activity.id,
+        status: "complete",
+        completedAt: new Date(),
+        sourceTag: "app"
+      }
+    });
+    await tx.resourceProgress.upsert({
+      where: { profileId_resourceId: { profileId: profile.id, resourceId: activity.resourceId } },
+      update: { status: "complete", completedAt: new Date() },
+      create: {
+        profileId: profile.id,
+        resourceId: activity.resourceId,
+        status: "complete",
+        completedAt: new Date()
+      }
+    });
+
+    const siblingActivities = await tx.milestoneActivity.findMany({ where: { milestoneId: activity.milestoneId } });
+    const siblingProgress = await tx.activityProgress.findMany({
+      where: {
+        profileId: profile.id,
+        activityId: { in: siblingActivities.map((item) => item.id) },
+        status: "complete"
+      }
+    });
+    const milestoneComplete = siblingActivities.length > 0 && siblingProgress.length === siblingActivities.length;
+    let progress = await tx.programProgress.findUnique({
+      where: { profileId_programId: { profileId: profile.id, programId: activity.milestone.programId } }
+    });
+    if (milestoneComplete) {
+      progress = await tx.programProgress.upsert({
+        where: { profileId_programId: { profileId: profile.id, programId: activity.milestone.programId } },
+        update: {
+          completedMilestoneSequence: Math.max(progress?.completedMilestoneSequence ?? 0, activity.milestone.sequence),
+          unlockedMilestoneSequence: Math.max(progress?.unlockedMilestoneSequence ?? 1, activity.milestone.sequence + 1)
+        },
+        create: {
+          profileId: profile.id,
+          programId: activity.milestone.programId,
+          completedMilestoneSequence: activity.milestone.sequence,
+          unlockedMilestoneSequence: activity.milestone.sequence + 1,
+          sourceTag: "app"
+        }
+      });
+    }
+    return { activity: completedActivity, milestoneComplete, progress };
+  });
+
+  if (!result) {
+    res.status(404).json({ error: "Activity not found" });
+    return;
+  }
+  res.json({ data: result });
+});
+
 app.get("/api/v1/dis/dashboard", async (req, res) => {
   const role = readRole(req.query.role);
   const userId = await readUserId(req);
@@ -508,7 +584,10 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
         orderBy: { sequence: "asc" },
         include: {
           activities: {
-            orderBy: { sequence: "asc" }
+            orderBy: { sequence: "asc" },
+            include: {
+              progress: scopedProfile ? { where: { profileId: scopedProfile.id } } : false
+            }
           }
         }
       },
@@ -541,7 +620,7 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
         type: activity.type,
         title: activity.title,
         description: activity.description,
-        status: activity.status
+        status: activity.progress?.[0]?.status ?? "pending"
       }))
     }))
   };
@@ -589,12 +668,14 @@ function fallbackEducationPlan(role: Role, programId?: string | null) {
         sequence,
         title: `${program.title.split(" ")[0]} milestone ${sequence}`,
         locked: sequence > 1,
-        resources: ["video", "article", "flashcard", "quiz"] as ResourceType[],
+        resources: ["video", "article", "flashcard", "article", "quiz", "quiz"] as ResourceType[],
         activities: [
-          { id: `${program.id}-m${sequence}-video`, resourceId: `${program.id}-video`, sequence: 1, type: "video", title: "Watch topic video", description: "Concept lesson with examples", status: sequence === 1 ? "in_progress" : "pending" },
-          { id: `${program.id}-m${sequence}-article`, resourceId: `${program.id}-article`, sequence: 2, type: "article", title: "Read topic notes", description: "NCERT-aligned notes and summary", status: "pending" },
-          { id: `${program.id}-m${sequence}-flashcard`, resourceId: `${program.id}-flashcard`, sequence: 3, type: "flashcard", title: "Practice flashcards", description: "Rapid recall cards", status: "pending" },
-          { id: `${program.id}-m${sequence}-quiz`, resourceId: `${program.id}-quiz`, sequence: 4, type: "quiz", title: "Complete quiz", description: "Exam-style practice", status: "pending" }
+          { id: `${program.id}-m${sequence}-video`, resourceId: `${program.id}-video`, sequence: 1, type: "video", title: "Concept video: high-yield foundation", description: "An 8-15 minute focused lesson introducing one core concept with diagrams and examples.", status: "pending" },
+          { id: `${program.id}-m${sequence}-notes`, resourceId: `${program.id}-article`, sequence: 2, type: "article", title: "Interactive article and micro-notes", description: "Bold keywords, derivations, labeled diagrams, and board-ready summaries.", status: "pending" },
+          { id: `${program.id}-m${sequence}-flashcard`, resourceId: `${program.id}-flashcard`, sequence: 3, type: "flashcard", title: "Digital flashcards for active recall", description: "Formulae, reactions, biology labels, units, and definitions for memorization.", status: "pending" },
+          { id: `${program.id}-m${sequence}-cheatsheet`, resourceId: `${program.id}-cheatsheet`, sequence: 4, type: "article", title: "Formula and concept cheat sheet", description: "A one-page milestone summary to review before assessment.", status: "pending" },
+          { id: `${program.id}-m${sequence}-diagnostic`, resourceId: `${program.id}-quiz`, sequence: 5, type: "quiz", title: "Diagnostic MCQ quiz", description: "5-10 conceptual MCQs to prove readiness.", status: "pending" },
+          { id: `${program.id}-m${sequence}-subjective`, resourceId: `${program.id}-board-questions`, sequence: 6, type: "quiz", title: "Board-style subjective questions", description: "Past board-style long answers with topper-style marking guidance.", status: "pending" }
         ]
       };
     })

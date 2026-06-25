@@ -232,9 +232,8 @@ async function main() {
             resourceId: algebraVideo.id,
             sequence: 1,
             type: ResourceType.video,
-            title: "Watch topic video",
-            description: algebraVideo.description,
-            status: milestone.sequence === 1 ? ActivityStatus.in_progress : ActivityStatus.pending,
+            title: "Concept video: high-yield foundation",
+            description: "An 8-15 minute focused lesson introducing one core concept with diagrams and examples.",
             sourceTag
           },
           {
@@ -242,8 +241,8 @@ async function main() {
             resourceId: plannerArticle.id,
             sequence: 2,
             type: ResourceType.article,
-            title: "Read topic notes",
-            description: plannerArticle.description,
+            title: "Interactive article and micro-notes",
+            description: "Bold keywords, step-by-step derivations, labeled diagrams, and board-ready summaries.",
             sourceTag
           },
           {
@@ -251,17 +250,35 @@ async function main() {
             resourceId: flashDeck.id,
             sequence: 3,
             type: ResourceType.flashcard,
-            title: "Practice flashcards",
-            description: flashDeck.description,
+            title: "Digital flashcards for active recall",
+            description: "Formulae, named reactions, biology labels, units, and definitions for quick memorization.",
+            sourceTag
+          },
+          {
+            milestoneId: milestone.id,
+            resourceId: plannerArticle.id,
+            sequence: 4,
+            type: ResourceType.article,
+            title: "Formula and concept cheat sheet",
+            description: "A one-page milestone summary to review before moving to practice and assessment.",
             sourceTag
           },
           {
             milestoneId: milestone.id,
             resourceId: quizResource.id,
-            sequence: 4,
+            sequence: 5,
             type: ResourceType.quiz,
-            title: "Complete quiz",
-            description: quizResource.description,
+            title: "Diagnostic MCQ quiz",
+            description: "5-10 conceptual MCQs to prove readiness before unlocking the next milestone.",
+            sourceTag
+          },
+          {
+            milestoneId: milestone.id,
+            resourceId: quizResource.id,
+            sequence: 6,
+            type: ResourceType.quiz,
+            title: "Board-style subjective questions",
+            description: "Past board-style long answers with topper-style marking guidance and scoring patterns.",
             sourceTag
           }
         ]

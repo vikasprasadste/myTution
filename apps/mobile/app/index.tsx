@@ -1,12 +1,14 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
 import type { Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -47,6 +49,7 @@ const icon = require("../assets/AppIcons/appstore.png");
 type StreamKey = "junior" | "senior" | "ug" | "pg";
 type AuthSession = { accessToken: string; refreshToken: string; tokenType: string };
 type DashboardCard = { value: string; label: string; target: AppScreen };
+type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number };
 type SignInMode = "fresh" | "returning";
 type ProfileDraft = {
   firstName: string;
@@ -120,6 +123,14 @@ export default function Index() {
   const [apiMilestones, setApiMilestones] = useState<ProgramMilestone[] | null>(null);
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
+  const [draftProgramId, setDraftProgramId] = useState<string | null>(null);
+  const [programModalVisible, setProgramModalVisible] = useState(false);
+  const [programModalSeen, setProgramModalSeen] = useState(false);
+  const [programPreparing, setProgramPreparing] = useState(false);
+  const [pendingProgramId, setPendingProgramId] = useState<string | null>(null);
+  const [programRefreshKey, setProgramRefreshKey] = useState(0);
+  const [programToast, setProgramToast] = useState("");
+  const [programMenuOpen, setProgramMenuOpen] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [reminderTitle, setReminderTitle] = useState("Math revision reminder");
@@ -127,11 +138,13 @@ export default function Index() {
   const [reminderTime, setReminderTime] = useState("06:30 PM");
   const [picker, setPicker] = useState<null | { target: "dob" | "reminderDate" | "reminderTime"; mode: "date" | "time"; value: Date }>(null);
   const [recommendationsReady, setRecommendationsReady] = useState(false);
-  const [selectedResource, setSelectedResource] = useState<Recommendation | null>(null);
+  const [selectedResource, setSelectedResource] = useState<SelectedActivity | null>(null);
+  const [completedTopic, setCompletedTopic] = useState<null | { milestoneId: string; nextActivity?: SelectedActivity; milestoneComplete: boolean }>(null);
   const [completedRecommendations, setCompletedRecommendations] = useState<string[]>([]);
   const [flashIndex, setFlashIndex] = useState(0);
   const [flashAnswer, setFlashAnswer] = useState(false);
   const [completedMilestone, setCompletedMilestone] = useState(0);
+  const programTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const theme = useRoleTheme(role);
   const phoneDigits = phoneNumber.replace(/\D/g, "");
   const phoneForApi = `+91${phoneDigits.slice(-10)}`;
@@ -172,6 +185,45 @@ export default function Index() {
   }, [screen, role]);
 
   useEffect(() => {
+    if (screen !== "sessions" || programModalSeen || !programs.length) return;
+    setDraftProgramId(selectedProgramId ?? programs[0]?.id ?? null);
+    setProgramMenuOpen(false);
+    setProgramModalVisible(true);
+  }, [programModalSeen, programs, screen, selectedProgramId]);
+
+  useEffect(() => {
+    if (!programToast) return undefined;
+    const timer = setTimeout(() => setProgramToast(""), 3000);
+    return () => clearTimeout(timer);
+  }, [programToast]);
+
+  useEffect(() => () => {
+    if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
+  }, []);
+
+  function prepareProgram(nextProgramId?: string | null) {
+    const resolvedProgramId = nextProgramId ?? draftProgramId ?? selectedProgramId ?? programs[0]?.id ?? null;
+    if (!resolvedProgramId) return;
+    if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
+    setProgramPreparing(true);
+    setPendingProgramId(resolvedProgramId);
+    setProgramMenuOpen(false);
+    setSelectedProgramId(resolvedProgramId);
+    setProgramRefreshKey((value) => value + 1);
+    programTimeoutRef.current = setTimeout(() => {
+      setProgramPreparing(false);
+      setPendingProgramId(null);
+      setProgramToast("Program setup timed out. Please try again.");
+    }, 15000);
+  }
+
+  function openProgramPicker() {
+    setDraftProgramId(selectedProgramId ?? programs[0]?.id ?? null);
+    setProgramMenuOpen(false);
+    setProgramModalVisible(true);
+  }
+
+  useEffect(() => {
     let ignore = false;
     async function loadRoleData() {
       try {
@@ -196,6 +248,14 @@ export default function Index() {
         setSelectedProgramId(programId);
         setApiMilestones(plan.data.milestones);
         setCompletedMilestone(plan.data.completedMilestoneSequence);
+        if (pendingProgramId && programId === pendingProgramId) {
+          if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
+          setProgramPreparing(false);
+          setPendingProgramId(null);
+          setProgramModalVisible(false);
+          setProgramModalSeen(true);
+          setProgramToast("Your program is ready.");
+        }
         setApiNotice("");
       } catch {
         if (ignore) return;
@@ -203,13 +263,19 @@ export default function Index() {
         setApiRecommendations(null);
         setDashboardCards(null);
         setApiMilestones(null);
+        if (pendingProgramId) {
+          if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
+          setProgramPreparing(false);
+          setPendingProgramId(null);
+          setProgramToast("Program setup failed. Please try again.");
+        }
       }
     }
     loadRoleData();
     return () => {
       ignore = true;
     };
-  }, [role, authSession?.accessToken, selectedProgramId]);
+  }, [role, authSession?.accessToken, selectedProgramId, programRefreshKey, pendingProgramId]);
 
   async function pickAvatar() {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -368,20 +434,80 @@ export default function Index() {
     }
   }
 
-  function openResource(resource: Recommendation) {
+  function openResource(resource: SelectedActivity) {
     setSelectedResource(resource);
     setScreen(resource.type === "flashcard" ? "flashIntro" : "resource");
+  }
+
+  function activityToResource(activity: NonNullable<ProgramMilestone["activities"]>[number], milestone: ProgramMilestone): SelectedActivity {
+    return {
+      id: activity.resourceId,
+      role,
+      type: activity.type,
+      title: activity.title,
+      description: activity.description,
+      thumbnailLabel: capitalize(activity.type),
+      milestoneId: milestone.id,
+      activityId: activity.id,
+      activitySequence: activity.sequence,
+      milestoneSequence: milestone.sequence
+    };
+  }
+
+  function openMilestoneActivity(milestone: ProgramMilestone) {
+    const nextActivity = milestone.activities?.find((activity) => activity.status !== "complete") ?? milestone.activities?.[0];
+    if (!nextActivity) {
+      openResource({ id: milestone.id, role, type: "video", title: milestone.title, description: "Video • Article • Flashcard • Quiz", thumbnailLabel: "Milestone", milestoneId: milestone.id, milestoneSequence: milestone.sequence });
+      return;
+    }
+    openResource(activityToResource(nextActivity, milestone));
+  }
+
+  function getNextMilestoneActivity(currentMilestoneId?: string): SelectedActivity | undefined {
+    const milestones = apiMilestones ?? programMilestones;
+    const currentMilestone = milestones.find((milestone) => milestone.id === currentMilestoneId);
+    const nextMilestone = milestones.find((milestone) => milestone.sequence === (currentMilestone?.sequence ?? 0) + 1);
+    const nextActivity = nextMilestone?.activities?.find((activity) => activity.status !== "complete") ?? nextMilestone?.activities?.[0];
+    return nextMilestone && nextActivity ? activityToResource(nextActivity, { ...nextMilestone, locked: false }) : undefined;
   }
 
   async function markComplete() {
     setLoadingAction("markComplete");
     if (selectedResource) {
       setCompletedRecommendations((items) => items.includes(selectedResource.id) ? items : [...items, selectedResource.id]);
-      await apiPost(`/api/v1/resources/${selectedResource.id}/complete`, { role }, authSession?.accessToken).catch(() => undefined);
+      let milestoneComplete = false;
+      let nextActivity: SelectedActivity | undefined;
+      if (selectedResource.activityId && selectedResource.milestoneId) {
+        setApiMilestones((items) => (items ?? programMilestones).map((milestone) => {
+          if (milestone.id !== selectedResource.milestoneId) {
+            if (milestone.sequence === (selectedResource.milestoneSequence ?? 0) + 1) return { ...milestone, locked: false };
+            return milestone;
+          }
+          const activities = milestone.activities?.map((activity) => activity.id === selectedResource.activityId ? { ...activity, status: "complete" as const } : activity);
+          milestoneComplete = Boolean(activities?.every((activity) => activity.status === "complete"));
+          const upcoming = activities?.find((activity) => activity.status !== "complete");
+          if (upcoming) nextActivity = activityToResource(upcoming, { ...milestone, activities });
+          return { ...milestone, activities };
+        }));
+        await apiPost(`/api/v1/education-plan/activities/${selectedResource.activityId}/complete`, { role, programId: selectedProgramId }, authSession?.accessToken).catch(() => undefined);
+      } else {
+        await apiPost(`/api/v1/resources/${selectedResource.id}/complete`, { role }, authSession?.accessToken).catch(() => undefined);
+      }
+      setLoadingAction(null);
+      if (milestoneComplete && selectedResource.milestoneId) {
+        setCompletedMilestone((value) => Math.max(value, selectedResource.milestoneSequence ?? value));
+        setCompletedTopic({ milestoneId: selectedResource.milestoneId, nextActivity: getNextMilestoneActivity(selectedResource.milestoneId), milestoneComplete });
+        return;
+      }
+      setSelectedResource(null);
+      if (nextActivity) {
+        openResource(nextActivity);
+      } else {
+        setScreen("sessions");
+      }
+      return;
     }
     setLoadingAction(null);
-    setSelectedResource(null);
-    setScreen("home");
   }
 
   function renderScreen() {
@@ -699,8 +825,8 @@ export default function Index() {
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} openSecurity={() => { setSecurityReturn("account"); setScreen("mpin"); }} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} />;
-    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedProgramId={selectedProgramId} setSelectedProgramId={setSelectedProgramId} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} setCompletedMilestone={setCompletedMilestone} openResource={(item) => { setSelectedResource(item); setScreen("resource"); }} />;
-    if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen("home")} />;
+    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedProgramId={selectedProgramId} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestoneActivity={openMilestoneActivity} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} />;
+    if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen("sessions")} completedTopic={completedTopic} nextTopic={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} myMiles={() => { setCompletedTopic(null); setSelectedResource(null); setScreen("sessions"); }} />;
     if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen("home")} />;
     if (screen === "flashPlay") return <FlashPlay role={role} index={flashIndex} answer={flashAnswer} setAnswer={setFlashAnswer} next={() => { setFlashIndex((flashIndex + 1) % flashcards.length); setFlashAnswer(false); }} learnMore={() => { setSelectedResource({ id: "article_quadratic", role, type: "article", title: "Quadratic equations deep dive", description: "Worked examples, formula use, and exam-style practice.", thumbnailLabel: "Article" }); setScreen("resource"); }} complete={markComplete} />;
 
@@ -731,6 +857,20 @@ export default function Index() {
           }}
         />
       )}
+      <ProgramPickerModal
+        role={role}
+        visible={programModalVisible}
+        programs={programs}
+        selectedProgramId={draftProgramId ?? selectedProgramId}
+        setSelectedProgramId={setDraftProgramId}
+        preparing={programPreparing}
+        onContinue={() => prepareProgram(draftProgramId)}
+      />
+      {programToast ? (
+        <View style={styles.toast}>
+          <Text style={styles.toastText}>{programToast}</Text>
+        </View>
+      ) : null}
     </LinearGradient>
   );
 }
@@ -1294,7 +1434,7 @@ function formatReminderDateTime(value: string) {
   return `${Number(day)} ${monthName} ${year} • ${time.toLowerCase()}`;
 }
 
-function ResourceDetail({ role, resource, complete, loading, back }: { role: Role; resource: Recommendation; complete: () => void; loading?: boolean; back: () => void }) {
+function ResourceDetail({ role, resource, complete, loading, back, completedTopic, nextTopic, myMiles }: { role: Role; resource: SelectedActivity; complete: () => void; loading?: boolean; back: () => void; completedTopic: null | { nextActivity?: SelectedActivity; milestoneComplete: boolean }; nextTopic: () => void; myMiles: () => void }) {
   const theme = useRoleTheme(role);
   return (
     <>
@@ -1305,6 +1445,20 @@ function ResourceDetail({ role, resource, complete, loading, back }: { role: Rol
       <Title>{resource.title}</Title>
       <Muted>{resource.description}</Muted>
       <Button role={role} label="Mark complete" onPress={complete} loading={loading} />
+      {completedTopic ? (
+        <View style={styles.topicTrayBackdrop}>
+          <View style={styles.topicTray}>
+            <View style={styles.trayHandle} />
+            <View style={styles.trophyCircle}><Text style={styles.trophyIcon}>🏆</Text></View>
+            <Text style={styles.topicCompleteTitle}>Topic complete</Text>
+            <Text style={styles.topicCompleteCopy}>Great job finishing this topic. The next topic is now unlocked and ready for you to explore.</Text>
+            <View style={styles.topicActionRow}>
+              {completedTopic.nextActivity ? <Button role={role} label="Next topic" onPress={nextTopic} /> : null}
+              <Button role={role} variant="secondary" label="My Miles" onPress={myMiles} />
+            </View>
+          </View>
+        </View>
+      ) : null}
     </>
   );
 }
@@ -1343,56 +1497,167 @@ function Sessions({
   role,
   programs,
   selectedProgramId,
-  setSelectedProgramId,
   milestones,
   completedMilestone,
-  setCompletedMilestone,
-  openResource
+  openMilestoneActivity,
+  menuOpen,
+  setMenuOpen,
+  openProgramPicker,
+  archiveProgram
 }: {
   role: Role;
   programs: ProgramSummary[];
   selectedProgramId: string | null;
-  setSelectedProgramId: (value: string | null) => void;
   milestones: ProgramMilestone[];
   completedMilestone: number;
-  setCompletedMilestone: (value: number) => void;
-  openResource: (item: Recommendation) => void;
+  openMilestoneActivity: (milestone: ProgramMilestone) => void;
+  menuOpen: boolean;
+  setMenuOpen: (value: boolean) => void;
+  openProgramPicker: () => void;
+  archiveProgram: () => void;
 }) {
+  const theme = useRoleTheme(role);
   const selectedProgram = programs.find((program) => program.id === selectedProgramId) ?? programs[0];
+  const programTitle = selectedProgram?.title ?? (role === "student" ? "Medical program" : role === "tutor" ? "Tutor growth program" : "Parent support program");
+  const programDescription = selectedProgram?.description ?? "Milestones unlock one by one. Each topic includes video, article, flashcard, and quiz.";
+
   return (
     <>
-      <Header role={role} personaName="My Miles" />
-      {role === "student" && programs.length > 0 ? (
-        <>
-          <FieldLabel>Program</FieldLabel>
-          <DropdownField
-            value={selectedProgram?.title ?? "Select program"}
-            options={programs.map((program) => program.title)}
-            onSelect={(title) => setSelectedProgramId(programs.find((program) => program.title === title)?.id ?? null)}
-          />
-        </>
-      ) : null}
-      <Hero>
-        <CardTitle>{selectedProgram?.title ?? (role === "student" ? "Medical program" : role === "tutor" ? "Tutor growth program" : "Parent support program")}</CardTitle>
-        <Muted>{selectedProgram?.description ?? "Milestones unlock one by one. Each topic includes video, article, flashcard, and quiz."}</Muted>
-      </Hero>
-      {milestones.map((milestone) => {
-        const locked = milestone.sequence > completedMilestone + 1;
-        const activityText = milestone.activities?.length
-          ? milestone.activities.map((activity) => capitalize(activity.type)).join(" • ")
-          : "Video • Article • Flashcard • Quiz";
-        return (
-          <Card key={milestone.id} role={role} onPress={() => {
-            if (locked) return;
-            setCompletedMilestone(Math.max(completedMilestone, milestone.sequence));
-            openResource({ id: milestone.id, role, type: "video", title: milestone.title, description: activityText, thumbnailLabel: "Milestone" });
-          }}>
-            <CardTitle>{milestone.title}</CardTitle>
-            <Muted>{locked ? "Locked" : activityText}</Muted>
-          </Card>
-        );
-      })}
+      <View style={styles.milesHeader}>
+        <View style={styles.milesHeaderSpacer} />
+        <Text style={styles.milesHeaderTitle}>My Miles</Text>
+        <Pressable style={styles.headerIconButton} onPress={() => setMenuOpen(!menuOpen)}>
+          <Text style={[styles.headerIconButtonText, { color: theme.accentStrong }]}>⋮</Text>
+        </Pressable>
+        {menuOpen ? (
+          <View style={styles.programMenu}>
+            <Pressable style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]} onPress={openProgramPicker}>
+              <Text style={styles.programMenuText}>Add a program</Text>
+            </Pressable>
+            <Pressable style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]} onPress={archiveProgram}>
+              <Text style={styles.programMenuText}>Archive a program</Text>
+            </Pressable>
+          </View>
+        ) : null}
+      </View>
+      <View style={[styles.milesSummaryCard, { borderColor: theme.accentStrong }]}>
+        <Text style={styles.milesSummaryTitle}>{programTitle}</Text>
+        <Text style={styles.milesSummaryCopy}>{programDescription}</Text>
+      </View>
+      <View style={styles.milesTimeline}>
+        {milestones.map((milestone, index) => {
+          const locked = milestone.sequence > completedMilestone + 1;
+          const complete = milestone.sequence <= completedMilestone;
+          const active = milestone.sequence === completedMilestone + 1;
+          const completeGreen = "#16A34A";
+          const activityText = milestone.activities?.length
+            ? milestone.activities.map((activity) => capitalize(activity.type)).join(" • ")
+            : "Video • Article • Flashcard • Quiz";
+          const completedActivities = milestone.activities?.filter((activity) => activity.status === "complete").length ?? (complete ? 4 : 0);
+          const totalActivities = milestone.activities?.length ?? 4;
+          const progress = complete ? 1 : totalActivities ? completedActivities / totalActivities : 0;
+          const hasStarted = completedActivities > 0;
+          const ctaLabel = locked ? "Coming soon" : complete ? "Review" : hasStarted ? "Continue" : "Start";
+          const chipLabel = !complete && hasStarted ? "Keep learning" : null;
+
+          return (
+            <View key={milestone.id} style={styles.mileRow}>
+              <View style={styles.mileRail}>
+                {index > 0 ? <View style={[styles.mileRailLine, styles.mileRailLineTop, locked ? styles.mileRailLineLocked : { backgroundColor: theme.accentStrong }]} /> : null}
+                <View style={[
+                  styles.mileNode,
+                  locked ? styles.mileNodeLocked : { backgroundColor: complete ? completeGreen : theme.accent, borderColor: complete ? completeGreen : theme.accentStrong }
+                ]}>
+                  <Text style={[styles.mileNodeText, { color: locked ? "#9CA3AF" : complete ? "#FFFFFF" : theme.text }]}>{locked ? "⌕" : milestone.sequence}</Text>
+                </View>
+                {index < milestones.length - 1 ? <View style={[styles.mileRailLine, styles.mileRailLineBottom, locked ? styles.mileRailLineLocked : { backgroundColor: theme.accentStrong }]} /> : null}
+              </View>
+              <Pressable
+                disabled={locked}
+                onPress={() => {
+                  if (locked) return;
+                  openMilestoneActivity(milestone);
+                }}
+                style={({ pressed }) => [
+                  styles.mileCard,
+                  active ? styles.mileCardActive : null,
+                  locked ? styles.mileCardLocked : null,
+                  pressed && !locked ? styles.pressed : null
+                ]}
+              >
+                {chipLabel ? (
+                  <View style={[styles.mileChip, { backgroundColor: "#CFE8F5" }]}>
+                    <Text style={[styles.mileChipText, { color: theme.text }]}>{chipLabel}</Text>
+                  </View>
+                ) : null}
+                <Text style={[styles.mileCardTitle, locked ? styles.mileCardTitleLocked : null]}>{milestone.title}</Text>
+                {!locked && !complete ? (
+                  <>
+                    <View style={styles.mileProgressTrack}>
+                      <View style={[styles.mileProgressFill, { backgroundColor: theme.accentStrong, width: (String(Math.max(8, Math.round(progress * 100))) + "%") as `${number}%` }]} />
+                    </View>
+                    <Text style={styles.mileProgressText}>{completedActivities} of {totalActivities} complete</Text>
+                  </>
+                ) : null}
+                {!locked && complete ? <Text style={styles.mileActivityText}>{activityText}</Text> : null}
+                <View style={[styles.mileCta, locked ? styles.mileCtaLocked : complete ? styles.mileCtaOutline : { backgroundColor: theme.text, borderColor: theme.text }]}>
+                  <Text style={[styles.mileCtaText, { color: locked ? "#8F8A9D" : complete ? theme.text : "#FFFFFF" }]}>{ctaLabel}</Text>
+                </View>
+              </Pressable>
+            </View>
+          );
+        })}
+      </View>
     </>
+  );
+}
+
+function ProgramPickerModal({
+  role,
+  visible,
+  programs,
+  selectedProgramId,
+  setSelectedProgramId,
+  preparing,
+  onContinue
+}: {
+  role: Role;
+  visible: boolean;
+  programs: ProgramSummary[];
+  selectedProgramId: string | null;
+  setSelectedProgramId: (value: string | null) => void;
+  preparing: boolean;
+  onContinue: () => void;
+}) {
+  const theme = useRoleTheme(role);
+  const selectedProgram = programs.find((program) => program.id === selectedProgramId) ?? programs[0];
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <BlurView intensity={95} tint="dark" style={styles.modalBackdrop}>
+        <View style={styles.programModalCard}>
+          {preparing ? (
+            <View style={styles.programPreparing}>
+              <ActivityIndicator color={theme.accentStrong} size="large" />
+              <Text style={styles.programModalTitle}>We're preparing your program, thanks for your patience.</Text>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.programModalTitle}>Choose your program</Text>
+              <Text style={styles.programModalCopy}>Select the plan you want to follow in My Miles.</Text>
+              <FieldLabel>Program</FieldLabel>
+              <DropdownField
+                value={selectedProgram?.title ?? "Select program"}
+                options={programs.map((program) => program.title)}
+                onSelect={(title) => setSelectedProgramId(programs.find((program) => program.title === title)?.id ?? null)}
+              />
+              <View style={styles.modalBottomCta}>
+                <Button role={role} label="Continue" onPress={onContinue} disabled={!selectedProgram} />
+              </View>
+            </>
+          )}
+        </View>
+      </BlurView>
+    </Modal>
   );
 }
 
@@ -1633,6 +1898,12 @@ const styles = StyleSheet.create({
   topButton: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.72)", borderRadius: 13, height: 40, justifyContent: "center", width: 40 },
   topButtonText: { color: "#202A35", fontSize: 16, fontWeight: "900" },
   topTitle: { color: "#202A35", fontSize: 16, fontWeight: "900" },
+  milesHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", minHeight: 42, position: "relative" },
+  milesHeaderSpacer: { height: 39, width: 39 },
+  milesHeaderTitle: { color: "#202A35", fontSize: 18, fontWeight: "900", left: 58, position: "absolute", right: 58, textAlign: "center" },
+  programMenu: { backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, overflow: "hidden", position: "absolute", right: 0, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.14, shadowRadius: 18, top: 46, width: 188, zIndex: 5 },
+  programMenuItem: { minHeight: 46, justifyContent: "center", paddingHorizontal: 14 },
+  programMenuText: { color: "#202A35", fontSize: 14, fontWeight: "800" },
   hero: { backgroundColor: "rgba(255,255,255,0.74)", borderRadius: 28, gap: 10, padding: 18, shadowColor: "#0F172A", shadowOpacity: 0.12, shadowRadius: 18, shadowOffset: { width: 0, height: 12 } },
   splash: { alignSelf: "center", height: 210, width: 210 },
   title: { color: "#202A35", fontSize: 21, fontWeight: "900", lineHeight: 26 },
@@ -1771,6 +2042,34 @@ const styles = StyleSheet.create({
   todayMeta: { color: "#536A86", fontSize: 14, fontWeight: "600", lineHeight: 18 },
   todayBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   todayBadgeText: { fontSize: 11, fontWeight: "900" },
+  milesSummaryCard: { backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 22, borderWidth: 1, gap: 6, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.07, shadowRadius: 18 },
+  milesSummaryTitle: { color: "#202A35", fontSize: 17, fontWeight: "900", lineHeight: 22 },
+  milesSummaryCopy: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19 },
+  milesTimeline: { gap: 10, paddingBottom: 18, paddingTop: 10 },
+  mileRow: { flexDirection: "row", minHeight: 148 },
+  mileRail: { alignItems: "center", marginRight: 12, width: 44 },
+  mileRailLine: { position: "absolute", width: 5 },
+  mileRailLineTop: { bottom: 82, top: 0 },
+  mileRailLineBottom: { bottom: 0, top: 44 },
+  mileRailLineLocked: { backgroundColor: "#DDD5E8" },
+  mileNode: { alignItems: "center", borderColor: "#FFFFFF", borderRadius: 999, borderWidth: 3, height: 40, justifyContent: "center", marginTop: 26, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.10, shadowRadius: 12, width: 40, zIndex: 2 },
+  mileNodeLocked: { backgroundColor: "#F1ECF8", borderColor: "#E1D9EC" },
+  mileNodeText: { fontSize: 15, fontWeight: "900" },
+  mileCard: { alignItems: "center", alignSelf: "flex-start", backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#E4DDED", borderRadius: 20, borderWidth: 1, flex: 1, gap: 10, marginBottom: 24, minHeight: 112, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.10, shadowRadius: 18 },
+  mileCardActive: { minHeight: 142, shadowOpacity: 0.16 },
+  mileCardLocked: { backgroundColor: "rgba(221,211,233,0.72)", borderColor: "rgba(221,211,233,0.72)", shadowOpacity: 0.02 },
+  mileChip: { alignSelf: "center", borderRadius: 8, marginTop: -28, paddingHorizontal: 13, paddingVertical: 5 },
+  mileChipText: { fontSize: 12, fontWeight: "900" },
+  mileCardTitle: { color: "#202A35", fontSize: 18, fontWeight: "900", lineHeight: 23, textAlign: "center" },
+  mileCardTitleLocked: { color: "#6F687C" },
+  mileProgressTrack: { backgroundColor: "#E5E7EB", borderRadius: 999, height: 4, overflow: "hidden", width: "78%" },
+  mileProgressFill: { borderRadius: 999, height: 4 },
+  mileProgressText: { color: "#3F4754", fontSize: 12, fontWeight: "800" },
+  mileActivityText: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17, textAlign: "center" },
+  mileCta: { alignItems: "center", borderColor: "transparent", borderRadius: 999, borderWidth: 1.5, justifyContent: "center", minHeight: 44, paddingHorizontal: 18, width: "100%" },
+  mileCtaOutline: { backgroundColor: "#FFFFFF" },
+  mileCtaLocked: { backgroundColor: "rgba(198,188,211,0.72)", borderColor: "transparent" },
+  mileCtaText: { fontSize: 14, fontWeight: "900" },
   row: { flexDirection: "row", gap: 10 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   metric: { backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.07, shadowRadius: 16, width: "47%" },
@@ -1927,6 +2226,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "900"
   },
+  modalBackdrop: { alignItems: "center", backgroundColor: "rgba(15,23,42,0.58)", flex: 1, justifyContent: "center", padding: 20 },
+  programModalCard: { backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#DDE7EF", borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 300, padding: 18, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.18, shadowRadius: 28, width: "100%" },
+  programModalTitle: { color: "#202A35", fontSize: 21, fontWeight: "900", lineHeight: 27, textAlign: "center" },
+  programModalCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
+  programPreparing: { alignItems: "center", flex: 1, gap: 18, justifyContent: "center", minHeight: 260 },
+  modalBottomCta: { flex: 1, justifyContent: "flex-end", minHeight: 120 },
+  toast: { alignItems: "center", backgroundColor: "rgba(32,42,53,0.94)", borderRadius: 999, bottom: 104, left: 24, minHeight: 44, paddingHorizontal: 18, position: "absolute", right: 24, shadowColor: "#000", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 18 },
+  toastText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800", lineHeight: 44, textAlign: "center" },
   accountHeader: {
     alignItems: "center",
     flexDirection: "row",
@@ -1982,6 +2289,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700"
   },
+  topicTrayBackdrop: { backgroundColor: "rgba(15,23,42,0.36)", bottom: -20, left: -20, paddingTop: 120, position: "absolute", right: -20, top: -58 },
+  topicTray: { alignItems: "center", backgroundColor: "#FFFFFF", borderTopLeftRadius: 34, borderTopRightRadius: 34, bottom: 0, gap: 18, left: 0, minHeight: 386, padding: 24, paddingBottom: 34, position: "absolute", right: 0, shadowColor: "#0F172A", shadowOffset: { width: 0, height: -14 }, shadowOpacity: 0.16, shadowRadius: 24 },
+  trayHandle: { backgroundColor: "#6B6178", borderRadius: 999, height: 5, marginBottom: 18, width: 42 },
+  trophyCircle: { alignItems: "center", backgroundColor: "#F8DDFC", borderRadius: 999, height: 168, justifyContent: "center", width: 168 },
+  trophyIcon: { fontSize: 72 },
+  topicCompleteTitle: { color: "#111827", fontSize: 27, fontWeight: "900", lineHeight: 34, textAlign: "center" },
+  topicCompleteCopy: { color: "#3F4754", fontSize: 16, fontWeight: "600", lineHeight: 24, textAlign: "center" },
+  topicActionRow: { alignSelf: "stretch", gap: 12, marginTop: 14 },
   player: { alignItems: "center", borderRadius: 28, height: 210, justifyContent: "center" },
   playerIcon: { fontSize: 58, fontWeight: "900" },
   flashcard: { alignItems: "center", backgroundColor: "#FFFFFF", borderRadius: 28, justifyContent: "center", minHeight: 230, padding: 24 },
