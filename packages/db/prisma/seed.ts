@@ -1,6 +1,6 @@
 import "dotenv/config";
 import crypto from "node:crypto";
-import { ActivityStatus, PrismaClient, ResourceType, Role } from "@prisma/client";
+import { PrismaClient, ResourceType, Role } from "@prisma/client";
 
 const prisma = new PrismaClient();
 const sourceTag = "mock";
@@ -8,6 +8,7 @@ const sourceTag = "mock";
 async function main() {
   await prisma.authSession.deleteMany();
   await prisma.mobileClient.deleteMany();
+  await prisma.activityProgress.deleteMany();
   await prisma.milestoneActivity.deleteMany();
   await prisma.reminder.deleteMany();
   await prisma.recommendation.deleteMany();
@@ -17,6 +18,10 @@ async function main() {
   await prisma.programProgress.deleteMany();
   await prisma.programMilestone.deleteMany();
   await prisma.program.deleteMany();
+  await prisma.batchEnrollment.deleteMany();
+  await prisma.batchRequest.deleteMany();
+  await prisma.tutorBatch.deleteMany();
+  await prisma.tutorProfile.deleteMany();
   await prisma.userManagement.deleteMany();
   await prisma.profile.deleteMany();
   await prisma.user.deleteMany();
@@ -92,6 +97,123 @@ async function main() {
       sourceTag
     }))
   });
+
+
+  const tutorFixtures = [
+    ["Neha", "Verma", "CBSE Mathematics specialist", "Mathematics", "CBSE", "Class 9,Class 10", "English,Hindi", "Online,Home Tuition", 8, 4.9, 850, "Female", "South Delhi", "Class 10 board-focused algebra, geometry, and exam writing support."],
+    ["Rahul", "Menon", "Physics mentor for medical aspirants", "Physics", "CBSE,State", "Class 11,Class 12", "English", "Online", 10, 4.8, 1000, "Male", "Gurgaon", "Numerical practice, concept videos, and NEET-style doubt clearing."],
+    ["Ananya", "Iyer", "Biology NCERT mastery coach", "Biology", "CBSE,ICSE", "Class 11,Class 12", "English,Hindi", "Online,Home Tuition", 7, 4.8, 900, "Female", "Noida", "NCERT diagrams, active recall, and high-yield biology milestones."],
+    ["Karan", "Malhotra", "Chemistry problem solving tutor", "Chemistry", "CBSE", "Class 11,Class 12", "English,Hindi", "Online", 6, 4.7, 800, "Male", "Delhi", "Physical, organic, and inorganic chemistry with weekly diagnostics."],
+    ["Priya", "Nair", "Junior science foundation tutor", "Science", "CBSE,ICSE", "Class 6,Class 7,Class 8", "English", "Home Tuition", 5, 4.6, 650, "Female", "South Delhi", "Strong basics for middle-school science and study discipline."],
+    ["Arjun", "Kapoor", "Mathematics olympiad and boards tutor", "Mathematics", "CBSE,IB", "Class 8,Class 9,Class 10", "English,Hindi", "Online,Home Tuition", 9, 4.9, 950, "Male", "Delhi", "Problem solving for boards, school exams, and advanced practice."],
+    ["Sana", "Khan", "English communication and grammar tutor", "English", "CBSE,ICSE", "Class 5,Class 6,Class 7,Class 8", "English,Hindi", "Online", 6, 4.7, 600, "Female", "Mumbai", "Reading fluency, grammar, and writing confidence."],
+    ["Vikram", "Rao", "Accounts and commerce faculty", "Commerce", "CBSE,State", "Class 11,Class 12,UG", "English", "Online", 12, 4.8, 1100, "Male", "Bengaluru", "Accounting fundamentals, business studies, and exam practice."],
+    ["Meera", "Chopra", "Computer science and coding tutor", "Computer Science", "CBSE,ICSE,IGCSE", "Class 9,Class 10,Class 11,Class 12", "English,Hindi", "Online", 8, 4.7, 900, "Female", "Pune", "Python, logic building, practical files, and board projects."],
+    ["Dev", "Sinha", "NEET crash course mentor", "Biology,Chemistry", "CBSE", "Class 12,Dropper", "English,Hindi", "Online", 11, 4.9, 1200, "Male", "Kolkata", "High-intensity revision for NEET biology and chemistry."],
+    ["Ritika", "Bose", "ICSE mathematics and science coach", "Mathematics,Science", "ICSE", "Class 8,Class 9,Class 10", "English", "Home Tuition", 7, 4.6, 750, "Female", "Kolkata", "ICSE exam patterns, labelling, and structured answers."],
+    ["Amit", "Tandon", "JEE and senior physics faculty", "Physics,Mathematics", "CBSE,State", "Class 11,Class 12", "English,Hindi", "Online", 14, 4.8, 1300, "Male", "Delhi", "Mechanics, calculus, and weekly test analysis."],
+    ["Lata", "Mishra", "Primary learning specialist", "Mathematics,English", "CBSE,ICSE", "Class 1,Class 2,Class 3,Class 4,Class 5", "English,Hindi", "Home Tuition", 9, 4.8, 550, "Female", "Noida", "Foundational numeracy, reading, and parent-friendly progress notes."],
+    ["Siddharth", "Jain", "UG statistics and mathematics tutor", "Mathematics,Statistics", "UG", "UG", "English", "Online", 8, 4.5, 1000, "Male", "Jaipur", "College mathematics, statistics, and assignment support."],
+    ["Farah", "Ali", "IGCSE science tutor", "Science,Biology", "IGCSE,IB", "Class 8,Class 9,Class 10", "English", "Online", 6, 4.6, 950, "Female", "Hyderabad", "International curriculum science with visual notes and practice."],
+    ["Manish", "Batra", "Class 10 board booster", "Mathematics,Science", "CBSE,State", "Class 10", "English,Hindi", "Online,Home Tuition", 10, 4.7, 800, "Male", "Delhi", "Board revision, previous-year papers, and exam strategy."]
+  ] as const;
+
+  for (const [index, item] of tutorFixtures.entries()) {
+    const [firstName, lastName, headline, subjects, boards, grades, languages, mode, experienceYears, rating, hourlyRate, gender, location, bio] = item;
+    const tutorUser = await prisma.user.create({
+      data: {
+        phone: "+9198000000" + String(index + 1).padStart(2, "0"),
+        passwordHash: await hashPassword("Password@123"),
+        sourceTag,
+        profiles: {
+          create: {
+            role: Role.tutor,
+            firstName,
+            lastName,
+            dob: new Date("198" + (index % 10) + "-05-15T00:00:00.000Z"),
+            city: location,
+            communicationAddress: location + " teaching centre",
+            alternatePhone: "98990000" + String(index + 1).padStart(2, "0"),
+            stream: grades.includes("UG") ? "ug" : "senior",
+            specialization: boards.split(",")[0] + " " + grades.split(",")[0] + " " + subjects.split(",")[0],
+            sourceTag
+          }
+        }
+      },
+      include: { profiles: true }
+    });
+    const profile = tutorUser.profiles[0];
+    await prisma.userManagement.create({
+      data: {
+        userId: tutorUser.id,
+        role: Role.tutor,
+        firstName,
+        lastName,
+        dob: profile.dob,
+        city: location,
+        communicationAddress: profile.communicationAddress,
+        alternatePhone: profile.alternatePhone,
+        stream: profile.stream,
+        specialization: profile.specialization,
+        sourceTag
+      }
+    });
+    const tutorProfile = await prisma.tutorProfile.create({
+      data: {
+        profileId: profile.id,
+        headline,
+        subjects,
+        boards,
+        grades,
+        languages,
+        mode,
+        experienceYears,
+        rating,
+        hourlyRate,
+        gender,
+        location,
+        bio,
+        sourceTag
+      }
+    });
+    const primarySubject = subjects.split(",")[0];
+    const primaryGrade = grades.split(",")[0];
+    const primaryBoard = boards.split(",")[0];
+    await prisma.tutorBatch.createMany({
+      data: [
+        {
+          tutorProfileId: tutorProfile.id,
+          title: primaryGrade + " " + primarySubject + " weekday batch",
+          course: primaryBoard + " " + primarySubject + " foundation",
+          subject: primarySubject,
+          grade: primaryGrade,
+          board: primaryBoard,
+          mode: mode.includes("Online") ? "Online" : "Home Tuition",
+          schedule: "Mon, Wed, Fri • 6:00 PM",
+          classroomLocation: mode.includes("Home Tuition") ? location + " learning studio" : null,
+          onlineLink: mode.includes("Online") ? "https://meet.mytution.test/batch-" + (index + 1) : null,
+          startsAt: new Date("2026-06-" + String(26 + (index % 3)).padStart(2, "0") + "T12:30:00.000Z"),
+          capacity: 12,
+          sourceTag
+        },
+        {
+          tutorProfileId: tutorProfile.id,
+          title: primarySubject + " weekend booster",
+          course: primarySubject + " exam practice",
+          subject: primarySubject,
+          grade: primaryGrade,
+          board: primaryBoard,
+          mode: "Online",
+          schedule: "Sat, Sun • 10:00 AM",
+          classroomLocation: null,
+          onlineLink: "https://meet.mytution.test/weekend-" + (index + 1),
+          startsAt: new Date("2026-06-" + String(27 + (index % 2)).padStart(2, "0") + "T04:30:00.000Z"),
+          capacity: 20,
+          sourceTag
+        }
+      ]
+    });
+  }
 
   const algebraVideo = await prisma.resource.create({
     data: {

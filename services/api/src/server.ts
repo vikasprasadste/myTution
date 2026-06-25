@@ -23,6 +23,46 @@ const medicalProgramCatalog = [
   { id: "medical-class-12-bridge", role: "student", title: "Class 12 board plus NEET bridge", description: "Board exam alignment with NEET-style topic practice", milestones: 8 }
 ] as const;
 
+type QuizQuestion = { id: string; prompt: string; options: string[]; answerIndex: number; learnMore: string };
+
+const quizQuestionBank: QuizQuestion[] = [
+  {
+    id: "neet-foundation-q1",
+    prompt: "Which practice best builds conceptual clarity after a short lesson?",
+    options: ["Only rereading the title", "Writing a quick summary and solving checks", "Skipping the notes", "Changing to another topic immediately"],
+    answerIndex: 1,
+    learnMore: "A summary plus quick checks turns passive watching into active recall and exposes gaps early."
+  },
+  {
+    id: "neet-foundation-q2",
+    prompt: "Why are labelled diagrams important in Biology preparation?",
+    options: ["They are rarely tested", "They support recall of structure and function", "They replace definitions", "They only help in Chemistry"],
+    answerIndex: 1,
+    learnMore: "NEET and board questions often test diagram labels, functions, and relationships together."
+  },
+  {
+    id: "neet-foundation-q3",
+    prompt: "What is the purpose of a diagnostic quiz before the next milestone unlocks?",
+    options: ["To check readiness", "To delete old progress", "To skip revision", "To choose a tutor gender"],
+    answerIndex: 0,
+    learnMore: "The diagnostic confirms whether the learner has enough clarity to move ahead confidently."
+  },
+  {
+    id: "neet-foundation-q4",
+    prompt: "Which method is best for memorising formulas, reactions, and definitions?",
+    options: ["Active recall with flashcards", "Watching one long lecture only", "Avoiding practice", "Reading without testing"],
+    answerIndex: 0,
+    learnMore: "Flashcards force retrieval, which strengthens memory more than simply rereading."
+  },
+  {
+    id: "neet-foundation-q5",
+    prompt: "What makes board-style subjective answers stronger?",
+    options: ["Only the final line", "Clear steps, keywords, units, and diagrams", "Leaving out workings", "Writing unrelated facts"],
+    answerIndex: 1,
+    learnMore: "Marking schemes reward structured reasoning and expected keywords, not just the final answer."
+  }
+];
+
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
@@ -267,6 +307,154 @@ app.put("/api/v1/usermanagement/profile", async (req, res) => {
   res.json({ data: { profile, userManagement } });
 });
 
+app.get("/api/v1/usermanagement/tutors", async (req, res) => {
+  const batchWhere: Record<string, unknown> = {};
+  if (req.query.subject) batchWhere.subject = textContains(req.query.subject);
+  if (req.query.grade) batchWhere.grade = textContains(req.query.grade);
+  if (req.query.board) batchWhere.board = textContains(req.query.board);
+  if (req.query.mode) batchWhere.mode = textContains(req.query.mode);
+
+  const tutorWhere: Record<string, unknown> = {};
+  if (req.query.location) tutorWhere.location = textContains(req.query.location);
+  if (req.query.language) tutorWhere.languages = textContains(req.query.language);
+  if (req.query.gender) tutorWhere.gender = textContains(req.query.gender);
+  if (req.query.minExperience) tutorWhere.experienceYears = { gte: Number(req.query.minExperience) || 0 };
+  if (req.query.minRating) tutorWhere.rating = { gte: Number(req.query.minRating) || 0 };
+  if (Object.keys(batchWhere).length) tutorWhere.batches = { some: batchWhere };
+
+  const tutors = await prisma.tutorProfile.findMany({
+    where: tutorWhere,
+    include: {
+      profile: true,
+      batches: {
+        where: batchWhere,
+        orderBy: { startsAt: "asc" },
+        include: { requests: true, enrollments: true }
+      }
+    },
+    orderBy: [{ rating: "desc" }, { experienceYears: "desc" }],
+    take: 40
+  });
+  res.json({ data: tutors.map(toTutorSearchResult) });
+});
+
+app.post("/api/v1/usermanagement/batch-requests", async (req, res) => {
+  const userId = await readUserId(req);
+  const student = await findProfile("student", userId);
+  if (!student) {
+    res.status(404).json({ error: "Student profile not found" });
+    return;
+  }
+  const batchId = String(req.body.batchId ?? "");
+  const batch = await prisma.tutorBatch.findUnique({ where: { id: batchId } });
+  if (!batch) {
+    res.status(404).json({ error: "Batch not found" });
+    return;
+  }
+  const request = await prisma.batchRequest.upsert({
+    where: { batchId_studentProfileId: { batchId, studentProfileId: student.id } },
+    update: { status: "pending", message: stringOrNull(req.body.message), sourceTag: "app" },
+    create: { batchId, studentProfileId: student.id, message: stringOrNull(req.body.message), sourceTag: "app" },
+    include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true }
+  });
+  res.status(201).json({ data: toBatchRequestSummary(request) });
+});
+
+app.get("/api/v1/usermanagement/batch-requests", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await readUserId(req);
+  const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+  if (role === "tutor") {
+    const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+    const requests = tutorProfile ? await prisma.batchRequest.findMany({
+      where: { batch: { tutorProfileId: tutorProfile.id } },
+      include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true },
+      orderBy: { createdAt: "desc" }
+    }) : [];
+    res.json({ data: requests.map(toBatchRequestSummary) });
+    return;
+  }
+  const requests = await prisma.batchRequest.findMany({
+    where: { studentProfileId: profile.id },
+    include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true },
+    orderBy: { createdAt: "desc" }
+  });
+  res.json({ data: requests.map(toBatchRequestSummary) });
+});
+
+app.post("/api/v1/usermanagement/batch-requests/:id/approve", async (req, res) => {
+  const userId = await readUserId(req);
+  const tutor = await findProfile("tutor", userId);
+  if (!tutor) {
+    res.status(404).json({ error: "Tutor profile not found" });
+    return;
+  }
+  const request = await prisma.batchRequest.findUnique({
+    where: { id: req.params.id },
+    include: { batch: { include: { tutorProfile: true } }, studentProfile: true }
+  });
+  if (!request || request.batch.tutorProfile.profileId !== tutor.id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  const result = await prisma.$transaction(async (tx) => {
+    const approved = await tx.batchRequest.update({ where: { id: request.id }, data: { status: "approved" } });
+    const enrollment = await tx.batchEnrollment.upsert({
+      where: { batchId_studentProfileId: { batchId: request.batchId, studentProfileId: request.studentProfileId } },
+      update: { status: "active", requestId: request.id },
+      create: { batchId: request.batchId, studentProfileId: request.studentProfileId, requestId: request.id, status: "active", sourceTag: "app" }
+    });
+    return { approved, enrollment };
+  });
+  res.json({ data: result });
+});
+
+app.post("/api/v1/usermanagement/batch-requests/:id/reject", async (req, res) => {
+  const userId = await readUserId(req);
+  const tutor = await findProfile("tutor", userId);
+  if (!tutor) {
+    res.status(404).json({ error: "Tutor profile not found" });
+    return;
+  }
+  const request = await prisma.batchRequest.findUnique({ where: { id: req.params.id }, include: { batch: { include: { tutorProfile: true } } } });
+  if (!request || request.batch.tutorProfile.profileId !== tutor.id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  const rejected = await prisma.batchRequest.update({ where: { id: request.id }, data: { status: "rejected" } });
+  res.json({ data: rejected });
+});
+
+app.get("/api/v1/usermanagement/classes", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await readUserId(req);
+  const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+  if (role === "tutor") {
+    const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+    const batches = tutorProfile ? await prisma.tutorBatch.findMany({
+      where: { tutorProfileId: tutorProfile.id },
+      include: { enrollments: { include: { studentProfile: true } }, requests: true, tutorProfile: { include: { profile: true } } },
+      orderBy: { startsAt: "asc" }
+    }) : [];
+    res.json({ data: batches.map(toTutorBatchClass) });
+    return;
+  }
+  const enrollments = await prisma.batchEnrollment.findMany({
+    where: { studentProfileId: profile.id, status: "active" },
+    include: { batch: { include: { tutorProfile: { include: { profile: true } } } } },
+    orderBy: { createdAt: "desc" }
+  });
+  res.json({ data: enrollments.map((enrollment) => toStudentClass(enrollment.batch, enrollment.id)) });
+});
+
 app.get("/api/v1/recommendations", async (req, res) => {
   const role = readRole(req.query.role);
   if (!isFeatureEnabled("recommendations", role)) {
@@ -389,6 +577,22 @@ app.get("/api/v1/resources/:id", async (req, res) => {
     return;
   }
   res.json({ data: resource });
+});
+
+app.get("/api/v1/resources/:id/quiz", async (req, res) => {
+  const resource = await prisma.resource.findUnique({ where: { id: req.params.id } });
+  if (resource && resource.type !== "quiz") {
+    res.status(400).json({ error: "Resource is not a quiz" });
+    return;
+  }
+  res.json({
+    data: {
+      resourceId: req.params.id,
+      title: resource?.title ?? "Diagnostic MCQ quiz",
+      description: resource?.description ?? "Answer each question to calculate your score and unlock the next learning step.",
+      questions: quizQuestionBank
+    }
+  });
 });
 
 app.post("/api/v1/resources/:id/complete", async (req, res) => {
@@ -572,6 +776,117 @@ async function listReminders(role: Role, userId?: string | null) {
     orderBy: { startsAt: "asc" }
   });
   return reminders.map(toReminder);
+}
+
+function textContains(value: unknown) {
+  return { contains: String(value ?? "").trim(), mode: "insensitive" as const };
+}
+
+function splitCsv(value: string) {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function classReadyLink(batch: { startsAt: Date; onlineLink?: string | null }) {
+  if (!batch.onlineLink) return null;
+  const diffMs = batch.startsAt.getTime() - Date.now();
+  return diffMs <= 5 * 60 * 1000 && diffMs >= -2 * 60 * 60 * 1000 ? batch.onlineLink : null;
+}
+
+function toTutorSearchResult(tutor: any) {
+  return {
+    id: tutor.id,
+    tutorProfileId: tutor.id,
+    profileId: tutor.profileId,
+    name: tutor.profile.firstName + " " + tutor.profile.lastName,
+    initials: (tutor.profile.firstName.charAt(0) + tutor.profile.lastName.charAt(0)).toUpperCase(),
+    headline: tutor.headline,
+    subjects: splitCsv(tutor.subjects),
+    boards: splitCsv(tutor.boards),
+    grades: splitCsv(tutor.grades),
+    languages: splitCsv(tutor.languages),
+    mode: splitCsv(tutor.mode),
+    experienceYears: tutor.experienceYears,
+    rating: tutor.rating,
+    hourlyRate: tutor.hourlyRate,
+    gender: tutor.gender,
+    location: tutor.location,
+    bio: tutor.bio,
+    batches: tutor.batches.map(toBatchSummary)
+  };
+}
+
+function toBatchSummary(batch: any) {
+  return {
+    id: batch.id,
+    title: batch.title,
+    course: batch.course,
+    subject: batch.subject,
+    grade: batch.grade,
+    board: batch.board,
+    mode: batch.mode,
+    schedule: batch.schedule,
+    classroomLocation: batch.classroomLocation,
+    startsAt: batch.startsAt.toISOString(),
+    capacity: batch.capacity,
+    enrolledCount: batch.enrollments?.length ?? 0,
+    requestCount: batch.requests?.length ?? 0,
+    onlineVideoLink: classReadyLink(batch)
+  };
+}
+
+function toBatchRequestSummary(request: any) {
+  const tutorProfile = request.batch.tutorProfile;
+  return {
+    id: request.id,
+    status: request.status,
+    message: request.message,
+    createdAt: request.createdAt.toISOString(),
+    student: {
+      id: request.studentProfile.id,
+      name: request.studentProfile.firstName + " " + request.studentProfile.lastName,
+      city: request.studentProfile.city
+    },
+    batch: toStudentClass(request.batch),
+    tutor: {
+      id: tutorProfile.id,
+      name: tutorProfile.profile.firstName + " " + tutorProfile.profile.lastName,
+      headline: tutorProfile.headline,
+      rating: tutorProfile.rating
+    }
+  };
+}
+
+function toStudentClass(batch: any, enrollmentId?: string) {
+  const tutorProfile = batch.tutorProfile;
+  return {
+    id: enrollmentId ?? batch.id,
+    batchId: batch.id,
+    title: batch.title,
+    course: batch.course,
+    subject: batch.subject,
+    grade: batch.grade,
+    board: batch.board,
+    mode: batch.mode,
+    schedule: batch.schedule,
+    classroomLocation: batch.classroomLocation,
+    onlineVideoLink: classReadyLink(batch),
+    startsAt: batch.startsAt.toISOString(),
+    tutorName: tutorProfile.profile.firstName + " " + tutorProfile.profile.lastName,
+    tutorHeadline: tutorProfile.headline,
+    tutorRating: tutorProfile.rating
+  };
+}
+
+function toTutorBatchClass(batch: any) {
+  return {
+    ...toStudentClass(batch),
+    enrolledStudents: batch.enrollments?.map((enrollment: any) => ({
+      id: enrollment.studentProfile.id,
+      name: enrollment.studentProfile.firstName + " " + enrollment.studentProfile.lastName,
+      city: enrollment.studentProfile.city
+    })) ?? [],
+    pendingRequests: batch.requests?.filter((request: any) => request.status === "pending").length ?? 0
+  };
 }
 
 async function getEducationPlan(role: Role, userId?: string | null, programId?: string | null) {

@@ -34,6 +34,18 @@ enum ActivityStatus {
   complete
 }
 
+enum BatchRequestStatus {
+  pending
+  approved
+  rejected
+}
+
+enum EnrollmentStatus {
+  active
+  paused
+  completed
+}
+
 model User {
   id          String    @id @default(cuid())
   phone       String    @unique
@@ -96,6 +108,9 @@ model Profile {
   programProgress    ProgramProgress[]
   resourceProgress   ResourceProgress[]
   activityProgress   ActivityProgress[]
+  tutorProfile       TutorProfile?
+  studentBatchRequests BatchRequest[] @relation("StudentBatchRequests")
+  studentBatchEnrollments BatchEnrollment[] @relation("StudentBatchEnrollments")
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -122,6 +137,91 @@ model UserManagement {
 
   @@unique([userId, role])
   @@index([role, city])
+}
+
+model TutorProfile {
+  id              String       @id @default(cuid())
+  profileId       String       @unique
+  headline        String
+  subjects        String
+  boards          String
+  grades          String
+  languages       String
+  mode            String
+  experienceYears Int
+  rating          Float
+  hourlyRate      Int
+  gender          String
+  location        String
+  bio             String
+  sourceTag       String       @default("app")
+  profile         Profile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  batches         TutorBatch[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([location, gender])
+  @@index([rating, experienceYears])
+}
+
+model TutorBatch {
+  id                String            @id @default(cuid())
+  tutorProfileId    String
+  title             String
+  course            String
+  subject           String
+  grade             String
+  board             String
+  mode              String
+  schedule          String
+  classroomLocation String?
+  onlineLink        String?
+  startsAt          DateTime
+  capacity          Int               @default(12)
+  sourceTag         String            @default("app")
+  tutorProfile      TutorProfile      @relation(fields: [tutorProfileId], references: [id], onDelete: Cascade)
+  requests          BatchRequest[]
+  enrollments       BatchEnrollment[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([subject, grade, board, mode])
+  @@index([startsAt])
+}
+
+model BatchRequest {
+  id               String             @id @default(cuid())
+  batchId          String
+  studentProfileId String
+  status           BatchRequestStatus @default(pending)
+  message          String?
+  sourceTag        String             @default("app")
+  batch            TutorBatch         @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  studentProfile   Profile            @relation("StudentBatchRequests", fields: [studentProfileId], references: [id], onDelete: Cascade)
+  enrollment       BatchEnrollment?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@unique([batchId, studentProfileId])
+  @@index([studentProfileId, status])
+  @@index([batchId, status])
+}
+
+model BatchEnrollment {
+  id               String           @id @default(cuid())
+  batchId          String
+  studentProfileId String
+  requestId        String?          @unique
+  status           EnrollmentStatus @default(active)
+  sourceTag        String           @default("app")
+  batch            TutorBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  studentProfile   Profile          @relation("StudentBatchEnrollments", fields: [studentProfileId], references: [id], onDelete: Cascade)
+  request          BatchRequest?    @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([batchId, studentProfileId])
+  @@index([studentProfileId, status])
 }
 
 model Recommendation {

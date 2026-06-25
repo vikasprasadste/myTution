@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role, TutorSearchResult } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
@@ -33,6 +33,7 @@ type AppScreen =
   | "home"
   | "search"
   | "sessions"
+  | "milestoneDetail"
   | "payments"
   | "roleHub"
   | "chat"
@@ -41,6 +42,9 @@ type AppScreen =
   | "resource"
   | "flashIntro"
   | "flashPlay"
+  | "quizIntro"
+  | "quizPlay"
+  | "quizResult"
   | "ratings";
 
 const splash = require("../assets/splash-screen.png");
@@ -50,6 +54,8 @@ type StreamKey = "junior" | "senior" | "ug" | "pg";
 type AuthSession = { accessToken: string; refreshToken: string; tokenType: string };
 type DashboardCard = { value: string; label: string; target: AppScreen };
 type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number };
+type QuizQuestion = { id: string; prompt: string; options: string[]; answerIndex: number; learnMore: string };
+type QuizPayload = { resourceId: string; title: string; description: string; questions: QuizQuestion[] };
 type SignInMode = "fresh" | "returning";
 type ProfileDraft = {
   firstName: string;
@@ -138,11 +144,20 @@ export default function Index() {
   const [reminderTime, setReminderTime] = useState("06:30 PM");
   const [picker, setPicker] = useState<null | { target: "dob" | "reminderDate" | "reminderTime"; mode: "date" | "time"; value: Date }>(null);
   const [recommendationsReady, setRecommendationsReady] = useState(false);
+  const [selectedMilestone, setSelectedMilestone] = useState<ProgramMilestone | null>(null);
   const [selectedResource, setSelectedResource] = useState<SelectedActivity | null>(null);
+  const [tutorResults, setTutorResults] = useState<TutorSearchResult[]>([]);
+  const [batchClasses, setBatchClasses] = useState<BatchClass[]>([]);
+  const [batchRequests, setBatchRequests] = useState<BatchRequestSummary[]>([]);
+  const [tutorSearchLoading, setTutorSearchLoading] = useState(false);
+  const [classHubLoading, setClassHubLoading] = useState(false);
   const [completedTopic, setCompletedTopic] = useState<null | { milestoneId: string; nextActivity?: SelectedActivity; milestoneComplete: boolean }>(null);
   const [completedRecommendations, setCompletedRecommendations] = useState<string[]>([]);
   const [flashIndex, setFlashIndex] = useState(0);
   const [flashAnswer, setFlashAnswer] = useState(false);
+  const [quizPayload, setQuizPayload] = useState<QuizPayload | null>(null);
+  const [quizIndex, setQuizIndex] = useState(0);
+  const [quizAnswers, setQuizAnswers] = useState<number[]>([]);
   const [completedMilestone, setCompletedMilestone] = useState(0);
   const programTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const theme = useRoleTheme(role);
@@ -200,6 +215,15 @@ export default function Index() {
   useEffect(() => () => {
     if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
   }, []);
+
+
+  useEffect(() => {
+    if (screen === "search" && role === "student") refreshTutorSearch({ subject: "Mathematics" });
+    if (screen === "roleHub") {
+      if (role === "student") refreshClasses();
+      if (role === "tutor") refreshBatchRequests();
+    }
+  }, [screen, role, authSession?.accessToken]);
 
   function prepareProgram(nextProgramId?: string | null) {
     const resolvedProgramId = nextProgramId ?? draftProgramId ?? selectedProgramId ?? programs[0]?.id ?? null;
@@ -284,6 +308,76 @@ export default function Index() {
       quality: 0.8
     });
     if (!result.canceled) setAvatarUri(result.assets[0]?.uri ?? null);
+  }
+
+  async function refreshTutorSearch(filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string } = {}) {
+    setTutorSearchLoading(true);
+    try {
+      const params = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+      const response = await apiGet<{ data: TutorSearchResult[] }>("/api/v1/usermanagement/tutors" + (params.toString() ? "?" + params.toString() : ""), authSession?.accessToken);
+      setTutorResults(response.data);
+      setApiNotice("");
+    } catch {
+      setTutorResults([]);
+      setApiNotice("Tutor search could not be loaded from API. Please redeploy or check the API service.");
+    } finally {
+      setTutorSearchLoading(false);
+    }
+  }
+
+  async function requestBatch(batchId: string) {
+    setLoadingAction("requestBatch:" + batchId);
+    try {
+      await apiPost("/api/v1/usermanagement/batch-requests", { batchId, message: "I would like to join this batch." }, authSession?.accessToken);
+      setApiNotice("Batch request sent to tutor.");
+      await refreshTutorSearch({ subject: "Mathematics" });
+    } catch {
+      setApiNotice("Batch request failed. Please check API deployment and login state.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function refreshClasses() {
+    setClassHubLoading(true);
+    try {
+      const response = await apiGet<{ data: BatchClass[] }>("/api/v1/usermanagement/classes?role=student", authSession?.accessToken);
+      setBatchClasses(response.data);
+      setApiNotice("");
+    } catch {
+      setBatchClasses([]);
+      setApiNotice("My Classes could not be loaded from API.");
+    } finally {
+      setClassHubLoading(false);
+    }
+  }
+
+  async function refreshBatchRequests() {
+    setClassHubLoading(true);
+    try {
+      const response = await apiGet<{ data: BatchRequestSummary[] }>("/api/v1/usermanagement/batch-requests?role=tutor", authSession?.accessToken);
+      setBatchRequests(response.data);
+      setApiNotice("");
+    } catch {
+      setBatchRequests([]);
+      setApiNotice("Tutor requests could not be loaded from API.");
+    } finally {
+      setClassHubLoading(false);
+    }
+  }
+
+  async function approveBatchRequest(requestId: string) {
+    setLoadingAction("approveRequest:" + requestId);
+    try {
+      await apiPost("/api/v1/usermanagement/batch-requests/" + requestId + "/approve", {}, authSession?.accessToken);
+      setApiNotice("Student enrolled in batch.");
+      await refreshBatchRequests();
+    } catch {
+      setApiNotice("Approval failed. Please check API deployment and login state.");
+    } finally {
+      setLoadingAction(null);
+    }
   }
 
   function restartPrototype() {
@@ -436,7 +530,36 @@ export default function Index() {
 
   function openResource(resource: SelectedActivity) {
     setSelectedResource(resource);
-    setScreen(resource.type === "flashcard" ? "flashIntro" : "resource");
+    if (resource.type === "flashcard") {
+      setScreen("flashIntro");
+      return;
+    }
+    if (resource.type === "quiz") {
+      setQuizPayload(null);
+      setQuizAnswers([]);
+      setQuizIndex(0);
+      setScreen("quizIntro");
+      return;
+    }
+    setScreen("resource");
+  }
+
+  async function startQuiz(resource: SelectedActivity) {
+    setLoadingAction("startQuiz");
+    try {
+      const response = await apiGet<{ data: QuizPayload }>(`/api/v1/resources/${resource.id}/quiz`, authSession?.accessToken);
+      if (!response.data?.questions?.length) throw new Error("Quiz has no questions");
+      const payload = response.data;
+      setQuizPayload(payload);
+      setQuizAnswers(Array.from({ length: payload.questions.length }, () => -1));
+      setQuizIndex(0);
+      setScreen("quizPlay");
+      setApiNotice("");
+    } catch {
+      setApiNotice("Quiz could not be loaded from API. Please redeploy or check the API service.");
+    } finally {
+      setLoadingAction(null);
+    }
   }
 
   function activityToResource(activity: NonNullable<ProgramMilestone["activities"]>[number], milestone: ProgramMilestone): SelectedActivity {
@@ -454,8 +577,15 @@ export default function Index() {
     };
   }
 
-  function openMilestoneActivity(milestone: ProgramMilestone) {
-    const nextActivity = milestone.activities?.find((activity) => activity.status !== "complete") ?? milestone.activities?.[0];
+  function openMilestone(milestone: ProgramMilestone) {
+    setSelectedMilestone(milestone);
+    setScreen("milestoneDetail");
+  }
+
+  function openMilestoneActivity(milestone: ProgramMilestone, activityId?: string) {
+    const nextActivity = activityId
+      ? milestone.activities?.find((activity) => activity.id === activityId)
+      : milestone.activities?.find((activity) => activity.status !== "complete") ?? milestone.activities?.[0];
     if (!nextActivity) {
       openResource({ id: milestone.id, role, type: "video", title: milestone.title, description: "Video • Article • Flashcard • Quiz", thumbnailLabel: "Milestone", milestoneId: milestone.id, milestoneSequence: milestone.sequence });
       return;
@@ -818,17 +948,22 @@ export default function Index() {
       );
     }
 
-    if (screen === "search") return <SimpleScreen title="Tutor discovery" role={role} back={() => setScreen("home")} />;
+    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} loading={tutorSearchLoading} requestBatch={requestBatch} requestLoading={loadingAction} search={refreshTutorSearch} back={() => setScreen("home")} />;
+    if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
-    if (screen === "roleHub") return <RoleHub role={role} back={() => setScreen("home")} />;
+    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} />;
     if (screen === "chat") return <Chat role={role} back={() => setScreen("home")} />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} openSecurity={() => { setSecurityReturn("account"); setScreen("mpin"); }} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} />;
-    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedProgramId={selectedProgramId} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestoneActivity={openMilestoneActivity} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} />;
-    if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen("sessions")} completedTopic={completedTopic} nextTopic={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} myMiles={() => { setCompletedTopic(null); setSelectedResource(null); setScreen("sessions"); }} />;
-    if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen("home")} />;
-    if (screen === "flashPlay") return <FlashPlay role={role} index={flashIndex} answer={flashAnswer} setAnswer={setFlashAnswer} next={() => { setFlashIndex((flashIndex + 1) % flashcards.length); setFlashAnswer(false); }} learnMore={() => { setSelectedResource({ id: "article_quadratic", role, type: "article", title: "Quadratic equations deep dive", description: "Worked examples, formula use, and exam-style practice.", thumbnailLabel: "Article" }); setScreen("resource"); }} complete={markComplete} />;
+    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedProgramId={selectedProgramId} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} />;
+    if (screen === "milestoneDetail" && selectedMilestone) return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} />;
+    if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} completedTopic={completedTopic} nextTopic={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} myMiles={() => { setCompletedTopic(null); setSelectedResource(null); setScreen("sessions"); }} />;
+    if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "home")} />;
+    if (screen === "flashPlay") return <FlashPlay role={role} index={flashIndex} answer={flashAnswer} setAnswer={setFlashAnswer} next={() => { setFlashIndex((flashIndex + 1) % flashcards.length); setFlashAnswer(false); }} learnMore={() => { setSelectedResource({ id: "article_quadratic", role, type: "article", title: "Quadratic equations deep dive", description: "Worked examples, formula use, and exam-style practice.", thumbnailLabel: "Article" }); setScreen("resource"); }} complete={markComplete} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
+    if (screen === "quizIntro" && selectedResource) return <QuizIntro role={role} resource={selectedResource} loading={loadingAction === "startQuiz"} start={() => startQuiz(selectedResource)} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
+    if (screen === "quizPlay" && selectedResource && quizPayload) return <QuizPlay role={role} payload={quizPayload} index={quizIndex} answers={quizAnswers} setAnswer={(answer) => setQuizAnswers((items) => items.map((item, itemIndex) => itemIndex === quizIndex ? answer : item))} next={() => { if (quizIndex === quizPayload.questions.length - 1) setScreen("quizResult"); else setQuizIndex(quizIndex + 1); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
+    if (screen === "quizResult" && selectedResource && quizPayload) return <QuizResult role={role} payload={quizPayload} answers={quizAnswers} complete={markComplete} loading={loadingAction === "markComplete"} backToTopic={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
 
     return null;
   }
@@ -1436,15 +1571,18 @@ function formatReminderDateTime(value: string) {
 
 function ResourceDetail({ role, resource, complete, loading, back, completedTopic, nextTopic, myMiles }: { role: Role; resource: SelectedActivity; complete: () => void; loading?: boolean; back: () => void; completedTopic: null | { nextActivity?: SelectedActivity; milestoneComplete: boolean }; nextTopic: () => void; myMiles: () => void }) {
   const theme = useRoleTheme(role);
+  const cta = resource.type === "article" ? "Mark as read" : resource.type === "video" ? "Mark watched" : "Mark complete";
   return (
     <>
-      <TopBar title={resource.thumbnailLabel} left="‹" onLeft={back} />
-      <View style={[styles.player, { backgroundColor: resource.type === "video" ? "#242424" : theme.accent }]}>
+      <TopBar title={resource.thumbnailLabel.toUpperCase()} left="‹" onLeft={back} />
+      <View style={[styles.player, resource.type === "video" ? styles.videoPlayer : styles.articleHero]}>
         <Text style={[styles.playerIcon, { color: resource.type === "video" ? "#FFFFFF" : theme.text }]}>{resource.type === "video" ? "▶" : "A"}</Text>
       </View>
-      <Title>{resource.title}</Title>
-      <Muted>{resource.description}</Muted>
-      <Button role={role} label="Mark complete" onPress={complete} loading={loading} />
+      <View style={styles.reactionRow}><Text style={styles.reactionButton}>👍</Text><Text style={styles.reactionButton}>👎</Text></View>
+      <Text style={styles.resourceTitle}>{resource.title}</Text>
+      <Text style={styles.resourceSubtitle}>{resource.description}</Text>
+      <Text style={styles.articleBody}>Review the concept, note the keywords, and connect this activity with the milestone goal. Use the examples to prepare for board-style answers and quick recall.</Text>
+      <View style={styles.resourceBottomCta}><Button role={role} label={cta} onPress={complete} loading={loading} /></View>
       {completedTopic ? (
         <View style={styles.topicTrayBackdrop}>
           <View style={styles.topicTray}>
@@ -1464,32 +1602,160 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
 }
 
 function FlashIntro({ role, resource, start, back }: { role: Role; resource: Recommendation; start: () => void; back: () => void }) {
+  const theme = useRoleTheme(role);
   return (
     <>
-      <TopBar title="Flash cards" left="‹" onLeft={back} />
-      <Hero>
-        <Text style={styles.propIcon}>▧</Text>
-        <Title>{resource.title}</Title>
-        <Muted>{resource.description}</Muted>
-      </Hero>
-      <Button role={role} label="Start flashcard" onPress={start} />
+      <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
+      <View style={styles.flashProgressTrack}><View style={[styles.flashProgressFill, { backgroundColor: theme.accentStrong, width: "18%" }]} /></View>
+      <View style={styles.flashIntroLanding}>
+        <View style={[styles.flashIntroImage, { backgroundColor: theme.accent }]}><Text style={styles.flashIntroIcon}>▤</Text></View>
+        <Text style={styles.flashIntroTitle}>{resource.title}</Text>
+        <Text style={styles.flashIntroCopy}>{resource.description}</Text>
+        <Text style={styles.flashIntroMeta}>{flashcards.length} cards • Tap each card to reveal the answer</Text>
+      </View>
+      <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View>
     </>
   );
 }
 
-function FlashPlay({ role, index, answer, setAnswer, next, learnMore, complete }: { role: Role; index: number; answer: boolean; setAnswer: (value: boolean) => void; next: () => void; learnMore: () => void; complete: () => void }) {
+function FlashPlay({ role, index, answer, setAnswer, next, learnMore, complete, back }: { role: Role; index: number; answer: boolean; setAnswer: (value: boolean) => void; next: () => void; learnMore: () => void; complete: () => void; back: () => void }) {
+  const progressWidth = (String(Math.round(((index + 1) / flashcards.length) * 100)) + "%") as any;
   return (
     <>
-      <TopBar title={`Card ${index + 1} of ${flashcards.length}`} />
-      <Pressable style={styles.flashcard} onPress={() => setAnswer(!answer)}>
+      <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
+      <View style={styles.flashProgressTrack}><View style={[styles.flashProgressFill, { width: progressWidth }]} /></View>
+      <Pressable style={[styles.flashcard, answer && styles.flashcardAnswer]} onPress={() => setAnswer(!answer)}>
+        <Text style={styles.flashCount}>{index + 1} of {flashcards.length}</Text>
         <Text style={styles.flashText}>{answer ? flashcards[index][1] : flashcards[index][0]}</Text>
+        <Text style={styles.flipHint}>Tap to flip</Text>
       </Pressable>
-      <View style={styles.row}>
-        <Button role={role} variant="secondary" label="Learn more" onPress={learnMore} />
-        <Button role={role} label="Next" onPress={next} />
-      </View>
-      <Button role={role} variant="secondary" label="Mark complete" onPress={complete} />
+      {answer ? <Button role={role} variant="secondary" label="💡  Learn more" onPress={learnMore} /> : null}
+      <Button role={role} label={index === flashcards.length - 1 ? "Mark complete" : "Next"} onPress={index === flashcards.length - 1 ? complete : next} />
     </>
+  );
+}
+
+function QuizIntro({ role, resource, loading, start, back }: { role: Role; resource: SelectedActivity; loading: boolean; start: () => void; back: () => void }) {
+  return (
+    <>
+      <TopBar title="QUIZ" left="‹" onLeft={back} />
+      <View style={styles.quizLandingHero}>
+        <Text style={styles.quizHeroBadge}>Quiz</Text>
+        <Text style={styles.quizHeroTitle}>{resource.title}</Text>
+        <Text style={styles.quizHeroCopy}>{resource.description}</Text>
+      </View>
+      <View style={styles.resourceBottomCta}><Button role={role} label="Start" onPress={start} loading={loading} /></View>
+    </>
+  );
+}
+
+function QuizPlay({ role, payload, index, answers, setAnswer, next, back }: { role: Role; payload: QuizPayload; index: number; answers: number[]; setAnswer: (answer: number) => void; next: () => void; back: () => void }) {
+  const theme = useRoleTheme(role);
+  const question = payload.questions[index];
+  const selected = answers[index];
+  const answered = selected >= 0;
+  const progressWidth = (String(Math.round(((index + 1) / payload.questions.length) * 100)) + "%") as any;
+  return (
+    <>
+      <TopBar title="QUIZ" left="‹" right="×" onLeft={back} onRight={back} />
+      <View style={styles.flashProgressTrack}><View style={[styles.flashProgressFill, { backgroundColor: theme.accentStrong, width: progressWidth }]} /></View>
+      <Text style={styles.quizCount}>{index + 1} of {payload.questions.length}</Text>
+      <Text style={styles.quizPrompt}>{question.prompt}</Text>
+      <View style={styles.quizOptions}>
+        {question.options.map((option, optionIndex) => {
+          const correct = answered && optionIndex === question.answerIndex;
+          const wrong = answered && selected === optionIndex && optionIndex !== question.answerIndex;
+          return (
+            <Pressable key={option} onPress={() => setAnswer(optionIndex)} style={({ pressed }) => [styles.quizOption, selected === optionIndex && { borderColor: theme.accentStrong, backgroundColor: theme.accent }, pressed && styles.pressed]}>
+              <Text style={styles.quizOptionText}>{option}</Text>
+              {correct ? <Text style={styles.quizCorrect}>✓</Text> : wrong ? <Text style={styles.quizWrong}>×</Text> : null}
+            </Pressable>
+          );
+        })}
+      </View>
+      {answered ? <View style={styles.quizLearnMore}><Text style={styles.quizLearnMoreText}>💡 {question.learnMore}</Text></View> : null}
+      <View style={styles.resourceBottomCta}><Button role={role} label={index === payload.questions.length - 1 ? "See score" : "Next"} onPress={next} disabled={!answered} /></View>
+    </>
+  );
+}
+
+function QuizResult({ role, payload, answers, complete, loading, backToTopic }: { role: Role; payload: QuizPayload; answers: number[]; complete: () => void; loading?: boolean; backToTopic: () => void }) {
+  const correct = payload.questions.reduce((total, question, index) => total + (answers[index] === question.answerIndex ? 1 : 0), 0);
+  const percent = payload.questions.length ? Math.round((correct / payload.questions.length) * 100) : 0;
+  const result = percent === 100
+    ? ["🏅", "Amazing work!", "You got every question right. Keep this momentum going."]
+    : percent >= 75
+      ? ["👍", "Excellent work!", "You are clearly mastering this material."]
+      : percent >= 50
+        ? ["⚙️", "Solid effort!", "Your knowledge is growing. Review the missed ideas once."]
+        : percent > 0
+          ? ["🎯", "Small win, big step.", "Every step forward counts. Revisit the notes and try again."]
+          : ["🌱", "Don't worry, learning takes time.", "You got none correct. That just means there is more to learn moving forward."];
+  return (
+    <>
+      <TopBar title="QUIZ" left="‹" right="×" onLeft={backToTopic} onRight={backToTopic} />
+      <View style={styles.quizResultWrap}>
+        <Text style={styles.quizResultIcon}>{result[0]}</Text>
+        <Text style={styles.quizResultTitle}>{result[1]}</Text>
+        <Text style={styles.quizResultCopy}>You got {correct} out of {payload.questions.length} correct. {result[2]}</Text>
+        <Text style={styles.quizFeedbackTitle}>How did you like this content?</Text>
+        <View style={styles.reactionRowCentered}><Text style={styles.reactionButton}>👍</Text><Text style={styles.reactionButton}>👎</Text></View>
+      </View>
+      <View style={styles.resourceBottomCta}>
+        <Button role={role} label="Next activity" onPress={complete} loading={loading} />
+        <Pressable style={({ pressed }) => [styles.backToTopicLink, pressed && styles.pressed]} onPress={backToTopic}><Text style={styles.backToTopicText}>Back to topic</Text></Pressable>
+      </View>
+    </>
+  );
+}
+
+function MilestoneDetail({ role, milestone, openActivity, back }: { role: Role; milestone: ProgramMilestone; openActivity: (activityId?: string) => void; back: () => void }) {
+  const theme = useRoleTheme(role);
+  const activities = milestone.activities ?? [];
+  const completed = activities.filter((activity) => activity.status === "complete").length;
+  const progressWidth = (String(activities.length ? Math.round((completed / activities.length) * 100) : 0) + "%") as any;
+  const required = activities.slice(0, Math.min(5, activities.length));
+  const supporting = activities.slice(required.length);
+  const nextActivity = activities.find((activity) => activity.status !== "complete") ?? activities[0];
+  return (
+    <>
+      <TopBar title="" left="‹" onLeft={back} />
+      <Text style={styles.milestoneDetailTitle}>{milestone.title}</Text>
+      <Text style={styles.milestoneDetailCopy}>This topic covers the essentials and key tips to support you on your journey.</Text>
+      <View style={styles.milestoneDetailTrack}><View style={[styles.milestoneDetailFill, { backgroundColor: theme.accentStrong, width: progressWidth }]} /></View>
+      <Text style={styles.milestoneProgressText}>{completed} of {activities.length} complete</Text>
+      <View style={styles.activitySectionHeader}>
+        <Text style={styles.activitySectionTitle}>Getting started</Text>
+        <View style={[styles.activityBadge, { backgroundColor: theme.accent }]}><Text style={[styles.activityBadgeText, { color: theme.text }]}>Required</Text></View>
+      </View>
+      {required.map((activity) => <ActivityRow key={activity.id} activity={activity} onPress={() => openActivity(activity.id)} />)}
+      {supporting.length ? (
+        <>
+          <View style={styles.activitySectionHeader}>
+            <Text style={styles.activitySectionTitle}>Supporting activities</Text>
+            <View style={styles.optionalBadge}><Text style={styles.optionalBadgeText}>Optional</Text></View>
+          </View>
+          {supporting.map((activity) => <ActivityRow key={activity.id} activity={activity} onPress={() => openActivity(activity.id)} />)}
+        </>
+      ) : null}
+      <View style={styles.bottomCtaInline}>
+        <Button role={role} label={completed > 0 ? "Continue" : "Let's get started"} onPress={() => openActivity(nextActivity?.id)} disabled={!nextActivity} />
+      </View>
+    </>
+  );
+}
+
+function ActivityRow({ activity, onPress }: { activity: NonNullable<ProgramMilestone["activities"]>[number]; onPress: () => void }) {
+  const palette = activity.type === "video" ? ["#FBE7FA", "▷"] : activity.type === "flashcard" ? ["#EAD8FF", "▤"] : activity.type === "quiz" ? ["#FFE8D8", "?"] : ["#E5F6FD", "▣"];
+  return (
+    <Pressable style={({ pressed }) => [styles.activityRow, activity.status === "complete" && styles.activityRowComplete, pressed && styles.pressed]} onPress={onPress}>
+      <View style={[styles.activityIconBox, { backgroundColor: palette[0] }]}><Text style={styles.activityIcon}>{palette[1]}</Text></View>
+      <View style={styles.flex}>
+        <Text style={styles.activityTitle}>{activity.title}</Text>
+        <Text style={styles.activityType}>{capitalize(activity.type)}</Text>
+      </View>
+      {activity.status === "complete" ? <View style={styles.activityCompleteTick}><Text style={styles.activityCompleteTickText}>✓</Text></View> : null}
+    </Pressable>
   );
 }
 
@@ -1499,7 +1765,7 @@ function Sessions({
   selectedProgramId,
   milestones,
   completedMilestone,
-  openMilestoneActivity,
+  openMilestone,
   menuOpen,
   setMenuOpen,
   openProgramPicker,
@@ -1510,7 +1776,7 @@ function Sessions({
   selectedProgramId: string | null;
   milestones: ProgramMilestone[];
   completedMilestone: number;
-  openMilestoneActivity: (milestone: ProgramMilestone) => void;
+  openMilestone: (milestone: ProgramMilestone) => void;
   menuOpen: boolean;
   setMenuOpen: (value: boolean) => void;
   openProgramPicker: () => void;
@@ -1563,20 +1829,20 @@ function Sessions({
           return (
             <View key={milestone.id} style={styles.mileRow}>
               <View style={styles.mileRail}>
-                {index > 0 ? <View style={[styles.mileRailLine, styles.mileRailLineTop, locked ? styles.mileRailLineLocked : { backgroundColor: theme.accentStrong }]} /> : null}
+                {index > 0 ? <View style={[styles.mileRailLine, styles.mileRailLineTop, locked ? styles.mileRailLineLocked : { backgroundColor: milestone.sequence <= completedMilestone + 1 ? completeGreen : theme.accentStrong }]} /> : null}
                 <View style={[
                   styles.mileNode,
                   locked ? styles.mileNodeLocked : { backgroundColor: complete ? completeGreen : theme.accent, borderColor: complete ? completeGreen : theme.accentStrong }
                 ]}>
                   <Text style={[styles.mileNodeText, { color: locked ? "#9CA3AF" : complete ? "#FFFFFF" : theme.text }]}>{locked ? "⌕" : milestone.sequence}</Text>
                 </View>
-                {index < milestones.length - 1 ? <View style={[styles.mileRailLine, styles.mileRailLineBottom, locked ? styles.mileRailLineLocked : { backgroundColor: theme.accentStrong }]} /> : null}
+                {index < milestones.length - 1 ? <View style={[styles.mileRailLine, styles.mileRailLineBottom, locked ? styles.mileRailLineLocked : { backgroundColor: milestone.sequence <= completedMilestone ? completeGreen : theme.accentStrong }]} /> : null}
               </View>
               <Pressable
                 disabled={locked}
                 onPress={() => {
                   if (locked) return;
-                  openMilestoneActivity(milestone);
+                  openMilestone(milestone);
                 }}
                 style={({ pressed }) => [
                   styles.mileCard,
@@ -1661,23 +1927,117 @@ function ProgramPickerModal({
   );
 }
 
-function RoleHub({ role, back }: { role: Role; back: () => void }) {
-  const title = role === "tutor" ? "My Students" : role === "student" ? "My Tutors" : "My Surveys";
-  const items = role === "tutor"
-    ? ["No assigned students yet", "New student requests will appear here"]
-    : role === "student"
-      ? ["No tutors added yet", "Booked and shortlisted tutors will appear here"]
-      : ["No surveys yet", "Weekly progress surveys will appear here"];
+function TutorDiscovery({
+  role,
+  tutors,
+  loading,
+  requestBatch,
+  requestLoading,
+  search,
+  back
+}: {
+  role: Role;
+  tutors: TutorSearchResult[];
+  loading: boolean;
+  requestBatch: (batchId: string) => void;
+  requestLoading: string | null;
+  search: (filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string }) => void;
+  back: () => void;
+}) {
+  const [subject, setSubject] = useState("Mathematics");
+  const [location, setLocation] = useState("Delhi");
+  const [board, setBoard] = useState("CBSE");
+  const [mode, setMode] = useState("Online");
+  return (
+    <>
+      <TopBar title="Tutor discovery" left="‹" onLeft={back} />
+      <View style={styles.searchPanel}>
+        <View style={styles.row}>
+          <Input compact value={subject} onChangeText={setSubject} placeholder="Subject" />
+          <Input compact value={location} onChangeText={setLocation} placeholder="Location" />
+        </View>
+        <View style={styles.row}>
+          <Input compact value={board} onChangeText={setBoard} placeholder="Board" />
+          <Input compact value={mode} onChangeText={setMode} placeholder="Mode" />
+        </View>
+        <Button role={role} label="Search tutors" loading={loading} onPress={() => search({ subject, location, board, mode })} />
+      </View>
+      {loading ? <ActivityIndicator /> : null}
+      {tutors.map((tutor) => (
+        <View key={tutor.id} style={styles.tutorCard}>
+          <View style={styles.tutorHeaderRow}>
+            <Avatar role="tutor" label={tutor.initials} />
+            <View style={styles.flex}>
+              <Text style={styles.tutorName}>{tutor.name}</Text>
+              <Text style={styles.tutorHeadline}>{tutor.headline}</Text>
+            </View>
+            <View style={styles.ratingBadge}><Text style={styles.ratingText}>★ {tutor.rating}</Text></View>
+          </View>
+          <Text style={styles.tutorMeta}>{tutor.subjects.join(", ")} • {tutor.boards.join(", ")} • {tutor.location}</Text>
+          <Text style={styles.tutorMeta}>{tutor.experienceYears} yrs exp • ₹{tutor.hourlyRate}/hr • {tutor.mode.join(" / ")}</Text>
+          <Text style={styles.tutorBio}>{tutor.bio}</Text>
+          {tutor.batches.map((batch) => (
+            <View key={batch.id} style={styles.batchMiniCard}>
+              <Text style={styles.batchTitle}>{batch.title}</Text>
+              <Text style={styles.batchMeta}>{batch.course} • {batch.schedule}</Text>
+              <Text style={styles.batchMeta}>{batch.mode}{batch.classroomLocation ? " • " + batch.classroomLocation : ""}</Text>
+              <Button role={role} label="Request batch" loading={requestLoading === "requestBatch:" + batch.id} onPress={() => requestBatch(batch.id)} />
+            </View>
+          ))}
+        </View>
+      ))}
+      {!loading && !tutors.length ? <Muted>No tutors found. Try another subject or location.</Muted> : null}
+    </>
+  );
+}
+
+function RoleHub({ role, classes, requests, loading, approveRequest, actionLoading, back }: { role: Role; classes: BatchClass[]; requests: BatchRequestSummary[]; loading: boolean; approveRequest: (id: string) => void; actionLoading: string | null; back: () => void }) {
+  const title = role === "tutor" ? "My Students" : role === "student" ? "My Classes" : "My Surveys";
+  if (role === "student") {
+    return (
+      <>
+        <TopBar title={title} left="‹" onLeft={back} />
+        {loading ? <ActivityIndicator /> : null}
+        {classes.map((item) => <ClassTile key={item.id} role={role} item={item} />)}
+        {!loading && !classes.length ? <Card role={role}><CardTitle>No classes yet</CardTitle><Muted>Requested batches will appear here after the tutor approves enrollment.</Muted></Card> : null}
+      </>
+    );
+  }
+  if (role === "tutor") {
+    return (
+      <>
+        <TopBar title={title} left="‹" onLeft={back} />
+        {loading ? <ActivityIndicator /> : null}
+        {requests.map((request) => (
+          <Card role={role} key={request.id}>
+            <CardTitle>{request.student.name}</CardTitle>
+            <Muted>{request.batch.title} • {request.batch.schedule}</Muted>
+            <Muted>Status: {capitalize(request.status)}</Muted>
+            {request.status === "pending" ? <Button role={role} label="Approve request" loading={actionLoading === "approveRequest:" + request.id} onPress={() => approveRequest(request.id)} /> : null}
+          </Card>
+        ))}
+        {!loading && !requests.length ? <Card role={role}><CardTitle>No student requests yet</CardTitle><Muted>Batch requests from students will appear here for approval.</Muted></Card> : null}
+      </>
+    );
+  }
   return (
     <>
       <TopBar title={title} left="‹" onLeft={back} />
-      {items.map((item) => (
-        <Card key={item} role={role}>
-          <CardTitle>{item}</CardTitle>
-          <Muted>{role === "parent" ? "Survey history is empty for this account." : "Start from discovery or bookings to populate this list."}</Muted>
-        </Card>
-      ))}
+      <Card role={role}><CardTitle>No surveys yet</CardTitle><Muted>Weekly progress surveys will appear here.</Muted></Card>
     </>
+  );
+}
+
+function ClassTile({ role, item }: { role: Role; item: BatchClass }) {
+  return (
+    <View style={styles.classTile}>
+      <Text style={styles.classTitle}>{item.title}</Text>
+      <Text style={styles.classMeta}>{item.course} • {item.board} • {item.grade}</Text>
+      <Text style={styles.classMeta}>{item.schedule} • {formatReminderDateTime(item.startsAt)}</Text>
+      <Text style={styles.classMeta}>Tutor: {item.tutorName} • ★ {item.tutorRating}</Text>
+      <Text style={styles.classMeta}>Classroom: {item.classroomLocation ?? "Online"}</Text>
+      {item.onlineVideoLink ? <Text style={styles.classLink}>{item.onlineVideoLink}</Text> : <Text style={styles.classLocked}>Video link unlocks 5 minutes before class.</Text>}
+    </View>
   );
 }
 
@@ -1787,7 +2147,7 @@ function SimpleScreen({ title, role, back }: { title: string; role: Role; back: 
 
 function BottomNav({ role, screen, setScreen }: { role: Role; screen: AppScreen; setScreen: (screen: AppScreen) => void }) {
   const theme = useRoleTheme(role);
-  const hubLabel = role === "tutor" ? "My Students" : role === "student" ? "My Tutors" : "My Surveys";
+  const hubLabel = role === "tutor" ? "My Students" : role === "student" ? "My Classes" : "My Surveys";
   const items: Array<[AppScreen, string, string]> = [
     ["home", "Home", "⌂"],
     ["sessions", "My Miles", "▥"],
@@ -2043,6 +2403,26 @@ const styles = StyleSheet.create({
   todayBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   todayBadgeText: { fontSize: 11, fontWeight: "900" },
   milesSummaryCard: { backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 22, borderWidth: 1, gap: 6, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.07, shadowRadius: 18 },
+  milestoneDetailTitle: { color: "#111827", fontSize: 29, fontWeight: "900", lineHeight: 35, marginTop: 8 },
+  milestoneDetailCopy: { color: "#111827", fontSize: 18, fontWeight: "500", lineHeight: 28, marginTop: 8 },
+  milestoneDetailTrack: { backgroundColor: "#E5E7EB", borderRadius: 999, height: 5, marginTop: 22, overflow: "hidden" },
+  milestoneDetailFill: { borderRadius: 999, height: 5 },
+  milestoneProgressText: { color: "#4B5563", fontSize: 16, fontWeight: "800", marginBottom: 14 },
+  activitySectionHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginTop: 14 },
+  activitySectionTitle: { color: "#111827", fontSize: 22, fontWeight: "900" },
+  activityBadge: { borderRadius: 999, paddingHorizontal: 15, paddingVertical: 8 },
+  activityBadgeText: { fontSize: 13, fontWeight: "900" },
+  optionalBadge: { backgroundColor: "#F2F2F2", borderRadius: 999, paddingHorizontal: 15, paddingVertical: 8 },
+  optionalBadgeText: { color: "#111827", fontSize: 13, fontWeight: "900" },
+  activityRow: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DFE4EA", borderRadius: 18, borderWidth: 1, flexDirection: "row", gap: 14, minHeight: 96, padding: 12, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.04, shadowRadius: 14 },
+  activityRowComplete: { borderColor: "#BFE7C8" },
+  activityIconBox: { alignItems: "center", borderRadius: 10, height: 72, justifyContent: "center", width: 72 },
+  activityIcon: { color: "#111827", fontSize: 30, fontWeight: "900" },
+  activityTitle: { color: "#111827", fontSize: 19, fontWeight: "900", lineHeight: 24 },
+  activityType: { color: "#111827", fontSize: 16, fontWeight: "500", lineHeight: 22, marginTop: 2 },
+  activityCompleteTick: { alignItems: "center", backgroundColor: "#35B34A", borderRadius: 999, height: 28, justifyContent: "center", width: 28 },
+  activityCompleteTickText: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" },
+  bottomCtaInline: { marginTop: 26 },
   milesSummaryTitle: { color: "#202A35", fontSize: 17, fontWeight: "900", lineHeight: 22 },
   milesSummaryCopy: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19 },
   milesTimeline: { gap: 10, paddingBottom: 18, paddingTop: 10 },
@@ -2227,11 +2607,11 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   modalBackdrop: { alignItems: "center", backgroundColor: "rgba(15,23,42,0.58)", flex: 1, justifyContent: "center", padding: 20 },
-  programModalCard: { backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#DDE7EF", borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 300, padding: 18, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.18, shadowRadius: 28, width: "100%" },
+  programModalCard: { backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#DDE7EF", borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 318, overflow: "hidden", padding: 18, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.18, shadowRadius: 28, width: "100%" },
   programModalTitle: { color: "#202A35", fontSize: 21, fontWeight: "900", lineHeight: 27, textAlign: "center" },
   programModalCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
   programPreparing: { alignItems: "center", flex: 1, gap: 18, justifyContent: "center", minHeight: 260 },
-  modalBottomCta: { flex: 1, justifyContent: "flex-end", minHeight: 120 },
+  modalBottomCta: { marginTop: 64 },
   toast: { alignItems: "center", backgroundColor: "rgba(32,42,53,0.94)", borderRadius: 999, bottom: 104, left: 24, minHeight: 44, paddingHorizontal: 18, position: "absolute", right: 24, shadowColor: "#000", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 18 },
   toastText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800", lineHeight: 44, textAlign: "center" },
   accountHeader: {
@@ -2290,17 +2670,75 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   },
   topicTrayBackdrop: { backgroundColor: "rgba(15,23,42,0.36)", bottom: -20, left: -20, paddingTop: 120, position: "absolute", right: -20, top: -58 },
-  topicTray: { alignItems: "center", backgroundColor: "#FFFFFF", borderTopLeftRadius: 34, borderTopRightRadius: 34, bottom: 0, gap: 18, left: 0, minHeight: 386, padding: 24, paddingBottom: 34, position: "absolute", right: 0, shadowColor: "#0F172A", shadowOffset: { width: 0, height: -14 }, shadowOpacity: 0.16, shadowRadius: 24 },
+  topicTray: { alignItems: "center", backgroundColor: "#FFFFFF", borderTopLeftRadius: 34, borderTopRightRadius: 34, bottom: 0, gap: 14, left: 0, minHeight: 360, padding: 24, paddingBottom: 28, position: "absolute", right: 0, shadowColor: "#0F172A", shadowOffset: { width: 0, height: -14 }, shadowOpacity: 0.16, shadowRadius: 24 },
   trayHandle: { backgroundColor: "#6B6178", borderRadius: 999, height: 5, marginBottom: 18, width: 42 },
   trophyCircle: { alignItems: "center", backgroundColor: "#F8DDFC", borderRadius: 999, height: 168, justifyContent: "center", width: 168 },
   trophyIcon: { fontSize: 72 },
   topicCompleteTitle: { color: "#111827", fontSize: 27, fontWeight: "900", lineHeight: 34, textAlign: "center" },
   topicCompleteCopy: { color: "#3F4754", fontSize: 16, fontWeight: "600", lineHeight: 24, textAlign: "center" },
-  topicActionRow: { alignSelf: "stretch", gap: 12, marginTop: 14 },
+  topicActionRow: { alignSelf: "center", gap: 12, marginTop: 10, width: "82%" },
+  videoPlayer: { backgroundColor: "#CFCFCF", borderRadius: 0, height: 270, marginHorizontal: -20 },
+  articleHero: { backgroundColor: "#D1D5DB", borderRadius: 0, height: 270, marginHorizontal: -20 },
+  reactionRow: { flexDirection: "row", gap: 18, justifyContent: "flex-end", marginTop: 12 },
+  reactionButton: { backgroundColor: "#F3F4F6", borderColor: "#D1D5DB", borderRadius: 999, borderWidth: 1, fontSize: 19, height: 44, lineHeight: 42, overflow: "hidden", textAlign: "center", width: 58 },
+  resourceTitle: { color: "#111827", fontSize: 29, fontWeight: "900", lineHeight: 36 },
+  resourceSubtitle: { color: "#111827", fontSize: 18, fontWeight: "500", lineHeight: 27 },
+  articleBody: { color: "#374151", fontSize: 15, lineHeight: 24, marginTop: 18 },
+  resourceBottomCta: { marginTop: "auto", paddingTop: 24 },
+  flashIntroHero: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E9D5FF", borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 330, padding: 24, shadowColor: "#7C3AED", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.10, shadowRadius: 22 },
+  flashIntroLanding: { alignItems: "center", flex: 1, justifyContent: "center", gap: 18, paddingVertical: 34 },
+  flashIntroImage: { alignItems: "center", borderRadius: 999, height: 190, justifyContent: "center", width: 190 },
+  flashIntroIcon: { color: "#3B0764", fontSize: 82, fontWeight: "900" },
+  flashIntroTitle: { color: "#111827", fontSize: 28, fontWeight: "900", lineHeight: 34, textAlign: "center" },
+  flashIntroCopy: { color: "#374151", fontSize: 16, fontWeight: "600", lineHeight: 24, textAlign: "center" },
+  flashIntroMeta: { color: "#6B7280", fontSize: 14, fontWeight: "800", textAlign: "center" },
+  flashProgressTrack: { backgroundColor: "#E5E7EB", borderRadius: 999, height: 4, overflow: "hidden" },
+  flashProgressFill: { backgroundColor: "#C026D3", borderRadius: 999, height: 4 },
   player: { alignItems: "center", borderRadius: 28, height: 210, justifyContent: "center" },
   playerIcon: { fontSize: 58, fontWeight: "900" },
-  flashcard: { alignItems: "center", backgroundColor: "#FFFFFF", borderRadius: 28, justifyContent: "center", minHeight: 230, padding: 24 },
-  flashText: { color: "#111827", fontSize: 20, fontWeight: "900", lineHeight: 28, textAlign: "center" },
+  flashcard: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E9D5FF", borderRadius: 22, borderWidth: 1, justifyContent: "space-between", minHeight: 420, padding: 28, shadowColor: "#7C3AED", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.10, shadowRadius: 20 },
+  flashcardAnswer: { backgroundColor: "#F1E4FF", borderColor: "#C026D3" },
+  flashCount: { color: "#C026D3", fontSize: 17, fontWeight: "900" },
+  flipHint: { color: "#C026D3", fontSize: 16, fontWeight: "800" },
+  flashText: { color: "#111827", fontSize: 20, fontWeight: "800", lineHeight: 30, textAlign: "center" },
+  quizLandingHero: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 24, borderWidth: 1, gap: 13, marginTop: 24, minHeight: 360, padding: 24, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.08, shadowRadius: 20 },
+  quizHeroBadge: { alignSelf: "flex-start", backgroundColor: "#EFE7FF", borderRadius: 999, color: "#3B0764", fontSize: 14, fontWeight: "900", paddingHorizontal: 14, paddingVertical: 8 },
+  quizHeroTitle: { color: "#111827", fontSize: 30, fontWeight: "900", lineHeight: 36, marginTop: "auto" },
+  quizHeroCopy: { color: "#374151", fontSize: 16, fontWeight: "600", lineHeight: 25 },
+  quizCount: { color: "#4C1D95", fontSize: 14, fontWeight: "900", marginTop: 20 },
+  quizPrompt: { color: "#111827", fontSize: 19, fontWeight: "800", lineHeight: 27, marginTop: 8 },
+  quizOptions: { gap: 11, marginTop: 20 },
+  quizOption: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE3EA", borderRadius: 10, borderWidth: 1.5, flexDirection: "row", gap: 12, justifyContent: "space-between", minHeight: 50, paddingHorizontal: 14, paddingVertical: 12 },
+  quizOptionText: { color: "#111827", flex: 1, fontSize: 15, fontWeight: "700", lineHeight: 21 },
+  quizCorrect: { color: "#35B34A", fontSize: 18, fontWeight: "900" },
+  quizWrong: { color: "#D53F3F", fontSize: 18, fontWeight: "900" },
+  quizLearnMore: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 16, borderWidth: 1, marginTop: 16, padding: 14 },
+  quizLearnMoreText: { color: "#374151", fontSize: 14, fontWeight: "700", lineHeight: 21 },
+  quizResultWrap: { alignItems: "center", flex: 1, justifyContent: "center", gap: 16, paddingVertical: 34 },
+  quizResultIcon: { backgroundColor: "#F1D8FF", borderRadius: 999, fontSize: 80, height: 170, lineHeight: 165, overflow: "hidden", textAlign: "center", width: 170 },
+  quizResultTitle: { color: "#111827", fontSize: 29, fontWeight: "900", lineHeight: 35, textAlign: "center" },
+  quizResultCopy: { color: "#374151", fontSize: 17, fontWeight: "600", lineHeight: 26, textAlign: "center" },
+  quizFeedbackTitle: { color: "#111827", fontSize: 14, fontWeight: "800", marginTop: 16 },
+  reactionRowCentered: { flexDirection: "row", gap: 16, justifyContent: "center" },
+  backToTopicLink: { alignItems: "center", minHeight: 44, justifyContent: "center" },
+  backToTopicText: { color: "#3B0764", fontSize: 15, fontWeight: "900", textDecorationLine: "underline" },
+  searchPanel: { backgroundColor: "rgba(255,255,255,0.92)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 12, padding: 14, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
+  tutorCard: { backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 12, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
+  tutorHeaderRow: { alignItems: "center", flexDirection: "row", gap: 12 },
+  tutorName: { color: "#111827", fontSize: 19, fontWeight: "900", lineHeight: 24 },
+  tutorHeadline: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 18 },
+  ratingBadge: { backgroundColor: "#ECFEFF", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  ratingText: { color: "#075985", fontSize: 12, fontWeight: "900" },
+  tutorMeta: { color: "#465A74", fontSize: 13, fontWeight: "700", lineHeight: 19 },
+  tutorBio: { color: "#111827", fontSize: 14, fontWeight: "500", lineHeight: 21 },
+  batchMiniCard: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 16, borderWidth: 1, gap: 8, padding: 12 },
+  batchTitle: { color: "#111827", fontSize: 15, fontWeight: "900", lineHeight: 20 },
+  batchMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17 },
+  classTile: { backgroundColor: "rgba(255,255,255,0.95)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 7, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
+  classTitle: { color: "#111827", fontSize: 18, fontWeight: "900", lineHeight: 23 },
+  classMeta: { color: "#465A74", fontSize: 13, fontWeight: "700", lineHeight: 19 },
+  classLink: { color: "#035C67", fontSize: 13, fontWeight: "900", lineHeight: 19 },
+  classLocked: { color: "#8B95A1", fontSize: 12, fontWeight: "800", lineHeight: 18 },
   nav: { alignItems: "center", backgroundColor: "#242424", borderRadius: 34, bottom: 20, flexDirection: "row", justifyContent: "space-between", left: 16, minHeight: 66, paddingHorizontal: 22, paddingVertical: 10, position: "absolute", right: 16, shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 20, shadowOffset: { width: 0, height: 12 } },
   navItem: { alignItems: "center", gap: 3, minWidth: 48 },
   navIcon: { fontSize: 24, fontWeight: "900", height: 25, lineHeight: 25, textAlign: "center", width: 25 },
