@@ -39,9 +39,6 @@
         "projectId": "98fe900a-48d0-4fbd-b5ed-d211e4c22960"
       }
     },
-    "owner": "flipour",
-    "plugins": [
-      "@react-native-community/datetimepicker"
-    ]
+    "owner": "flipour"
   }
 }
