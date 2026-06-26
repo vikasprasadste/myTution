@@ -25,7 +25,6 @@ type AppScreen =
   | "phone"
   | "otp"
   | "createPassword"
-  | "mpin"
   | "profile"
   | "editProfile"
   | "signin"
@@ -108,11 +107,6 @@ export default function Index() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [signinPassword, setSigninPassword] = useState("");
-  const [mpin, setMpin] = useState("");
-  const [confirmMpin, setConfirmMpin] = useState("");
-  const [showMpin, setShowMpin] = useState(false);
-  const [biometricsEnabled, setBiometricsEnabled] = useState(true);
-  const [securityReturn, setSecurityReturn] = useState<"registration" | "signin" | "account">("registration");
   const [stream, setStream] = useState<StreamKey>("senior");
   const [specialization, setSpecialization] = useState("CBSE Class 10 Mathematics");
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>({
@@ -135,6 +129,7 @@ export default function Index() {
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
   const [draftProgramId, setDraftProgramId] = useState<string | null>(null);
   const [programModalVisible, setProgramModalVisible] = useState(false);
+  const [programModalCanClose, setProgramModalCanClose] = useState(false);
   const [programModalSeen, setProgramModalSeen] = useState(false);
   const [programPreparing, setProgramPreparing] = useState(false);
   const [pendingProgramId, setPendingProgramId] = useState<string | null>(null);
@@ -171,7 +166,6 @@ export default function Index() {
   const phoneComplete = phoneDigits.length === 10;
   const otpComplete = otp.every((digit) => /^\d$/.test(digit));
   const otpValue = otp.join("");
-  const mpinValid = /^\d{4,6}$/.test(mpin) && mpin === confirmMpin;
   const passwordValid = password.length >= 8 && password === confirmPassword;
   const emptyPersona = useMemo<Persona>(() => ({
     role,
@@ -215,6 +209,7 @@ export default function Index() {
     if (role === "student" && selectedPrograms.length > 0) return;
     setDraftProgramId(selectedProgramId ?? programs[0]?.id ?? null);
     setProgramMenuOpen(false);
+    setProgramModalCanClose(false);
     setProgramModalVisible(true);
   }, [programModalSeen, programs, role, screen, selectedProgramId, selectedPrograms.length]);
 
@@ -283,6 +278,7 @@ export default function Index() {
     const nextProgram = role === "student" ? programs.find((program) => !selectedIds.has(program.id)) : programs.find((program) => program.id === selectedProgramId) ?? programs[0];
     setDraftProgramId(nextProgram?.id ?? selectedProgramId ?? programs[0]?.id ?? null);
     setProgramMenuOpen(false);
+    setProgramModalCanClose(true);
     setProgramModalVisible(true);
   }
 
@@ -313,6 +309,10 @@ export default function Index() {
         setSelectedProgramId(programId);
         setApiMilestones(plan.data.milestones);
         setCompletedMilestone(plan.data.completedMilestoneSequence);
+        if (token && role === "student" && selectedFromApi.length === 0 && screen === "home") {
+          setProgramModalSeen(false);
+          setScreen("sessions");
+        }
         if (pendingProgramId && programId === pendingProgramId) {
           if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
           setProgramPreparing(false);
@@ -340,7 +340,7 @@ export default function Index() {
     return () => {
       ignore = true;
     };
-  }, [role, authSession?.accessToken, selectedProgramId, programRefreshKey, pendingProgramId]);
+  }, [role, authSession?.accessToken, selectedProgramId, programRefreshKey, pendingProgramId, screen]);
 
   async function pickAvatar() {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -434,10 +434,6 @@ export default function Index() {
     setPassword("");
     setConfirmPassword("");
     setSigninPassword("");
-    setMpin("");
-    setConfirmMpin("");
-    setBiometricsEnabled(true);
-    setSecurityReturn("registration");
     setStream("senior");
     setSpecialization("CBSE Class 10 Mathematics");
     setAvatarUri(null);
@@ -520,11 +516,9 @@ export default function Index() {
         role
       });
       setAuthSession(response.data);
-      setSecurityReturn("signin");
-      setMpin("");
-      setConfirmMpin("");
       setApiNotice("");
-      setScreen("mpin");
+      setProgramModalSeen(false);
+      setScreen("home");
     } catch {
       setApiNotice("Something went wrong");
     } finally {
@@ -776,38 +770,7 @@ export default function Index() {
           <FieldLabel>Confirm password</FieldLabel>
           <Input secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} placeholder="Confirm password" />
           <Muted>{passwordValid ? "Password confirmed." : "Passwords must match and be at least 8 characters."}</Muted>
-          <Button disabled={!passwordValid} role={role} label="Continue" onPress={() => { setSecurityReturn("registration"); setScreen("mpin"); }} />
-        </>
-      );
-    }
-
-    if (screen === "mpin") {
-      const signInMpin = securityReturn === "signin";
-      const canContinue = signInMpin ? mpin.length >= 4 : mpinValid;
-      return (
-        <>
-          <TopBar title="Security" left="‹" onLeft={() => setScreen(securityReturn === "account" ? "account" : securityReturn === "signin" ? "signinCredentials" : "createPassword")} />
-          <Title>{signInMpin ? "Enter app MPIN" : "Set app MPIN"}</Title>
-          <Muted>{signInMpin ? "Enter your local app MPIN to continue." : "Your MPIN protects account, booking, and payment actions."}</Muted>
-          <FieldLabel>{signInMpin ? "MPIN" : "Create MPIN"}</FieldLabel>
-          <SecureField role={role} value={mpin} onChangeText={setMpin} visible={showMpin} onToggle={() => setShowMpin(!showMpin)} placeholder="Create MPIN" />
-          {!signInMpin && (
-            <>
-              <FieldLabel>Confirm MPIN</FieldLabel>
-              <SecureField role={role} value={confirmMpin} onChangeText={setConfirmMpin} visible={showMpin} onToggle={() => setShowMpin(!showMpin)} placeholder="Confirm MPIN" />
-              <Muted>{mpinValid ? "MPIN confirmed." : "Enter matching 4-6 digit MPIN values."}</Muted>
-              <Pressable style={styles.biometricCard} onPress={() => setBiometricsEnabled(!biometricsEnabled)}>
-                <View style={styles.flex}>
-                  <Text style={styles.biometricTitle}>Enable biometrics</Text>
-                  <Text style={styles.biometricCopy}>Use Face ID or fingerprint where available.</Text>
-                </View>
-                <View style={[styles.smallCheck, biometricsEnabled && { backgroundColor: "#2563EB", borderColor: "#2563EB" }]}>
-                  <Text style={styles.smallCheckText}>{biometricsEnabled ? "✓" : ""}</Text>
-                </View>
-              </Pressable>
-            </>
-          )}
-          <Button disabled={!canContinue} role={role} label="Continue" onPress={() => setScreen(securityReturn === "account" ? "account" : securityReturn === "signin" ? "sessions" : "profile")} />
+          <Button disabled={!passwordValid} role={role} label="Continue" onPress={() => setScreen("profile")} />
         </>
       );
     }
@@ -894,8 +857,8 @@ export default function Index() {
       );
     }
 
-  if (screen === "signin") {
-      return <SignInScreen role={role} mode={signInMode} persona={persona} avatarUri={avatarUri} restart={restartPrototype} signIn={() => setScreen(signInMode === "fresh" ? "signinCredentials" : "home")} register={() => setScreen("role")} />;
+    if (screen === "signin") {
+      return <SignInScreen role={role} mode={signInMode} persona={persona} avatarUri={avatarUri} restart={restartPrototype} signIn={() => setScreen("signinCredentials")} register={() => setScreen("role")} />;
     }
 
     if (screen === "signinCredentials") {
@@ -1014,7 +977,7 @@ export default function Index() {
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} />;
     if (screen === "chat") return <Chat role={role} back={() => setScreen("home")} />;
-    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} openSecurity={() => { setSecurityReturn("account"); setScreen("mpin"); }} />;
+    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} />;
     if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} />;
@@ -1065,6 +1028,8 @@ export default function Index() {
         selectedProgramId={draftProgramId ?? selectedProgramId}
         setSelectedProgramId={setDraftProgramId}
         preparing={programPreparing}
+        canClose={programModalCanClose}
+        onClose={() => setProgramModalVisible(false)}
         onContinue={() => prepareProgram(draftProgramId)}
       />
       {programToast ? (
@@ -1079,7 +1044,7 @@ export default function Index() {
 function AppSplash() {
   return (
     <View style={styles.appSplashShell}>
-      <Image source={splash} style={styles.appSplashImage} resizeMode="cover" />
+      <Image source={splash} style={styles.appSplashImage} resizeMode="contain" />
     </View>
   );
 }
@@ -1155,10 +1120,8 @@ function SignInScreen({
           <Text style={styles.signinKicker}>Welcome back</Text>
           <Text style={styles.signinName}>{persona.firstName} {persona.lastName}</Text>
         </View>
-        <Text style={styles.signinCopy}>{capitalize(role)} dashboard is ready. Sign in with MPIN to continue.</Text>
+        <Text style={styles.signinCopy}>{capitalize(role)} dashboard is ready. Sign in with phone and password to continue.</Text>
       </View>
-      <FieldLabel>MPIN</FieldLabel>
-      <Input secureTextEntry value="1234" onChangeText={() => undefined} />
       <Button role={role} label="Sign in" onPress={signIn} />
       <Button role={role} variant="secondary" label="Restart prototype" onPress={restart} />
     </>
@@ -1203,40 +1166,6 @@ function OtpInput({ value, digits, onChange }: { value: string; digits: string[]
         style={styles.otpHiddenInput}
       />
     </Pressable>
-  );
-}
-
-function SecureField({
-  role,
-  value,
-  onChangeText,
-  visible,
-  onToggle,
-  placeholder
-}: {
-  role: Role;
-  value: string;
-  onChangeText: (value: string) => void;
-  visible: boolean;
-  onToggle: () => void;
-  placeholder: string;
-}) {
-  const theme = useRoleTheme(role);
-  return (
-    <View style={styles.secureShell}>
-      <TextInput
-        secureTextEntry={!visible}
-        placeholder={placeholder}
-        placeholderTextColor="#94A3B8"
-        value={value}
-        onChangeText={onChangeText}
-        keyboardType="number-pad"
-        style={styles.secureInput}
-      />
-      <Pressable style={[styles.eyeButton, { backgroundColor: theme.surface }]} onPress={onToggle}>
-        <Text style={[styles.eyeButtonText, { color: theme.text }]}>{visible ? "◉" : "◉"}</Text>
-      </Pressable>
-    </View>
   );
 }
 
@@ -2118,6 +2047,8 @@ function ProgramPickerModal({
   selectedProgramId,
   setSelectedProgramId,
   preparing,
+  canClose,
+  onClose,
   onContinue
 }: {
   role: Role;
@@ -2127,11 +2058,13 @@ function ProgramPickerModal({
   selectedProgramId: string | null;
   setSelectedProgramId: (value: string | null) => void;
   preparing: boolean;
+  canClose: boolean;
+  onClose: () => void;
   onContinue: () => void;
 }) {
   const theme = useRoleTheme(role);
   const selectedIds = new Set(selectedPrograms.map((program) => program.id));
-  const availablePrograms = role === "student" ? programs.filter((program) => !selectedIds.has(program.id)) : programs;
+  const availablePrograms = role === "student" && selectedPrograms.length > 0 ? programs.filter((program) => !selectedIds.has(program.id)) : programs;
   const modalPrograms = role === "student" ? availablePrograms : availablePrograms.length ? availablePrograms : programs;
   const selectedProgram = modalPrograms.find((program) => program.id === selectedProgramId) ?? modalPrograms[0];
   const selectionFull = role === "student" && selectedPrograms.length >= 3;
@@ -2147,8 +2080,13 @@ function ProgramPickerModal({
             </View>
           ) : (
             <>
+              {canClose ? (
+                <Pressable style={({ pressed }) => [styles.programModalClose, pressed && styles.pressed]} onPress={onClose}>
+                  <Text style={styles.programModalCloseText}>×</Text>
+                </Pressable>
+              ) : null}
               <Text style={styles.programModalTitle}>Choose your program</Text>
-              <Text style={styles.programModalCopy}>{role === "student" ? "Select another program to follow in My Miles." : "Select the plan you want to follow in My Miles."}</Text>
+              <Text style={styles.programModalCopy}>{canClose && role === "student" ? "Select another program to follow in My Miles." : "Select the plan you want to follow in My Miles."}</Text>
               <FieldLabel>Program</FieldLabel>
               <DropdownField
                 value={selectionFull ? "Maximum 3 programs selected" : noAvailablePrograms ? "No other programs available" : selectedProgram?.title ?? "Select program"}
@@ -2355,15 +2293,13 @@ function Account({
   persona,
   avatarUri,
   signOut,
-  setScreen,
-  openSecurity
+  setScreen
 }: {
   role: Role;
   persona: typeof personas[Role];
   avatarUri: string | null;
   signOut: () => void;
   setScreen: (screen: AppScreen) => void;
-  openSecurity: () => void;
 }) {
   const theme = useRoleTheme(role);
   return (
@@ -2387,7 +2323,6 @@ function Account({
       </View>
       <Button role={role} variant="secondary" label="Edit profile" onPress={() => setScreen("editProfile")} />
       <Button role={role} variant="secondary" label="Payments" onPress={() => setScreen("payments")} />
-      <Button role={role} variant="secondary" label="Security" onPress={openSecurity} />
       <Button role={role} variant="secondary" label="Sign out" onPress={signOut} />
     </>
   );
@@ -2575,8 +2510,8 @@ async function apiRequest<T = unknown>(path: string, options: RequestInit & { ac
 }
 
 const styles = StyleSheet.create({
-  appSplashShell: { backgroundColor: "#FFFFFF", flex: 1 },
-  appSplashImage: { height: "100%", width: "100%" },
+  appSplashShell: { alignItems: "center", backgroundColor: "#FFFFFF", flex: 1, justifyContent: "center", paddingHorizontal: 24, paddingTop: 34, paddingBottom: 18 },
+  appSplashImage: { height: "100%", maxHeight: 780, width: "100%" },
   shell: { flex: 1 },
   content: { flexGrow: 1, gap: 14, padding: 20, paddingTop: 58 },
   homeContent: { gap: 16, paddingHorizontal: 16 },
@@ -2649,15 +2584,6 @@ const styles = StyleSheet.create({
   consentCheck: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#8A99A8", borderRadius: 3, borderWidth: 1, height: 13, justifyContent: "center", marginTop: 2, width: 13 },
   consentCheckText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900", lineHeight: 12 },
   consentText: { color: "#536A86", flex: 1, fontSize: 13, fontWeight: "600", lineHeight: 18 },
-  secureShell: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 16, borderWidth: 1, flexDirection: "row", minHeight: 43, paddingLeft: 14, paddingRight: 8 },
-  secureInput: { color: "#111827", flex: 1, fontSize: 14, fontWeight: "700", minHeight: 43 },
-  eyeButton: { alignItems: "center", borderRadius: 999, height: 34, justifyContent: "center", width: 34 },
-  eyeButtonText: { fontSize: 15, fontWeight: "900" },
-  biometricCard: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.92)", borderColor: "#D8E4EE", borderRadius: 20, borderWidth: 1, flexDirection: "row", gap: 12, padding: 16 },
-  biometricTitle: { color: "#253243", fontSize: 16, fontWeight: "900" },
-  biometricCopy: { color: "#536A86", fontSize: 14, fontWeight: "600", lineHeight: 20 },
-  smallCheck: { alignItems: "center", borderColor: "#8A99A8", borderRadius: 3, borderWidth: 1, height: 13, justifyContent: "center", width: 13 },
-  smallCheckText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900", lineHeight: 12 },
   avatar: { alignItems: "center", borderRadius: 18, height: 48, justifyContent: "center", width: 48 },
   avatarLarge: { borderRadius: 28, height: 84, width: 84 },
   avatarText: { fontSize: 17, fontWeight: "900" },
@@ -2966,7 +2892,9 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   modalBackdrop: { alignItems: "center", backgroundColor: "rgba(15,23,42,0.58)", flex: 1, justifyContent: "center", padding: 20 },
-  programModalCard: { backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#DDE7EF", borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 318, overflow: "hidden", padding: 18, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.18, shadowRadius: 28, width: "100%" },
+  programModalCard: { backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#DDE7EF", borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 318, overflow: "hidden", padding: 18, position: "relative", shadowColor: "#0F172A", shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.18, shadowRadius: 28, width: "100%" },
+  programModalClose: { alignItems: "center", backgroundColor: "#F3F6F9", borderRadius: 999, height: 34, justifyContent: "center", position: "absolute", right: 14, top: 14, width: 34, zIndex: 2 },
+  programModalCloseText: { color: "#202A35", fontSize: 24, fontWeight: "700", lineHeight: 28 },
   programModalTitle: { color: "#202A35", fontSize: 21, fontWeight: "900", lineHeight: 27, textAlign: "center" },
   programModalCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
   programPreparing: { alignItems: "center", flex: 1, gap: 18, justifyContent: "center", minHeight: 260 },
