@@ -274,6 +274,11 @@ export default function Index() {
   }
 
   function openProgramPicker() {
+    if (role === "student" && selectedPrograms.length >= 3) {
+      setProgramMenuOpen(false);
+      setProgramToast("You can keep up to 3 active programs.");
+      return;
+    }
     const selectedIds = new Set(selectedPrograms.map((program) => program.id));
     const nextProgram = role === "student" ? programs.find((program) => !selectedIds.has(program.id)) : programs.find((program) => program.id === selectedProgramId) ?? programs[0];
     setDraftProgramId(nextProgram?.id ?? selectedProgramId ?? programs[0]?.id ?? null);
@@ -1369,7 +1374,7 @@ function TrackCard({ role, onPress }: { role: Role; onPress: () => void }) {
   const title = role === "student" ? "Find your next tutor" : role === "tutor" ? "Review today’s leads" : "Track Apoorv's next class";
   const copy = role === "student" ? "Tutor matches, trial slots, and notes are ready." : role === "tutor" ? "New requests, trial follow-ups, and payout notes are ready." : "Attendance, payment, and tutor notes are ready.";
   return (
-    <View style={[styles.trackCard, { backgroundColor: theme.surface, borderColor: theme.accent }]}>
+    <View style={[styles.trackCard, { backgroundColor: theme.cardAlt, borderColor: theme.accent }]}>
       <View style={styles.flex}>
         <Text style={styles.trackTitle}>{title}</Text>
         <Text style={styles.trackCopy}>{copy}</Text>
@@ -1387,7 +1392,7 @@ function RecommendationTile({ role, item, onPress }: { role: Role; item: Recomme
   const theme = useRoleTheme(role);
   const glyph = item.type === "video" ? "▶" : item.type === "article" ? "₹" : "P";
   return (
-    <Pressable onPress={onPress} style={styles.recCard}>
+    <Pressable onPress={onPress} style={[styles.recCard, { backgroundColor: theme.card }]}>
       <View style={[styles.thumb, { backgroundColor: theme.surface }]}>
         <Text style={[styles.thumbText, { color: theme.text }]}>{glyph}</Text>
       </View>
@@ -1460,7 +1465,7 @@ function ProgramJourneyCard({ role, milestones, completedMilestone, onPress }: {
   const current = milestones.find((milestone) => !milestone.locked && (milestone.activities ?? []).some((activity) => activity.status !== "complete")) ?? milestones[0];
   const currentIndex = current ? milestones.findIndex((milestone) => milestone.id === current.id) : 0;
   return (
-    <Pressable style={({ pressed }) => [styles.programJourneyCard, pressed && styles.pressed]} onPress={onPress}>
+    <Pressable style={({ pressed }) => [styles.programJourneyCard, { backgroundColor: theme.card }, pressed && styles.pressed]} onPress={onPress}>
       <View style={styles.programJourneyTop}>
         <View style={styles.flex}>
           <Text style={styles.programJourneyTitle}>Program journey</Text>
@@ -1497,7 +1502,7 @@ function ProgramStat({ value, label }: { value: string; label: string }) {
 function ProgramCompletedCard({ role, onPress }: { role: Role; onPress: () => void }) {
   const theme = useRoleTheme(role);
   return (
-    <Pressable style={({ pressed }) => [styles.programCompletedCard, pressed && styles.pressed]} onPress={onPress}>
+    <Pressable style={({ pressed }) => [styles.programCompletedCard, { backgroundColor: theme.card }, pressed && styles.pressed]} onPress={onPress}>
       <Text style={styles.programCompletedIcon}>✓</Text>
       <Text style={styles.programCompletedTitle}>Program complete</Text>
       <Text style={styles.programCompletedCopy}>Congratulations. You have completed every topic in this program.</Text>
@@ -1507,6 +1512,7 @@ function ProgramCompletedCard({ role, onPress }: { role: Role; onPress: () => vo
 }
 
 function JourneyResourceCarousel({ title, role, items, emptyCopy, onPress }: { title: string; role: Role; items: JourneyActivity[]; emptyCopy: string; onPress: (item: SelectedActivity) => void }) {
+  const theme = useRoleTheme(role);
   return (
     <>
       <SectionTitle>{title}</SectionTitle>
@@ -1515,7 +1521,7 @@ function JourneyResourceCarousel({ title, role, items, emptyCopy, onPress }: { t
           {items.map((item) => <JourneyResourceTile key={(item.milestoneId ?? "") + "-" + (item.activityId ?? "")} role={role} item={item} onPress={() => onPress(item)} />)}
         </ScrollView>
       ) : (
-        <View style={styles.emptyInlineCard}>
+        <View style={[styles.emptyInlineCard, { backgroundColor: theme.cardSoft }]}>
           <Text style={styles.todayTitle}>All caught up</Text>
           <Text style={styles.todayMeta}>{emptyCopy}</Text>
         </View>
@@ -1527,7 +1533,7 @@ function JourneyResourceCarousel({ title, role, items, emptyCopy, onPress }: { t
 function JourneyResourceTile({ role, item, onPress }: { role: Role; item: JourneyActivity; onPress: () => void }) {
   const theme = useRoleTheme(role);
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.journeyResourceCard, pressed && styles.pressed]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.journeyResourceCard, { backgroundColor: theme.cardSoft }, pressed && styles.pressed]}>
       <View style={[styles.journeyResourceImage, { backgroundColor: theme.surface }]}>
         <Text style={[styles.journeyResourceGlyph, { color: theme.text }]}>{activityGlyph(item.type)}</Text>
       </View>
@@ -1543,7 +1549,7 @@ function TodayCard({ role, onPress }: { role: Role; onPress: () => void }) {
   const title = role === "student" ? "Trial with Neha Verma" : role === "tutor" ? "Demo with Apoorv Gulati" : "Trial with Neha Verma";
   const meta = role === "tutor" ? "Tomorrow, 6:00 PM • Online" : "Tomorrow, 6:00 PM • Online";
   return (
-    <Pressable style={styles.todayCard} onPress={onPress}>
+    <Pressable style={[styles.todayCard, { backgroundColor: theme.card }]} onPress={onPress}>
       <View style={styles.flex}>
         <Text style={styles.todayTitle}>{title}</Text>
         <Text style={styles.todayMeta}>{meta}</Text>
@@ -1572,7 +1578,7 @@ function Hero({ children }: { children: React.ReactNode }) {
 function Card({ children, role, onPress, selected }: { children: React.ReactNode; role: Role; onPress?: () => void; selected?: boolean }) {
   const theme = useRoleTheme(role);
   return (
-    <Pressable onPress={onPress} style={[styles.card, selected && { borderColor: theme.accentStrong, backgroundColor: theme.surface }]}>
+    <Pressable onPress={onPress} style={[styles.card, { backgroundColor: theme.card }, selected && { borderColor: theme.accentStrong, backgroundColor: theme.surface }]}>
       {children}
     </Pressable>
   );
@@ -1625,8 +1631,9 @@ function Muted({ children }: { children: React.ReactNode }) {
 }
 
 function Metric({ role, label, value, onPress }: { role: Role; label: string; value: string; onPress: () => void }) {
+  const theme = useRoleTheme(role);
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.metric, pressed && styles.pressed]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.metric, { backgroundColor: theme.cardAlt }, pressed && styles.pressed]}>
       <Text style={styles.metricValue}>{value}</Text>
       <Muted>{label}</Muted>
     </Pressable>
@@ -1739,7 +1746,7 @@ function ReminderSummary({
 }) {
   const theme = useRoleTheme(role);
   return (
-    <View style={styles.reminderSummaryCard}>
+    <View style={[styles.reminderSummaryCard, { backgroundColor: theme.card }]}>
       <View style={styles.reminderSummaryTop}>
         <View style={styles.flex}>
           <Text style={styles.reminderSummaryTitle}>{reminder.title}</Text>
@@ -1994,8 +2001,6 @@ function Sessions({
 }) {
   const theme = useRoleTheme(role);
   const selectedProgram = selectedPrograms.find((program) => program.id === selectedProgramId) ?? programs.find((program) => program.id === selectedProgramId) ?? selectedPrograms[0] ?? programs[0];
-  const programTitle = selectedProgram?.title ?? (role === "student" ? "Medical program" : role === "tutor" ? "Tutor growth program" : "Parent support program");
-  const programDescription = selectedProgram?.description ?? "Milestones unlock one by one. Each topic includes video, article, flashcard, and quiz.";
 
   return (
     <>
@@ -2007,8 +2012,16 @@ function Sessions({
         </Pressable>
         {menuOpen ? (
           <View style={styles.programMenu}>
-            <Pressable style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]} onPress={openProgramPicker}>
-              <Text style={styles.programMenuText}>Add a program</Text>
+            <Pressable
+              disabled={role === "student" && selectedPrograms.length >= 3}
+              style={({ pressed }) => [
+                styles.programMenuItem,
+                role === "student" && selectedPrograms.length >= 3 ? styles.programMenuItemDisabled : null,
+                pressed && !(role === "student" && selectedPrograms.length >= 3) && styles.pressed
+              ]}
+              onPress={openProgramPicker}
+            >
+              <Text style={[styles.programMenuText, role === "student" && selectedPrograms.length >= 3 ? styles.programMenuTextDisabled : null]}>Add a program</Text>
             </Pressable>
             <Pressable style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]} onPress={archiveProgram}>
               <Text style={styles.programMenuText}>Archive a program</Text>
@@ -2016,13 +2029,9 @@ function Sessions({
           </View>
         ) : null}
       </View>
-      <View style={[styles.milesSummaryCard, { borderColor: theme.accentStrong }]}>
-        <Text style={styles.milesSummaryTitle}>{programTitle}</Text>
-        <Text style={styles.milesSummaryCopy}>{programDescription}</Text>
-      </View>
       {role === "student" && selectedPrograms.length > 0 ? (
-        <View style={styles.selectedProgramPanel}>
-          <FieldLabel>Selected programs ({selectedPrograms.length}/3)</FieldLabel>
+        <View style={[styles.selectedProgramPanel, { backgroundColor: theme.card }]}>
+          <FieldLabel>Selected programs</FieldLabel>
           <DropdownField
             value={selectedProgram?.title ?? "Select program"}
             options={selectedPrograms.map((program) => program.title)}
@@ -2123,9 +2132,10 @@ function ProgramPickerModal({
   const theme = useRoleTheme(role);
   const selectedIds = new Set(selectedPrograms.map((program) => program.id));
   const availablePrograms = role === "student" ? programs.filter((program) => !selectedIds.has(program.id)) : programs;
-  const modalPrograms = availablePrograms.length ? availablePrograms : programs;
+  const modalPrograms = role === "student" ? availablePrograms : availablePrograms.length ? availablePrograms : programs;
   const selectedProgram = modalPrograms.find((program) => program.id === selectedProgramId) ?? modalPrograms[0];
-  const selectionFull = role === "student" && selectedPrograms.length >= 3 && availablePrograms.length === 0;
+  const selectionFull = role === "student" && selectedPrograms.length >= 3;
+  const noAvailablePrograms = role === "student" && !selectionFull && modalPrograms.length === 0;
   return (
     <Modal visible={visible} transparent animationType="fade">
       <BlurView intensity={95} tint="dark" style={styles.modalBackdrop}>
@@ -2138,15 +2148,15 @@ function ProgramPickerModal({
           ) : (
             <>
               <Text style={styles.programModalTitle}>Choose your program</Text>
-              <Text style={styles.programModalCopy}>{role === "student" ? `Select up to 3 programs to follow in My Miles. Current selection: ${selectedPrograms.length}/3.` : "Select the plan you want to follow in My Miles."}</Text>
+              <Text style={styles.programModalCopy}>{role === "student" ? "Select another program to follow in My Miles." : "Select the plan you want to follow in My Miles."}</Text>
               <FieldLabel>Program</FieldLabel>
               <DropdownField
-                value={selectionFull ? "Maximum 3 programs selected" : selectedProgram?.title ?? "Select program"}
-                options={selectionFull ? ["Maximum 3 programs selected"] : modalPrograms.map((program) => program.title)}
+                value={selectionFull ? "Maximum 3 programs selected" : noAvailablePrograms ? "No other programs available" : selectedProgram?.title ?? "Select program"}
+                options={selectionFull ? ["Maximum 3 programs selected"] : noAvailablePrograms ? ["No other programs available"] : modalPrograms.map((program) => program.title)}
                 onSelect={(title) => setSelectedProgramId(modalPrograms.find((program) => program.title === title)?.id ?? null)}
               />
               <View style={styles.modalBottomCta}>
-                <Button role={role} label="Continue" onPress={onContinue} disabled={!selectedProgram || selectionFull} />
+                <Button role={role} label="Continue" onPress={onContinue} disabled={!selectedProgram || selectionFull || noAvailablePrograms} />
               </View>
             </>
           )}
@@ -2586,7 +2596,9 @@ const styles = StyleSheet.create({
   milesHeaderTitle: { color: "#202A35", fontSize: 18, fontWeight: "900", left: 58, position: "absolute", right: 58, textAlign: "center" },
   programMenu: { backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, overflow: "hidden", position: "absolute", right: 0, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.14, shadowRadius: 18, top: 46, width: 188, zIndex: 5 },
   programMenuItem: { minHeight: 46, justifyContent: "center", paddingHorizontal: 14 },
+  programMenuItemDisabled: { backgroundColor: "#F3F4F6", opacity: 0.72 },
   programMenuText: { color: "#202A35", fontSize: 14, fontWeight: "800" },
+  programMenuTextDisabled: { color: "#8B95A1" },
   hero: { backgroundColor: "rgba(255,255,255,0.74)", borderRadius: 28, gap: 10, padding: 18, shadowColor: "#0F172A", shadowOpacity: 0.12, shadowRadius: 18, shadowOffset: { width: 0, height: 12 } },
   splash: { alignSelf: "center", height: 210, width: 210 },
   title: { color: "#202A35", fontSize: 21, fontWeight: "900", lineHeight: 26 },
@@ -2771,7 +2783,7 @@ const styles = StyleSheet.create({
   bottomCtaInline: { marginTop: 26 },
   milesSummaryTitle: { color: "#202A35", fontSize: 17, fontWeight: "900", lineHeight: 22 },
   milesSummaryCopy: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19 },
-  selectedProgramPanel: { backgroundColor: "rgba(255,255,255,0.82)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, padding: 12 },
+  selectedProgramPanel: { borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, padding: 12 },
   milesTimeline: { gap: 10, paddingBottom: 18, paddingTop: 10 },
   mileRow: { flexDirection: "row", minHeight: 148 },
   mileRail: { alignItems: "center", marginRight: 12, width: 44 },

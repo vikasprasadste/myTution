@@ -4,7 +4,7 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
-import { featureFlags, isFeatureEnabled } from "@mytution/config";
+import { featureFlags, isFeatureEnabled, paletteConfig, roleThemes } from "@mytution/config";
 import { prisma } from "@mytution/db";
 import type { ProgramSummary, ResourceType, Role } from "@mytution/shared";
 
@@ -261,8 +261,14 @@ app.get("/api/v1/bootstrap", async (req, res) => {
   res.json({
     persona: profile ? toPersona(profile) : fallbackPersona(role),
     featureFlags,
+    paletteConfig,
+    roleThemes,
     role
   });
+});
+
+app.get("/api/v1/theme/palette", (_req, res) => {
+  res.json({ data: { paletteConfig, roleThemes } });
 });
 
 app.get("/api/v1/usermanagement/profile", async (req, res) => {
