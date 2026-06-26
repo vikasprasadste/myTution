@@ -28,7 +28,6 @@ type AppScreen =
   | "profile"
   | "editProfile"
   | "signin"
-  | "signinCredentials"
   | "home"
   | "search"
   | "sessions"
@@ -858,30 +857,23 @@ export default function Index() {
     }
 
     if (screen === "signin") {
-      return <SignInScreen role={role} mode={signInMode} persona={persona} avatarUri={avatarUri} restart={restartPrototype} signIn={() => setScreen("signinCredentials")} register={() => setScreen("role")} />;
-    }
-
-    if (screen === "signinCredentials") {
       return (
-        <>
-          <TopBar title="Sign in" left="‹" onLeft={() => setScreen("signin")} />
-          <Title>Sign in with phone</Title>
-          <Muted>Enter your registered phone number and password.</Muted>
-          <FieldLabel>Phone number</FieldLabel>
-          <Input
-            value={phoneNumber}
-            onChangeText={(value) => setPhoneNumber(value.replace(/\D/g, "").slice(0, 10))}
-            keyboardType="phone-pad"
-            maxLength={10}
-            placeholder="9876543210"
-          />
-          <FieldLabel>Password</FieldLabel>
-          <Input secureTextEntry value={signinPassword} onChangeText={setSigninPassword} placeholder="Password" />
-          {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
-          <View style={styles.bottomCta}>
-            <Button disabled={!phoneComplete || !signinPassword} loading={loadingAction === "signin"} role={role} label="Next" onPress={signInWithPassword} />
-          </View>
-        </>
+        <SignInScreen
+          role={role}
+          mode={signInMode}
+          persona={persona}
+          avatarUri={avatarUri}
+          restart={restartPrototype}
+          phoneNumber={phoneNumber}
+          setPhoneNumber={(value) => setPhoneNumber(value.replace(/\D/g, "").slice(0, 10))}
+          password={signinPassword}
+          setPassword={setSigninPassword}
+          canSignIn={phoneComplete && !!signinPassword}
+          loading={loadingAction === "signin"}
+          apiNotice={apiNotice}
+          signIn={signInWithPassword}
+          register={() => setScreen("role")}
+        />
       );
     }
 
@@ -1081,6 +1073,13 @@ function SignInScreen({
   persona,
   avatarUri,
   restart,
+  phoneNumber,
+  setPhoneNumber,
+  password,
+  setPassword,
+  canSignIn,
+  loading,
+  apiNotice,
   signIn,
   register
 }: {
@@ -1089,41 +1088,54 @@ function SignInScreen({
   persona: typeof personas[Role];
   avatarUri: string | null;
   restart: () => void;
+  phoneNumber: string;
+  setPhoneNumber: (value: string) => void;
+  password: string;
+  setPassword: (value: string) => void;
+  canSignIn: boolean;
+  loading: boolean;
+  apiNotice: string;
   signIn: () => void;
   register: () => void;
 }) {
-  if (mode === "fresh") {
-    return (
-      <>
-        <View style={styles.signinHero}>
-          <Image source={icon} style={styles.freshSigninLogo} resizeMode="contain" />
-          <Text style={styles.freshSigninBrand}>myTution</Text>
-          <Text style={styles.freshSigninCopy}>Sign in to continue your learning journey.</Text>
-        </View>
-        <Button role={role} label="Sign in" onPress={signIn} />
-        <Pressable style={({ pressed }) => [styles.registerLink, pressed && styles.pressed]} onPress={register}>
-          <Text style={styles.registerLinkText}>Don't have an account? Register Now!!</Text>
-        </Pressable>
-      </>
-    );
-  }
-
   return (
     <>
-      <View style={styles.brandRow}>
-        <Image source={icon} style={styles.brandIcon} resizeMode="contain" />
-        <Text style={styles.brandTitle}>myTution</Text>
+      <View style={styles.signinFormBrand}>
+        <Image source={icon} style={styles.freshSigninLogo} resizeMode="contain" />
+        <Text style={styles.freshSigninBrand}>myTution</Text>
+        <Text style={styles.freshSigninCopy}>Sign in to continue your learning journey.</Text>
       </View>
-      <View style={styles.signinCard}>
-        <Avatar role={role} label={persona.initials} uri={avatarUri} />
-        <View style={styles.flex}>
-          <Text style={styles.signinKicker}>Welcome back</Text>
-          <Text style={styles.signinName}>{persona.firstName} {persona.lastName}</Text>
+      {mode === "returning" ? (
+        <View style={styles.signinCard}>
+          <Avatar role={role} label={persona.initials} uri={avatarUri} />
+          <View style={styles.flex}>
+            <Text style={styles.signinKicker}>Welcome back</Text>
+            <Text style={styles.signinName}>{persona.firstName} {persona.lastName}</Text>
+          </View>
+          <Text style={styles.signinCopy}>{capitalize(role)} dashboard is ready. Sign in with phone and password to continue.</Text>
         </View>
-        <Text style={styles.signinCopy}>{capitalize(role)} dashboard is ready. Sign in with phone and password to continue.</Text>
+      ) : null}
+      <FieldLabel>Phone number</FieldLabel>
+      <Input
+        value={phoneNumber}
+        onChangeText={setPhoneNumber}
+        keyboardType="phone-pad"
+        maxLength={10}
+        placeholder="9876543210"
+      />
+      <FieldLabel>Password</FieldLabel>
+      <Input secureTextEntry value={password} onChangeText={setPassword} placeholder="Password" />
+      {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
+      <View style={styles.bottomCta}>
+        <Button disabled={!canSignIn} loading={loading} role={role} label="Sign in" onPress={signIn} />
+        {mode === "fresh" ? (
+          <Pressable style={({ pressed }) => [styles.registerLink, pressed && styles.pressed]} onPress={register}>
+            <Text style={styles.registerLinkText}>Don't have an account? Register Now!!</Text>
+          </Pressable>
+        ) : (
+          <Button role={role} variant="secondary" label="Restart prototype" onPress={restart} />
+        )}
       </View>
-      <Button role={role} label="Sign in" onPress={signIn} />
-      <Button role={role} variant="secondary" label="Restart prototype" onPress={restart} />
     </>
   );
 }
@@ -2564,14 +2576,10 @@ const styles = StyleSheet.create({
   linkText: { fontWeight: "800", textDecorationLine: "underline" },
   fieldShell: { position: "relative" },
   eye: { alignItems: "center", backgroundColor: "#F1F5F9", borderRadius: 999, height: 34, justifyContent: "center", position: "absolute", right: 8, top: 8, width: 34 },
-  signinHero: { alignItems: "center", flex: 1, justifyContent: "center", minHeight: 430, paddingBottom: 20 },
-  freshSigninTop: { alignItems: "center", flex: 1, justifyContent: "center", minHeight: 430 },
+  signinFormBrand: { alignItems: "center", gap: 6, marginTop: 24, marginBottom: 22 },
   freshSigninLogo: { borderRadius: 28, height: 150, width: 150 },
   freshSigninBrand: { color: "#202A35", fontSize: 31, fontWeight: "900", marginTop: 18 },
   freshSigninCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 21, marginTop: 10, textAlign: "center" },
-  brandRow: { alignItems: "center", flexDirection: "row", gap: 10, marginBottom: 8 },
-  brandIcon: { borderRadius: 12, height: 34, width: 34 },
-  brandTitle: { color: "#202A35", flex: 1, fontSize: 20, fontWeight: "900" },
   headerIconButton: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.72)", borderRadius: 14, height: 39, justifyContent: "center", width: 39 },
   headerIconButtonText: { color: "#0F5560", fontSize: 13, fontWeight: "900" },
   signinCard: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.74)", borderColor: "rgba(210,230,235,0.95)", borderRadius: 22, borderWidth: 1, flexDirection: "row", flexWrap: "wrap", gap: 12, padding: 18, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.08, shadowRadius: 24 },
