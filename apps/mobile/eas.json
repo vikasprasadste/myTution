@@ -9,7 +9,13 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "http://localhost:4000",
-        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
+        "EAS_USE_NPM_CACHE": "1",
+        "NPM_CONFIG_FETCH_RETRIES": "5",
+        "NPM_CONFIG_FETCH_RETRY_FACTOR": "2",
+        "NPM_CONFIG_FETCH_RETRY_MINTIMEOUT": "20000",
+        "NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT": "120000",
+        "NPM_CONFIG_NETWORK_TIMEOUT": "300000"
       }
     },
     "preview": {
@@ -18,7 +24,13 @@
       },
       "distribution": "internal",
       "env": {
-        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
+        "EAS_USE_NPM_CACHE": "1",
+        "NPM_CONFIG_FETCH_RETRIES": "5",
+        "NPM_CONFIG_FETCH_RETRY_FACTOR": "2",
+        "NPM_CONFIG_FETCH_RETRY_MINTIMEOUT": "20000",
+        "NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT": "120000",
+        "NPM_CONFIG_NETWORK_TIMEOUT": "300000"
       }
     },
     "simulator": {
@@ -26,12 +38,24 @@
         "simulator": true
       },
       "env": {
-        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
+        "EAS_USE_NPM_CACHE": "1",
+        "NPM_CONFIG_FETCH_RETRIES": "5",
+        "NPM_CONFIG_FETCH_RETRY_FACTOR": "2",
+        "NPM_CONFIG_FETCH_RETRY_MINTIMEOUT": "20000",
+        "NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT": "120000",
+        "NPM_CONFIG_NETWORK_TIMEOUT": "300000"
       }
     },
     "production": {
       "env": {
-        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
+        "EAS_USE_NPM_CACHE": "1",
+        "NPM_CONFIG_FETCH_RETRIES": "5",
+        "NPM_CONFIG_FETCH_RETRY_FACTOR": "2",
+        "NPM_CONFIG_FETCH_RETRY_MINTIMEOUT": "20000",
+        "NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT": "120000",
+        "NPM_CONFIG_NETWORK_TIMEOUT": "300000"
       }
     }
   },
