@@ -7,8 +7,10 @@ import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Image,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -185,6 +187,7 @@ export default function Index() {
   const homeMilestones = apiMilestones ?? programMilestones;
   const journeyActivities = useMemo(() => buildJourneyActivities(role, homeMilestones), [homeMilestones, role]);
   const carouselLimit = Number.isFinite(appConfig.home?.maxActivitiesPerCarousel) ? appConfig.home.maxActivitiesPerCarousel : 5;
+  const reminderPreviewLimit = Number.isFinite(appConfig.home?.maxRemindersPreview) ? appConfig.home.maxRemindersPreview : 2;
   const forYouTodayActivities = journeyActivities.filter((activity) => activity.required && activity.status !== "complete").slice(0, carouselLimit);
   const nextStepActivities = journeyActivities.filter((activity) => !activity.required && activity.status !== "complete").slice(0, carouselLimit);
   const programComplete = homeMilestones.length > 0 && homeMilestones.every((milestone) => (milestone.activities ?? []).length > 0 && (milestone.activities ?? []).every((activity) => activity.status === "complete"));
@@ -942,21 +945,13 @@ export default function Index() {
               loading={loadingAction === "createReminder"}
             />
           ) : (
-            <>
-              {roleReminders.slice(0, 2).map((item) => (
-                <ReminderSummary
-                  key={item.id}
-                  role={role}
-                  reminder={item}
-                  onEdit={() => editReminder(item)}
-                  onDelete={() => deleteReminder(item.id)}
-                />
-              ))}
-      <Pressable style={({ pressed }) => [styles.viewAllCard, pressed && styles.pressed]} onPress={() => setScreen("events")}>
-                <Text style={[styles.viewAllText, { color: theme.text }]}>View all reminders</Text>
-              </Pressable>
-            </>
+            <ReminderPreviewCard role={role} reminders={roleReminders.slice(0, reminderPreviewLimit)} />
           )}
+          {roleReminders.length > reminderPreviewLimit ? (
+            <Pressable style={({ pressed }) => [styles.viewAllCard, pressed && styles.pressed]} onPress={() => setScreen("events")}>
+              <Text style={[styles.viewAllText, { color: theme.text }]}>View all reminders</Text>
+            </Pressable>
+          ) : null}
 
           <SectionTitle>Dashboard</SectionTitle>
           <DashboardGrid role={role} cards={dashboardCards} setScreen={setScreen} />
@@ -1672,23 +1667,61 @@ function ReminderComposer({
   );
 }
 
-function ReminderSummary({
-  role,
-  reminder,
-  onEdit,
-  onDelete,
-  compact
-}: {
-  role: Role;
-  reminder: Reminder;
-  onEdit: () => void;
-  onDelete: () => void;
-  compact?: boolean;
-}) {
+function ReminderPreviewCard({ role, reminders }: { role: Role; reminders: Reminder[] }) {
   const theme = useRoleTheme(role);
   return (
-    <View style={[styles.reminderSummaryCard, { backgroundColor: theme.card }]}>
-      <View style={styles.reminderSummaryTop}>
+    <View style={[styles.reminderPreviewCard, { backgroundColor: theme.card }]}>
+      {reminders.map((reminder, index) => (
+        <View key={reminder.id} style={[styles.reminderPreviewRow, index < reminders.length - 1 && styles.reminderPreviewDivider]}>
+          <View style={styles.flex}>
+            <Text style={styles.reminderSummaryTitle}>{reminder.title}</Text>
+            <Text style={styles.reminderSummaryMeta}>{formatReminderDateTime(reminder.startsAt)}</Text>
+          </View>
+          <View style={[styles.roleBadge, { backgroundColor: theme.surface }]}>
+            <Text style={[styles.roleBadgeText, { color: theme.text }]}>{capitalize(role)}</Text>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function SwipeReminderRow({ role, reminder, onEdit, onDelete }: { role: Role; reminder: Reminder; onEdit: () => void; onDelete: () => void }) {
+  const theme = useRoleTheme(role);
+  const translateX = useRef(new Animated.Value(0)).current;
+  const currentX = useRef(0);
+  const actionWidth = 112;
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+      onPanResponderMove: (_, gesture) => {
+        const next = Math.max(-actionWidth, Math.min(0, currentX.current + gesture.dx));
+        translateX.setValue(next);
+      },
+      onPanResponderRelease: (_, gesture) => {
+        const next = currentX.current + gesture.dx < -48 ? -actionWidth : 0;
+        currentX.current = next;
+        Animated.spring(translateX, { toValue: next, useNativeDriver: true }).start();
+      }
+    })
+  ).current;
+
+  function closeRow() {
+    currentX.current = 0;
+    Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+  }
+
+  return (
+    <View style={styles.swipeReminderShell}>
+      <View style={styles.swipeActions}>
+        <Pressable style={({ pressed }) => [styles.swipeActionButton, { backgroundColor: theme.surface }, pressed && styles.pressed]} onPress={() => { closeRow(); onEdit(); }}>
+          <Text style={[styles.swipeActionIcon, { color: theme.text }]}>✎</Text>
+        </Pressable>
+        <Pressable style={({ pressed }) => [styles.swipeActionButton, styles.swipeDeleteButton, pressed && styles.pressed]} onPress={() => { closeRow(); onDelete(); }}>
+          <Text style={styles.swipeDeleteIcon}>⌫</Text>
+        </Pressable>
+      </View>
+      <Animated.View style={[styles.swipeReminderCard, { backgroundColor: theme.card, transform: [{ translateX }] }]} {...panResponder.panHandlers}>
         <View style={styles.flex}>
           <Text style={styles.reminderSummaryTitle}>{reminder.title}</Text>
           <Text style={styles.reminderSummaryMeta}>{formatReminderDateTime(reminder.startsAt)}</Text>
@@ -1696,17 +1729,7 @@ function ReminderSummary({
         <View style={[styles.roleBadge, { backgroundColor: theme.surface }]}>
           <Text style={[styles.roleBadgeText, { color: theme.text }]}>{capitalize(role)}</Text>
         </View>
-      </View>
-      {!compact && (
-        <View style={styles.reminderActionRow}>
-          <Pressable style={({ pressed }) => [styles.reminderActionButton, pressed && styles.pressed]} onPress={onEdit}>
-            <Text style={[styles.reminderActionText, { color: theme.text }]}>Edit</Text>
-          </Pressable>
-          <Pressable style={({ pressed }) => [styles.reminderActionButton, pressed && styles.pressed]} onPress={onDelete}>
-            <Text style={[styles.reminderActionText, { color: theme.text }]}>Delete</Text>
-          </Pressable>
-        </View>
-      )}
+      </Animated.View>
     </View>
   );
 }
@@ -2264,7 +2287,7 @@ function Events({ role, reminders, editReminder, deleteReminder, back }: { role:
     <>
       <TopBar title="Events & reminders" left="‹" onLeft={back} />
       {reminders.length ? reminders.map((item) => (
-        <ReminderSummary
+        <SwipeReminderRow
           key={item.id}
           role={role}
           reminder={item}
@@ -2826,22 +2849,28 @@ const styles = StyleSheet.create({
   reminderButtonText: {
     fontWeight: "900"
   },
-  reminderSummaryCard: {
+  reminderPreviewCard: {
     backgroundColor: "rgba(255,255,255,0.94)",
     borderColor: "#DDE7EF",
     borderRadius: 18,
     borderWidth: 1,
-    padding: 16,
+    overflow: "hidden",
     shadowColor: "#0F172A",
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.08,
     shadowRadius: 18
   },
-  reminderSummaryTop: {
+  reminderPreviewRow: {
     alignItems: "flex-start",
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 12
+    gap: 12,
+    minHeight: 72,
+    padding: 16
+  },
+  reminderPreviewDivider: {
+    borderBottomColor: "rgba(148,163,184,0.24)",
+    borderBottomWidth: 1
   },
   reminderSummaryTitle: {
     color: "#26313F",
@@ -2863,24 +2892,57 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "900"
   },
-  reminderActionRow: {
+  swipeReminderShell: {
+    borderRadius: 18,
+    minHeight: 76,
+    overflow: "hidden",
+    position: "relative",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.08,
+    shadowRadius: 18
+  },
+  swipeActions: {
+    bottom: 0,
     flexDirection: "row",
-    gap: 10,
-    marginTop: 13
+    gap: 8,
+    justifyContent: "flex-end",
+    paddingRight: 10,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    width: 122
   },
-  reminderActionButton: {
+  swipeActionButton: {
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderColor: "#DDE7EF",
-    borderRadius: 15,
-    borderWidth: 1,
-    flex: 1,
+    alignSelf: "center",
+    borderRadius: 999,
+    height: 42,
     justifyContent: "center",
-    minHeight: 47
+    width: 42
   },
-  reminderActionText: {
-    fontSize: 14,
+  swipeDeleteButton: {
+    backgroundColor: "#FEE2E2"
+  },
+  swipeActionIcon: {
+    fontSize: 20,
     fontWeight: "900"
+  },
+  swipeDeleteIcon: {
+    color: "#B91C1C",
+    fontSize: 20,
+    fontWeight: "900"
+  },
+  swipeReminderCard: {
+    alignItems: "flex-start",
+    borderColor: "#DDE7EF",
+    borderRadius: 18,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+    minHeight: 76,
+    padding: 16
   },
   viewAllCard: {
     alignItems: "center",
