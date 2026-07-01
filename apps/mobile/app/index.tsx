@@ -2310,16 +2310,255 @@ function Payments({ role, back }: { role: Role; back: () => void }) {
   );
 }
 
+type DoubtItem = {
+  id: string;
+  author: string;
+  initials: string;
+  time: string;
+  title: string;
+  body: string;
+  status: "solved" | "open";
+  votes: number;
+  replies: number;
+  pinned?: boolean;
+  anonymous?: boolean;
+  attachment?: boolean;
+  verified?: boolean;
+};
+
+const doubtItems: DoubtItem[] = [
+  {
+    id: "pinned",
+    author: "Prof. Verma",
+    initials: "PV",
+    time: "Essential Exam Target",
+    title: "[5-Mark Blueprint] Gauss's Law derivation",
+    body: "How to derive electric field intensity due to an infinitely long straight uniformly charged wire using Gauss's Law?",
+    status: "solved",
+    votes: 142,
+    replies: 1,
+    pinned: true,
+    verified: true
+  },
+  {
+    id: "peer1",
+    author: "Aman Kapoor",
+    initials: "AK",
+    time: "12 mins ago",
+    title: "Choosing a Gaussian surface",
+    body: "Stuck on Quiz Question 4. Why do we assume the Gaussian surface to be cylindrical for a linear line charge? Why not a spherical one?",
+    status: "solved",
+    votes: 18,
+    replies: 3,
+    attachment: true
+  },
+  {
+    id: "peer2",
+    author: "Anonymous Peer",
+    initials: "AP",
+    time: "2 hours ago",
+    title: "Flux angle confusion",
+    body: "In the formula Phi = integral E dot dA, is the angle always evaluated between the field vector and surface normal vector?",
+    status: "open",
+    votes: 7,
+    replies: 0,
+    anonymous: true
+  }
+];
+
 function Chat({ role, back }: { role: Role; back: () => void }) {
+  const theme = useRoleTheme(role);
+  const [filter, setFilter] = useState<"all" | "open" | "solved">("all");
+  const [search, setSearch] = useState("");
+  const [selectedDoubt, setSelectedDoubt] = useState<DoubtItem | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [newDoubt, setNewDoubt] = useState("");
+  const [anonymous, setAnonymous] = useState(false);
+  const filteredDoubts = doubtItems.filter((item) => {
+    const statusMatch = filter === "all" || item.status === filter;
+    const text = `${item.title} ${item.body} ${item.author}`.toLowerCase();
+    return statusMatch && text.includes(search.trim().toLowerCase());
+  });
+  const pinned = filteredDoubts.filter((item) => item.pinned);
+  const peerDoubts = filteredDoubts.filter((item) => !item.pinned);
+
+  if (asking) {
+    return (
+      <View style={styles.doubtScreen}>
+        <DoubtHeader title="Create Doubt" subtitle="Board forum • Physics" back={() => setAsking(false)} />
+        <View style={styles.askDoubtCard}>
+          <Title>Post a new doubt</Title>
+          <Muted>Describe the exact step, formula, or question where you are stuck.</Muted>
+          <FieldLabel>What are you struggling with?</FieldLabel>
+          <TextInput
+            value={newDoubt}
+            onChangeText={setNewDoubt}
+            multiline
+            placeholder="Type your equation, query, or question context here..."
+            placeholderTextColor="#8D7BA0"
+            style={styles.askDoubtInput}
+          />
+          <FieldLabel>Attach photo of the problem</FieldLabel>
+          <Pressable style={({ pressed }) => [styles.attachmentUploader, pressed && styles.pressed]}>
+            <Text style={styles.attachmentIcon}>▧</Text>
+            <Text style={[styles.attachmentText, { color: theme.text }]}>Upload photo or screenshot</Text>
+          </Pressable>
+          <Pressable style={({ pressed }) => [styles.anonymousToggle, pressed && styles.pressed]} onPress={() => setAnonymous(!anonymous)}>
+            <View>
+              <Text style={styles.anonymousTitle}>Hide my identity</Text>
+              <Text style={styles.anonymousCopy}>Display as Anonymous to peers</Text>
+            </View>
+            <View style={[styles.consentCheck, anonymous && { backgroundColor: theme.accentStrong, borderColor: theme.accentStrong }]}>
+              <Text style={styles.consentCheckText}>{anonymous ? "✓" : ""}</Text>
+            </View>
+          </Pressable>
+          <Button role={role} label="Submit to board forum" disabled={!newDoubt.trim()} onPress={() => { setNewDoubt(""); setAnonymous(false); setAsking(false); }} />
+        </View>
+      </View>
+    );
+  }
+
+  if (selectedDoubt) {
+    return (
+      <View style={styles.doubtScreen}>
+        <DoubtHeader title="Doubt Details" subtitle="Physics • Milestone 3" back={() => setSelectedDoubt(null)} />
+        <View style={styles.doubtDetailCard}>
+          <View style={styles.doubtCardHeader}>
+            <View style={styles.doubtUserRow}>
+              <View style={[styles.doubtAvatar, selectedDoubt.anonymous && styles.doubtAvatarMuted]}>
+                <Text style={styles.doubtAvatarText}>{selectedDoubt.initials}</Text>
+              </View>
+              <View>
+                <Text style={styles.doubtUserName}>{selectedDoubt.author}</Text>
+                <Text style={styles.doubtTime}>{selectedDoubt.time}</Text>
+              </View>
+            </View>
+            <DoubtStatus status={selectedDoubt.status} />
+          </View>
+          <Text style={styles.doubtDetailTitle}>{selectedDoubt.title}</Text>
+          <Text style={styles.doubtDetailBody}>{selectedDoubt.body}</Text>
+          {selectedDoubt.verified ? (
+            <View style={styles.teacherSolutionBox}>
+              <Text style={styles.teacherBadge}>TEACHER VERIFIED SOLUTION</Text>
+              <Text style={styles.teacherSolutionText}>
+                Use a cylindrical Gaussian surface because it matches the symmetry of a line charge. The field is constant on the curved surface and perpendicular to the end caps, so the cap flux is zero and only the curved area contributes.
+              </Text>
+              <Text style={styles.formulaBox}>E = lambda / (2 pi epsilon0 r)</Text>
+            </View>
+          ) : selectedDoubt.replies > 0 ? (
+            <View style={styles.communityAnswerCard}>
+              <Text style={styles.peerTutorLabel}>Peer Tutor</Text>
+              <Text style={styles.teacherSolutionText}>
+                A cylinder keeps every point on the curved face at the same distance from the line charge. A sphere would not preserve that symmetry for a long straight wire.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.noAnswerCard}>
+              <Text style={styles.noAnswerTitle}>No answers yet</Text>
+              <Muted>Be the first to help your peer.</Muted>
+            </View>
+          )}
+        </View>
+        <View style={styles.replyBar}>
+          <Text style={[styles.replyAttach, { color: theme.text }]}>▧</Text>
+          <TextInput placeholder="Type your helpful reply..." placeholderTextColor="#8D7BA0" style={styles.replyInput} />
+          <Pressable style={({ pressed }) => [styles.replySend, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={() => setSelectedDoubt(null)}>
+            <Text style={styles.replySendText}>›</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   return (
-    <>
-      <TopBar title="Chat" left="‹" onLeft={back} />
-      <Card role={role}><CardTitle>Booking context</CardTitle><Muted>Trial class • Tomorrow 6:00 PM • Online</Muted></Card>
-      <Card role={role}><Muted>Hi Apoorv, I can help with algebra and board exam patterns.</Muted></Card>
-      <Card role={role}><Muted>Great. Can we start with quadratic equations?</Muted></Card>
-      <Input value="Sounds good, thank you!" onChangeText={() => undefined} />
-      <Button role={role} label="Send" onPress={() => undefined} />
-    </>
+    <View style={styles.doubtScreen}>
+      <DoubtHeader title="Clear Doubts" subtitle="Physics • Milestone 3: Gauss's Law" back={back} />
+      <View style={styles.doubtSearchBox}>
+        <View style={styles.doubtSearchBar}>
+          <Text style={styles.doubtSearchIcon}>⌕</Text>
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search doubts about Gauss's Law..."
+            placeholderTextColor="#8D7BA0"
+            style={styles.doubtSearchInput}
+          />
+        </View>
+        <View style={styles.doubtFilterRow}>
+          {[
+            ["all", "All Doubts"],
+            ["open", "Unsolved"],
+            ["solved", "Solved"]
+          ].map(([id, label]) => (
+            <Pressable key={id} style={({ pressed }) => [styles.doubtChip, filter === id && { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={() => setFilter(id as "all" | "open" | "solved")}>
+              <Text style={[styles.doubtChipText, filter === id && styles.doubtChipTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+      <View style={styles.doubtFeed}>
+        {pinned.length ? <Text style={styles.doubtSectionLabel}>PINNED FAQ</Text> : null}
+        {pinned.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => setSelectedDoubt(item)} />)}
+        <Text style={styles.doubtSectionLabel}>PEER DISCUSSIONS</Text>
+        {peerDoubts.length ? peerDoubts.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => setSelectedDoubt(item)} />) : <Muted>No matching doubts found.</Muted>}
+      </View>
+      <Pressable style={({ pressed }) => [styles.askFab, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={() => setAsking(true)}>
+        <Text style={styles.askFabText}>+ Ask a Doubt</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function DoubtHeader({ title, subtitle, back }: { title: string; subtitle: string; back: () => void }) {
+  return (
+    <View style={styles.doubtHeader}>
+      <Pressable style={({ pressed }) => [styles.doubtBackButton, pressed && styles.pressed]} onPress={back}>
+        <Text style={styles.doubtBackText}>‹</Text>
+      </Pressable>
+      <View style={styles.flex}>
+        <Text style={styles.doubtHeaderTitle}>{title}</Text>
+        <Text style={styles.doubtHeaderSubtitle}>{subtitle}</Text>
+      </View>
+    </View>
+  );
+}
+
+function DoubtStatus({ status }: { status: "solved" | "open" }) {
+  return (
+    <View style={[styles.doubtStatus, status === "solved" ? styles.doubtSolved : styles.doubtOpen]}>
+      <Text style={[styles.doubtStatusText, status === "solved" ? styles.doubtSolvedText : styles.doubtOpenText]}>{status === "solved" ? "Solved" : "Open"}</Text>
+    </View>
+  );
+}
+
+function DoubtCard({ role, item, onPress }: { role: Role; item: DoubtItem; onPress: () => void }) {
+  const theme = useRoleTheme(role);
+  return (
+    <Pressable style={({ pressed }) => [styles.doubtCard, item.pinned && styles.doubtCardPinned, item.pinned && { borderLeftColor: theme.text }, pressed && styles.pressed]} onPress={onPress}>
+      <View style={styles.doubtCardHeader}>
+        <View style={styles.doubtUserRow}>
+          <View style={[styles.doubtAvatar, item.anonymous && styles.doubtAvatarMuted]}>
+            <Text style={styles.doubtAvatarText}>{item.initials}</Text>
+          </View>
+          <View>
+            <Text style={styles.doubtUserName}>{item.author} {item.verified ? <Text style={styles.inlineTeacherBadge}>Tutor</Text> : null}</Text>
+            <Text style={styles.doubtTime}>{item.time}</Text>
+          </View>
+        </View>
+        <DoubtStatus status={item.status} />
+      </View>
+      <View style={styles.doubtCardBody}>
+        <View style={styles.flex}>
+          <Text style={styles.doubtCardTitle}>{item.title}</Text>
+          <Text style={styles.doubtCardText}>{item.body}</Text>
+        </View>
+        {item.attachment ? <View style={styles.doubtAttachment}><Text style={styles.doubtAttachmentText}>IMG</Text></View> : null}
+      </View>
+      <View style={styles.doubtCardFooter}>
+        <Text style={[styles.doubtInteraction, item.pinned && { color: theme.text }]}>↑ {item.votes}</Text>
+        <Text style={styles.doubtInteraction}>{item.replies} {item.replies === 1 ? "Solution" : "Replies"}</Text>
+      </View>
+    </Pressable>
   );
 }
 
@@ -2390,7 +2629,7 @@ function BottomNav({ role, screen, setScreen }: { role: Role; screen: AppScreen;
     ["home", "Home", "⌂"],
     ["sessions", "My Miles", "▥"],
     ["roleHub", hubLabel, "▣"],
-    ["chat", "Chat", "▤"],
+    ["chat", "Doubts", "▤"],
     ["account", "Account", "⌾"]
   ];
   return (
@@ -2717,6 +2956,71 @@ const styles = StyleSheet.create({
   todayMeta: { color: "#536A86", fontSize: 14, fontWeight: "600", lineHeight: 18 },
   todayBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   todayBadgeText: { fontSize: 11, fontWeight: "900" },
+  doubtScreen: { gap: 14 },
+  doubtHeader: { alignItems: "center", backgroundColor: "#2C1645", borderRadius: 24, flexDirection: "row", gap: 12, marginHorizontal: -4, marginTop: -14, paddingHorizontal: 16, paddingVertical: 16 },
+  doubtBackButton: { alignItems: "center", height: 34, justifyContent: "center", width: 34 },
+  doubtBackText: { color: "#FFFFFF", fontSize: 28, fontWeight: "800", lineHeight: 30 },
+  doubtHeaderTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900", lineHeight: 22 },
+  doubtHeaderSubtitle: { color: "#F1D5F2", fontSize: 12, fontWeight: "700", lineHeight: 17, marginTop: 2, opacity: 0.85 },
+  doubtSearchBox: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "rgba(221,231,239,0.9)", borderRadius: 20, borderWidth: 1, gap: 10, padding: 12 },
+  doubtSearchBar: { alignItems: "center", backgroundColor: "#F5EEF6", borderRadius: 14, flexDirection: "row", gap: 9, minHeight: 44, paddingHorizontal: 12 },
+  doubtSearchIcon: { color: "#6B5B7B", fontSize: 17, fontWeight: "900" },
+  doubtSearchInput: { color: "#1E1030", flex: 1, fontSize: 14, fontWeight: "700", minHeight: 42, padding: 0 },
+  doubtFilterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  doubtChip: { backgroundColor: "#F5EEF6", borderRadius: 999, minHeight: 32, paddingHorizontal: 14, justifyContent: "center" },
+  doubtChipText: { color: "#6B5B7B", fontSize: 12, fontWeight: "900" },
+  doubtChipTextActive: { color: "#FFFFFF" },
+  doubtFeed: { gap: 14 },
+  doubtSectionLabel: { color: "#6B5B7B", fontSize: 11, fontWeight: "900", letterSpacing: 0.8, marginTop: 4 },
+  doubtCard: { backgroundColor: "#FFFFFF", borderColor: "rgba(221,231,239,0.95)", borderLeftColor: "transparent", borderLeftWidth: 4, borderRadius: 18, borderWidth: 1, gap: 10, padding: 15, shadowColor: "#5A3284", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.06, shadowRadius: 14 },
+  doubtCardPinned: { backgroundColor: "#F2FAFA" },
+  doubtCardHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", gap: 10 },
+  doubtUserRow: { alignItems: "center", flexDirection: "row", gap: 8, flex: 1 },
+  doubtAvatar: { alignItems: "center", backgroundColor: "#5A3284", borderRadius: 999, height: 30, justifyContent: "center", width: 30 },
+  doubtAvatarMuted: { backgroundColor: "#6B5B7B" },
+  doubtAvatarText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
+  doubtUserName: { color: "#1E1030", fontSize: 13, fontWeight: "900", lineHeight: 17 },
+  inlineTeacherBadge: { color: "#FFFFFF", backgroundColor: "#5A3284", fontSize: 9, fontWeight: "900" },
+  doubtTime: { color: "#6B5B7B", fontSize: 11, fontWeight: "700", lineHeight: 15 },
+  doubtStatus: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  doubtSolved: { backgroundColor: "#E8F8EE" },
+  doubtOpen: { backgroundColor: "#FFF3E0" },
+  doubtStatusText: { fontSize: 11, fontWeight: "900" },
+  doubtSolvedText: { color: "#27AE60" },
+  doubtOpenText: { color: "#E65100" },
+  doubtCardBody: { flexDirection: "row", gap: 12 },
+  doubtCardTitle: { color: "#1E1030", fontSize: 14, fontWeight: "900", lineHeight: 19 },
+  doubtCardText: { color: "#1E1030", fontSize: 14, fontWeight: "600", lineHeight: 20, marginTop: 3 },
+  doubtAttachment: { alignItems: "center", backgroundColor: "#EFE7F4", borderRadius: 10, height: 52, justifyContent: "center", width: 52 },
+  doubtAttachmentText: { color: "#5A3284", fontSize: 10, fontWeight: "900" },
+  doubtCardFooter: { borderTopColor: "#F5EEF6", borderTopWidth: 1, flexDirection: "row", gap: 18, paddingTop: 10 },
+  doubtInteraction: { color: "#6B5B7B", fontSize: 12, fontWeight: "900" },
+  askFab: { alignItems: "center", alignSelf: "flex-end", borderRadius: 999, minHeight: 48, justifyContent: "center", paddingHorizontal: 18, shadowColor: "#5A3284", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 18 },
+  askFabText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
+  doubtDetailCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 14, padding: 16 },
+  doubtDetailTitle: { color: "#1E1030", fontSize: 19, fontWeight: "900", lineHeight: 24 },
+  doubtDetailBody: { color: "#1E1030", fontSize: 15, fontWeight: "600", lineHeight: 23 },
+  teacherSolutionBox: { backgroundColor: "#F9F3FC", borderColor: "#5A3284", borderRadius: 18, borderWidth: 1.5, gap: 10, padding: 15 },
+  teacherBadge: { alignSelf: "flex-start", backgroundColor: "#5A3284", borderRadius: 6, color: "#FFFFFF", fontSize: 10, fontWeight: "900", overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4 },
+  teacherSolutionText: { color: "#1E1030", fontSize: 14, fontWeight: "600", lineHeight: 21 },
+  formulaBox: { backgroundColor: "#FFFFFF", borderColor: "#E1D2EC", borderRadius: 10, borderWidth: 1, color: "#5A3284", fontSize: 15, fontWeight: "900", padding: 12, textAlign: "center" },
+  communityAnswerCard: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 16, borderWidth: 1, gap: 8, padding: 13 },
+  peerTutorLabel: { color: "#148087", fontSize: 12, fontWeight: "900" },
+  noAnswerCard: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 16, borderWidth: 1, gap: 4, padding: 24 },
+  noAnswerTitle: { color: "#1E1030", fontSize: 15, fontWeight: "900" },
+  replyBar: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, flexDirection: "row", gap: 10, padding: 10 },
+  replyAttach: { fontSize: 20, fontWeight: "900" },
+  replyInput: { backgroundColor: "#F5EEF6", borderRadius: 999, color: "#1E1030", flex: 1, fontSize: 14, fontWeight: "700", minHeight: 40, paddingHorizontal: 14 },
+  replySend: { alignItems: "center", borderRadius: 999, height: 38, justifyContent: "center", width: 38 },
+  replySendText: { color: "#FFFFFF", fontSize: 24, fontWeight: "900", lineHeight: 26 },
+  askDoubtCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 13, padding: 16 },
+  askDoubtInput: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, color: "#1E1030", fontSize: 14, fontWeight: "700", minHeight: 128, padding: 12, textAlignVertical: "top" },
+  attachmentUploader: { alignItems: "center", backgroundColor: "rgba(90,50,132,0.03)", borderColor: "#5A3284", borderRadius: 16, borderStyle: "dashed", borderWidth: 1.5, gap: 8, minHeight: 104, justifyContent: "center" },
+  attachmentIcon: { color: "#5A3284", fontSize: 28, fontWeight: "900" },
+  attachmentText: { fontSize: 13, fontWeight: "900" },
+  anonymousToggle: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", justifyContent: "space-between", padding: 13 },
+  anonymousTitle: { color: "#1E1030", fontSize: 14, fontWeight: "900" },
+  anonymousCopy: { color: "#6B5B7B", fontSize: 11, fontWeight: "700", marginTop: 2 },
   milesSummaryCard: { backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 22, borderWidth: 1, gap: 6, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.07, shadowRadius: 18 },
   milestoneDetailTitle: { color: "#111827", fontSize: 29, fontWeight: "900", lineHeight: 35, marginTop: 8 },
   milestoneDetailCopy: { color: "#111827", fontSize: 18, fontWeight: "500", lineHeight: 28, marginTop: 8 },
