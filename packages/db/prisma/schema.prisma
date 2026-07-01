@@ -46,6 +46,18 @@ enum EnrollmentStatus {
   completed
 }
 
+enum CommunityThreadStatus {
+  open
+  solved
+  archived
+}
+
+enum CommunityReactionType {
+  upvote
+  helpful
+  like
+}
+
 model User {
   id          String    @id @default(cuid())
   phone       String    @unique
@@ -56,6 +68,9 @@ model User {
   userManagementRecords UserManagement[]
   reminders   Reminder[]
   authSessions AuthSession[]
+  communityThreads CommunityThread[] @relation("CommunityThreadOwner")
+  communityComments CommunityComment[] @relation("CommunityCommentOwner")
+  communityReactions CommunityReaction[] @relation("CommunityReactionUser")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 }
@@ -112,10 +127,74 @@ model Profile {
   tutorProfile       TutorProfile?
   studentBatchRequests BatchRequest[] @relation("StudentBatchRequests")
   studentBatchEnrollments BatchEnrollment[] @relation("StudentBatchEnrollments")
+  communityThreads CommunityThread[] @relation("CommunityThreadProfile")
+  communityComments CommunityComment[] @relation("CommunityCommentProfile")
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
   @@index([userId, role])
+}
+
+model CommunityThread {
+  id             String                @id @default(cuid())
+  ownerUserId    String
+  ownerProfileId String?
+  role           Role
+  title          String
+  body           String
+  subject        String?
+  milestoneTitle String?
+  status         CommunityThreadStatus @default(open)
+  pinned         Boolean               @default(false)
+  anonymous      Boolean               @default(false)
+  attachmentUrl  String?
+  sourceTag      String                @default("app")
+  ownerUser      User                  @relation("CommunityThreadOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  ownerProfile   Profile?              @relation("CommunityThreadProfile", fields: [ownerProfileId], references: [id], onDelete: SetNull)
+  comments       CommunityComment[]
+  reactions      CommunityReaction[]
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@index([role, status, pinned, createdAt])
+  @@index([ownerUserId, createdAt])
+}
+
+model CommunityComment {
+  id             String            @id @default(cuid())
+  threadId       String
+  ownerUserId    String
+  ownerProfileId String?
+  body           String
+  verified       Boolean           @default(false)
+  anonymous      Boolean           @default(false)
+  sourceTag      String            @default("app")
+  thread         CommunityThread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  ownerUser      User              @relation("CommunityCommentOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  ownerProfile   Profile?          @relation("CommunityCommentProfile", fields: [ownerProfileId], references: [id], onDelete: SetNull)
+  reactions      CommunityReaction[]
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([threadId, createdAt])
+  @@index([ownerUserId, createdAt])
+}
+
+model CommunityReaction {
+  id        String                @id @default(cuid())
+  userId    String
+  threadId  String?
+  commentId String?
+  type      CommunityReactionType
+  sourceTag String                @default("app")
+  user      User                  @relation("CommunityReactionUser", fields: [userId], references: [id], onDelete: Cascade)
+  thread    CommunityThread?      @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  comment   CommunityComment?     @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdAt DateTime              @default(now())
+
+  @@index([threadId, type])
+  @@index([commentId, type])
+  @@index([userId, type])
 }
 
 model UserManagement {

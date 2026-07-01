@@ -6,7 +6,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { featureFlags, isFeatureEnabled, paletteConfig, roleThemes } from "@mytution/config";
 import { prisma } from "@mytution/db";
-import type { ProgramSummary, ResourceType, Role } from "@mytution/shared";
+import type { CommunityReactionType, ProgramSummary, ResourceType, Role } from "@mytution/shared";
 
 const app = express();
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
@@ -227,6 +227,9 @@ app.delete("/api/v1/admin/users/by-phone", async (req, res) => {
 
   const profileIds = user.profiles.map((profile) => profile.id);
   const result = await prisma.$transaction(async (tx) => {
+    const communityReactions = await tx.communityReaction.deleteMany({ where: { userId: user.id } });
+    const communityComments = await tx.communityComment.deleteMany({ where: { ownerUserId: user.id } });
+    const communityThreads = await tx.communityThread.deleteMany({ where: { ownerUserId: user.id } });
     const resourceProgress = await tx.resourceProgress.deleteMany({ where: { profileId: { in: profileIds } } });
     const studentProgramSelections = await tx.studentProgramSelection.deleteMany({ where: { profileId: { in: profileIds } } });
     const programProgress = await tx.programProgress.deleteMany({ where: { profileId: { in: profileIds } } });
@@ -242,6 +245,9 @@ app.delete("/api/v1/admin/users/by-phone", async (req, res) => {
         authSessions: authSessions.count,
         reminders: reminders.count,
         userManagement: userManagement.count,
+        communityReactions: communityReactions.count,
+        communityComments: communityComments.count,
+        communityThreads: communityThreads.count,
         resourceProgress: resourceProgress.count,
         studentProgramSelections: studentProgramSelections.count,
         programProgress: programProgress.count,
@@ -269,6 +275,167 @@ app.get("/api/v1/bootstrap", async (req, res) => {
 
 app.get("/api/v1/theme/palette", (_req, res) => {
   res.json({ data: { paletteConfig, roleThemes } });
+});
+
+app.get("/api/v1/community/threads", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await readUserId(req);
+  const status = stringOrNull(req.query.status);
+  const search = stringOrNull(req.query.search)?.toLowerCase();
+  const where: Record<string, unknown> = {
+    role,
+    ...(status && status !== "all" ? { status } : {}),
+    ...(search ? {
+      OR: [
+        { title: { contains: search, mode: "insensitive" } },
+        { body: { contains: search, mode: "insensitive" } },
+        { subject: { contains: search, mode: "insensitive" } },
+        { milestoneTitle: { contains: search, mode: "insensitive" } }
+      ]
+    } : {})
+  };
+  const threads = await prisma.communityThread.findMany({
+    where,
+    orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
+    take: Math.min(Number(req.query.limit) || 50, 100),
+    include: communityThreadInclude(userId)
+  });
+  res.json({ data: threads.map((thread) => toCommunityThread(thread, userId)) });
+});
+
+app.post("/api/v1/community/threads", async (req, res) => {
+  const role = readRole(req.body.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const profile = await findProfile(role, userId);
+  const title = String(req.body.title ?? "").trim();
+  const body = String(req.body.body ?? "").trim();
+  if (!title || !body) {
+    res.status(400).json({ error: "Title and body are required" });
+    return;
+  }
+  const thread = await prisma.communityThread.create({
+    data: {
+      ownerUserId: userId,
+      ownerProfileId: profile?.id,
+      role,
+      title,
+      body,
+      subject: stringOrNull(req.body.subject),
+      milestoneTitle: stringOrNull(req.body.milestoneTitle),
+      anonymous: Boolean(req.body.anonymous),
+      attachmentUrl: stringOrNull(req.body.attachmentUrl),
+      sourceTag: "app"
+    },
+    include: communityThreadInclude(userId)
+  });
+  res.status(201).json({ data: toCommunityThread(thread, userId) });
+});
+
+app.get("/api/v1/community/threads/:id", async (req, res) => {
+  const userId = await readUserId(req);
+  const thread = await prisma.communityThread.findUnique({
+    where: { id: req.params.id },
+    include: communityThreadDetailInclude(userId)
+  });
+  if (!thread) {
+    res.status(404).json({ error: "Thread not found" });
+    return;
+  }
+  res.json({ data: toCommunityThread(thread, userId, true) });
+});
+
+app.patch("/api/v1/community/threads/:id", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const current = await prisma.communityThread.findUnique({ where: { id: req.params.id } });
+  if (!current) {
+    res.status(404).json({ error: "Thread not found" });
+    return;
+  }
+  if (current.ownerUserId !== userId) {
+    res.status(403).json({ error: "Only the thread owner can update this thread" });
+    return;
+  }
+  const status = stringOrNull(req.body.status);
+  const thread = await prisma.communityThread.update({
+    where: { id: req.params.id },
+    data: {
+      ...(status === "open" || status === "solved" || status === "archived" ? { status } : {}),
+      title: stringOrNull(req.body.title) ?? current.title,
+      body: stringOrNull(req.body.body) ?? current.body
+    },
+    include: communityThreadInclude(userId)
+  });
+  res.json({ data: toCommunityThread(thread, userId) });
+});
+
+app.post("/api/v1/community/threads/:id/comments", async (req, res) => {
+  const role = readRole(req.body.role ?? req.query.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const thread = await prisma.communityThread.findUnique({ where: { id: req.params.id } });
+  if (!thread) {
+    res.status(404).json({ error: "Thread not found" });
+    return;
+  }
+  const body = String(req.body.body ?? "").trim();
+  if (!body) {
+    res.status(400).json({ error: "Comment body is required" });
+    return;
+  }
+  const profile = await findProfile(role, userId);
+  const comment = await prisma.communityComment.create({
+    data: {
+      threadId: req.params.id,
+      ownerUserId: userId,
+      ownerProfileId: profile?.id,
+      body,
+      anonymous: Boolean(req.body.anonymous),
+      verified: profile?.role === "tutor",
+      sourceTag: "app"
+    },
+    include: communityCommentInclude(userId)
+  });
+  res.status(201).json({ data: toCommunityComment(comment, userId) });
+});
+
+app.put("/api/v1/community/reactions", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const type = readCommunityReactionType(req.body.type);
+  const threadId = stringOrNull(req.body.threadId);
+  const commentId = stringOrNull(req.body.commentId);
+  if ((!threadId && !commentId) || (threadId && commentId)) {
+    res.status(400).json({ error: "Provide exactly one reaction target" });
+    return;
+  }
+  if (threadId) {
+    const thread = await prisma.communityThread.findUnique({ where: { id: threadId } });
+    if (!thread) {
+      res.status(404).json({ error: "Thread not found" });
+      return;
+    }
+  }
+  if (commentId) {
+    const comment = await prisma.communityComment.findUnique({ where: { id: commentId } });
+    if (!comment) {
+      res.status(404).json({ error: "Comment not found" });
+      return;
+    }
+  }
+  const existing = await prisma.communityReaction.findFirst({
+    where: { userId, type, ...(threadId ? { threadId } : { commentId }) }
+  });
+  if (existing) {
+    await prisma.communityReaction.delete({ where: { id: existing.id } });
+    res.json({ data: { active: false, type, threadId, commentId } });
+    return;
+  }
+  await prisma.communityReaction.create({
+    data: { userId, type, threadId, commentId, sourceTag: "app" }
+  });
+  res.status(201).json({ data: { active: true, type, threadId, commentId } });
 });
 
 app.get("/api/v1/usermanagement/profile", async (req, res) => {
@@ -867,6 +1034,15 @@ async function readUserId(req: express.Request) {
   return session.userId;
 }
 
+async function requireUserId(req: express.Request, res: express.Response) {
+  const userId = await readUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+  return userId;
+}
+
 async function findProfile(role: Role, userId?: string | null) {
   return prisma.profile.findFirst({
     where: { role, ...(userId ? { userId } : {}) },
@@ -896,6 +1072,107 @@ function textContains(value: unknown) {
 
 function splitCsv(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function readCommunityReactionType(value: unknown): CommunityReactionType {
+  const type = String(value ?? "upvote");
+  if (type === "helpful" || type === "like") return type;
+  return "upvote";
+}
+
+function communityThreadInclude(userId?: string | null) {
+  return {
+    ownerProfile: true,
+    ownerUser: { include: { profiles: { take: 1, orderBy: { createdAt: "asc" as const } } } },
+    comments: { select: { id: true } },
+    reactions: true
+  };
+}
+
+function communityThreadDetailInclude(userId?: string | null) {
+  return {
+    ...communityThreadInclude(userId),
+    comments: {
+      orderBy: { createdAt: "asc" as const },
+      include: communityCommentInclude(userId)
+    }
+  };
+}
+
+function communityCommentInclude(_userId?: string | null) {
+  return {
+    ownerProfile: true,
+    ownerUser: { include: { profiles: { take: 1, orderBy: { createdAt: "asc" as const } } } },
+    reactions: true
+  };
+}
+
+function reactionCounts(reactions: Array<{ type: CommunityReactionType | string }>) {
+  return reactions.reduce((counts, reaction) => {
+    if (reaction.type === "helpful") counts.helpful += 1;
+    else if (reaction.type === "like") counts.like += 1;
+    else counts.upvote += 1;
+    return counts;
+  }, { upvote: 0, helpful: 0, like: 0 });
+}
+
+function myReactions(reactions: Array<{ type: CommunityReactionType | string; userId: string }>, userId?: string | null): CommunityReactionType[] {
+  if (!userId) return [];
+  return reactions
+    .filter((reaction) => reaction.userId === userId)
+    .map((reaction) => readCommunityReactionType(reaction.type));
+}
+
+function communityAuthor(item: any, anonymous: boolean) {
+  const profile = item.ownerProfile ?? item.ownerUser?.profiles?.[0] ?? null;
+  const name = profile ? profile.firstName + " " + profile.lastName : "myTution user";
+  const initials = profile ? (profile.firstName.charAt(0) + profile.lastName.charAt(0)).toUpperCase() : "MT";
+  return {
+    userId: item.ownerUserId,
+    profileId: profile?.id ?? null,
+    name: anonymous ? "Anonymous Peer" : name,
+    initials: anonymous ? "AP" : initials,
+    role: profile?.role ?? "student",
+    anonymous
+  };
+}
+
+function toCommunityThread(thread: any, userId?: string | null, includeComments = false) {
+  const comments = includeComments && Array.isArray(thread.comments)
+    ? thread.comments.map((comment: any) => toCommunityComment(comment, userId))
+    : undefined;
+  return {
+    id: thread.id,
+    author: communityAuthor(thread, thread.anonymous),
+    role: thread.role,
+    title: thread.title,
+    body: thread.body,
+    subject: thread.subject,
+    milestoneTitle: thread.milestoneTitle,
+    status: thread.status,
+    pinned: thread.pinned,
+    anonymous: thread.anonymous,
+    attachmentUrl: thread.attachmentUrl,
+    commentCount: includeComments ? comments?.length ?? 0 : thread.comments?.length ?? 0,
+    reactionCounts: reactionCounts(thread.reactions ?? []),
+    myReactions: myReactions(thread.reactions ?? [], userId),
+    createdAt: thread.createdAt.toISOString(),
+    ...(comments ? { comments } : {})
+  };
+}
+
+function toCommunityComment(comment: any, userId?: string | null) {
+  return {
+    id: comment.id,
+    threadId: comment.threadId,
+    author: communityAuthor(comment, comment.anonymous),
+    body: comment.body,
+    verified: comment.verified,
+    anonymous: comment.anonymous,
+    reactionCounts: reactionCounts(comment.reactions ?? []),
+    myReactions: myReactions(comment.reactions ?? [], userId),
+    createdAt: comment.createdAt.toISOString()
+  };
 }
 
 function toUserListItem(profile: any) {

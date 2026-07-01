@@ -8,6 +8,9 @@ const sourceTag = "mock";
 async function main() {
   await prisma.authSession.deleteMany();
   await prisma.mobileClient.deleteMany();
+  await prisma.communityReaction.deleteMany();
+  await prisma.communityComment.deleteMany();
+  await prisma.communityThread.deleteMany();
   await prisma.activityProgress.deleteMany();
   await prisma.milestoneActivity.deleteMany();
   await prisma.reminder.deleteMany();
@@ -98,6 +101,77 @@ async function main() {
       sourceTag
     }))
   });
+
+  const communityStudentProfile = user.profiles.find((profile) => profile.role === Role.student);
+  const communityTutorProfile = user.profiles.find((profile) => profile.role === Role.tutor);
+  if (communityStudentProfile && communityTutorProfile) {
+    const pinnedThread = await prisma.communityThread.create({
+      data: {
+        ownerUserId: user.id,
+        ownerProfileId: communityTutorProfile.id,
+        role: Role.student,
+        title: "[5-Mark Blueprint] Gauss's Law derivation",
+        body: "How to derive electric field intensity due to an infinitely long straight uniformly charged wire using Gauss's Law?",
+        subject: "Physics",
+        milestoneTitle: "Milestone 3: Gauss's Law",
+        status: "solved",
+        pinned: true,
+        sourceTag,
+        comments: {
+          create: {
+            ownerUserId: user.id,
+            ownerProfileId: communityTutorProfile.id,
+            body: "Use a cylindrical Gaussian surface because it matches the symmetry of a line charge. The field is constant on the curved surface and perpendicular to the end caps, so only the curved area contributes.",
+            verified: true,
+            sourceTag
+          }
+        }
+      }
+    });
+    const peerThread = await prisma.communityThread.create({
+      data: {
+        ownerUserId: user.id,
+        ownerProfileId: communityStudentProfile.id,
+        role: Role.student,
+        title: "Choosing a Gaussian surface",
+        body: "Stuck on Quiz Question 4. Why do we assume the Gaussian surface to be cylindrical for a linear line charge? Why not a spherical one?",
+        subject: "Physics",
+        milestoneTitle: "Milestone 3: Gauss's Law",
+        status: "solved",
+        sourceTag,
+        comments: {
+          create: {
+            ownerUserId: user.id,
+            ownerProfileId: communityTutorProfile.id,
+            body: "A cylinder keeps every point on the curved face at the same distance from the line charge. A sphere would not preserve that symmetry for a long straight wire.",
+            verified: true,
+            sourceTag
+          }
+        }
+      }
+    });
+    await prisma.communityThread.create({
+      data: {
+        ownerUserId: user.id,
+        ownerProfileId: communityStudentProfile.id,
+        role: Role.student,
+        title: "Flux angle confusion",
+        body: "In the formula Phi = integral E dot dA, is the angle always evaluated between the field vector and surface normal vector?",
+        subject: "Physics",
+        milestoneTitle: "Milestone 3: Gauss's Law",
+        status: "open",
+        anonymous: true,
+        sourceTag
+      }
+    });
+    await prisma.communityReaction.createMany({
+      data: [
+        { userId: user.id, threadId: pinnedThread.id, type: "upvote", sourceTag },
+        { userId: user.id, threadId: pinnedThread.id, type: "helpful", sourceTag },
+        { userId: user.id, threadId: peerThread.id, type: "upvote", sourceTag }
+      ]
+    });
+  }
 
 
   const tutorFixtures = [

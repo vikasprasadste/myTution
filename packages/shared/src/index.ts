@@ -183,3 +183,52 @@ export interface BatchRequestSummary {
   tutor: { id: string; name: string; headline: string; rating: number };
   batch: BatchClass;
 }
+
+export type CommunityThreadStatus = "open" | "solved" | "archived";
+export type CommunityReactionType = "upvote" | "helpful" | "like";
+
+export interface CommunityAuthor {
+  userId: string;
+  profileId: string | null;
+  name: string;
+  initials: string;
+  role: Role;
+  anonymous: boolean;
+}
+
+export interface CommunityReactionCounts {
+  upvote: number;
+  helpful: number;
+  like: number;
+}
+
+export interface CommunityComment {
+  id: string;
+  threadId: string;
+  author: CommunityAuthor;
+  body: string;
+  verified: boolean;
+  anonymous: boolean;
+  reactionCounts: CommunityReactionCounts;
+  myReactions: CommunityReactionType[];
+  createdAt: string;
+}
+
+export interface CommunityThread {
+  id: string;
+  author: CommunityAuthor;
+  role: Role;
+  title: string;
+  body: string;
+  subject: string | null;
+  milestoneTitle: string | null;
+  status: CommunityThreadStatus;
+  pinned: boolean;
+  anonymous: boolean;
+  attachmentUrl: string | null;
+  commentCount: number;
+  reactionCounts: CommunityReactionCounts;
+  myReactions: CommunityReactionType[];
+  createdAt: string;
+  comments?: CommunityComment[];
+}

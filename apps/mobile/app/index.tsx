@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role, TutorSearchResult, UserListItem, UserProfileDetails } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role, TutorSearchResult, UserListItem, UserProfileDetails } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
@@ -963,7 +963,7 @@ export default function Index() {
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} />;
-    if (screen === "chat") return <Chat role={role} back={() => setScreen("home")} />;
+    if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} />;
@@ -2324,6 +2324,7 @@ type DoubtItem = {
   anonymous?: boolean;
   attachment?: boolean;
   verified?: boolean;
+  comments?: CommunityComment[];
 };
 
 const doubtItems: DoubtItem[] = [
@@ -2366,21 +2367,124 @@ const doubtItems: DoubtItem[] = [
   }
 ];
 
-function Chat({ role, back }: { role: Role; back: () => void }) {
+function communityThreadToDoubt(thread: CommunityThread): DoubtItem {
+  return {
+    id: thread.id,
+    author: thread.author.name,
+    initials: thread.author.initials,
+    time: relativeTime(thread.createdAt),
+    title: thread.title,
+    body: thread.body,
+    status: thread.status === "solved" ? "solved" : "open",
+    votes: thread.reactionCounts.upvote + thread.reactionCounts.helpful + thread.reactionCounts.like,
+    replies: thread.commentCount,
+    pinned: thread.pinned,
+    anonymous: thread.anonymous,
+    attachment: !!thread.attachmentUrl,
+    verified: thread.comments?.some((comment) => comment.verified),
+    comments: thread.comments
+  };
+}
+
+function relativeTime(value: string) {
+  const date = new Date(value);
+  const diffMs = Date.now() - date.getTime();
+  const minutes = Math.max(0, Math.round(diffMs / 60000));
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} mins ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hours ago`;
+  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+}
+
+function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; back: () => void }) {
   const theme = useRoleTheme(role);
   const [filter, setFilter] = useState<"all" | "open" | "solved">("all");
   const [search, setSearch] = useState("");
   const [selectedDoubt, setSelectedDoubt] = useState<DoubtItem | null>(null);
   const [asking, setAsking] = useState(false);
   const [newDoubt, setNewDoubt] = useState("");
+  const [replyText, setReplyText] = useState("");
   const [anonymous, setAnonymous] = useState(false);
-  const filteredDoubts = doubtItems.filter((item) => {
+  const [apiDoubts, setApiDoubts] = useState<DoubtItem[] | null>(null);
+  const [doubtLoading, setDoubtLoading] = useState(false);
+  const [doubtNotice, setDoubtNotice] = useState("");
+  const allDoubts = apiDoubts ?? doubtItems;
+  const filteredDoubts = allDoubts.filter((item) => {
     const statusMatch = filter === "all" || item.status === filter;
     const text = `${item.title} ${item.body} ${item.author}`.toLowerCase();
     return statusMatch && text.includes(search.trim().toLowerCase());
   });
   const pinned = filteredDoubts.filter((item) => item.pinned);
   const peerDoubts = filteredDoubts.filter((item) => !item.pinned);
+
+  async function refreshDoubts() {
+    setDoubtLoading(true);
+    try {
+      const response = await apiGet<{ data: CommunityThread[] }>(`/api/v1/community/threads?role=${role}`, accessToken);
+      setApiDoubts(response.data.map(communityThreadToDoubt));
+      setDoubtNotice("");
+    } catch {
+      setDoubtNotice("Using local doubts until community API is available.");
+      setApiDoubts(null);
+    } finally {
+      setDoubtLoading(false);
+    }
+  }
+
+  async function openDoubt(item: DoubtItem) {
+    setSelectedDoubt(item);
+    try {
+      const response = await apiGet<{ data: CommunityThread }>(`/api/v1/community/threads/${item.id}`, accessToken);
+      setSelectedDoubt(communityThreadToDoubt(response.data));
+      setDoubtNotice("");
+    } catch {
+      setDoubtNotice(apiDoubts ? "Thread details could not be refreshed." : "");
+    }
+  }
+
+  async function submitDoubt() {
+    const body = newDoubt.trim();
+    if (!body) return;
+    const title = body.length > 64 ? `${body.slice(0, 61)}...` : body;
+    try {
+      const response = await apiPost<{ data: CommunityThread }>("/api/v1/community/threads", {
+        role,
+        title,
+        body,
+        subject: "Physics",
+        milestoneTitle: "Milestone 3: Gauss's Law",
+        anonymous
+      }, accessToken);
+      const next = communityThreadToDoubt(response.data);
+      setApiDoubts((items) => [next, ...(items ?? doubtItems)]);
+      setNewDoubt("");
+      setAnonymous(false);
+      setAsking(false);
+      setDoubtNotice("");
+    } catch {
+      setDoubtNotice("Please sign in again to post a doubt.");
+    }
+  }
+
+  async function submitReply() {
+    if (!selectedDoubt || !replyText.trim()) return;
+    try {
+      await apiPost<{ data: CommunityComment }>(`/api/v1/community/threads/${selectedDoubt.id}/comments`, {
+        role,
+        body: replyText.trim()
+      }, accessToken);
+      setReplyText("");
+      await openDoubt(selectedDoubt);
+      await refreshDoubts();
+    } catch {
+      setDoubtNotice("Reply could not be posted. Please check login/API.");
+    }
+  }
+
+  useEffect(() => {
+    refreshDoubts();
+  }, [role, accessToken]);
 
   if (asking) {
     return (
@@ -2412,7 +2516,8 @@ function Chat({ role, back }: { role: Role; back: () => void }) {
               <Text style={styles.consentCheckText}>{anonymous ? "✓" : ""}</Text>
             </View>
           </Pressable>
-          <Button role={role} label="Submit to board forum" disabled={!newDoubt.trim()} onPress={() => { setNewDoubt(""); setAnonymous(false); setAsking(false); }} />
+          {doubtNotice ? <Text style={styles.apiNotice}>{doubtNotice}</Text> : null}
+          <Button role={role} label="Submit to board forum" disabled={!newDoubt.trim()} onPress={submitDoubt} />
         </View>
       </View>
     );
@@ -2445,13 +2550,13 @@ function Chat({ role, back }: { role: Role; back: () => void }) {
               </Text>
               <Text style={styles.formulaBox}>E = lambda / (2 pi epsilon0 r)</Text>
             </View>
-          ) : selectedDoubt.replies > 0 ? (
-            <View style={styles.communityAnswerCard}>
-              <Text style={styles.peerTutorLabel}>Peer Tutor</Text>
-              <Text style={styles.teacherSolutionText}>
-                A cylinder keeps every point on the curved face at the same distance from the line charge. A sphere would not preserve that symmetry for a long straight wire.
-              </Text>
-            </View>
+          ) : selectedDoubt.comments?.length ? (
+            selectedDoubt.comments.map((comment) => (
+              <View key={comment.id} style={styles.communityAnswerCard}>
+                <Text style={styles.peerTutorLabel}>{comment.verified ? "Tutor verified" : comment.author.name}</Text>
+                <Text style={styles.teacherSolutionText}>{comment.body}</Text>
+              </View>
+            ))
           ) : (
             <View style={styles.noAnswerCard}>
               <Text style={styles.noAnswerTitle}>No answers yet</Text>
@@ -2461,8 +2566,8 @@ function Chat({ role, back }: { role: Role; back: () => void }) {
         </View>
         <View style={styles.replyBar}>
           <Text style={[styles.replyAttach, { color: theme.text }]}>▧</Text>
-          <TextInput placeholder="Type your helpful reply..." placeholderTextColor="#8D7BA0" style={styles.replyInput} />
-          <Pressable style={({ pressed }) => [styles.replySend, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={() => setSelectedDoubt(null)}>
+          <TextInput value={replyText} onChangeText={setReplyText} placeholder="Type your helpful reply..." placeholderTextColor="#8D7BA0" style={styles.replyInput} />
+          <Pressable style={({ pressed }) => [styles.replySend, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={submitReply}>
             <Text style={styles.replySendText}>›</Text>
           </Pressable>
         </View>
@@ -2495,12 +2600,14 @@ function Chat({ role, back }: { role: Role; back: () => void }) {
             </Pressable>
           ))}
         </View>
+        {doubtNotice ? <Text style={styles.apiNotice}>{doubtNotice}</Text> : null}
+        {doubtLoading ? <ActivityIndicator color={theme.text} /> : null}
       </View>
       <View style={styles.doubtFeed}>
         {pinned.length ? <Text style={styles.doubtSectionLabel}>PINNED FAQ</Text> : null}
-        {pinned.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => setSelectedDoubt(item)} />)}
+        {pinned.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => openDoubt(item)} />)}
         <Text style={styles.doubtSectionLabel}>PEER DISCUSSIONS</Text>
-        {peerDoubts.length ? peerDoubts.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => setSelectedDoubt(item)} />) : <Muted>No matching doubts found.</Muted>}
+        {peerDoubts.length ? peerDoubts.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => openDoubt(item)} />) : <Muted>No matching doubts found.</Muted>}
       </View>
       <Pressable style={({ pressed }) => [styles.askFab, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={() => setAsking(true)}>
         <Text style={styles.askFabText}>+ Ask a Doubt</Text>
