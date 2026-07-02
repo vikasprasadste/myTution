@@ -8,7 +8,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "http://localhost:4000",
+        "EXPO_PUBLIC_API_BASE_URL": "https://mytution.onrender.com",
         "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
         "EAS_USE_NPM_CACHE": "1",
         "NPM_CONFIG_FETCH_RETRIES": "5",
@@ -24,6 +24,7 @@
       },
       "distribution": "internal",
       "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://mytution.onrender.com",
         "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
         "EAS_USE_NPM_CACHE": "1",
         "NPM_CONFIG_FETCH_RETRIES": "5",
@@ -38,6 +39,7 @@
         "simulator": true
       },
       "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://mytution.onrender.com",
         "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
         "EAS_USE_NPM_CACHE": "1",
         "NPM_CONFIG_FETCH_RETRIES": "5",
@@ -49,6 +51,7 @@
     },
     "production": {
       "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://mytution.onrender.com",
         "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
         "EAS_USE_NPM_CACHE": "1",
         "NPM_CONFIG_FETCH_RETRIES": "5",
