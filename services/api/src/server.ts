@@ -28,6 +28,19 @@ const medicalProgramCatalog = [
 
 type QuizQuestion = { id: string; prompt: string; options: string[]; answerIndex: number; learnMore: string };
 
+const motionFlashcardDeck = [
+  ["What is displacement?", "Displacement is the change in position from start to finish, measured with direction."],
+  ["How is distance different from displacement?", "Distance is total path length. Displacement depends only on initial and final position."],
+  ["What is average speed?", "Average speed equals total distance divided by total time."],
+  ["What is average velocity?", "Average velocity equals displacement divided by total time."],
+  ["What does acceleration measure?", "Acceleration measures the rate of change of velocity with time."],
+  ["What is the SI unit of acceleration?", "Metre per second squared, written as m/s²."],
+  ["What does slope on a position-time graph represent?", "The slope of a position-time graph represents velocity."],
+  ["What does slope on a velocity-time graph represent?", "The slope of a velocity-time graph represents acceleration."],
+  ["What does area under a velocity-time graph represent?", "The signed area under a velocity-time graph represents displacement."],
+  ["Can speed be negative?", "No. Speed is a scalar path-rate and is never negative."]
+];
+
 const quizQuestionBank: QuizQuestion[] = [
   {
     id: "neet-foundation-q1",
@@ -83,23 +96,73 @@ function readMediaUrl(contentJson?: unknown) {
   return typeof mediaUrl === "string" ? mediaUrl : null;
 }
 
-function assetUrlsFor(resource?: { thumbnailPath?: string | null; bannerPath?: string | null; vttPath?: string | null; metadataPath?: string | null; contentJson?: unknown } | null) {
+const defaultAssetPathsByType: Record<string, { thumbnailPath: string; bannerPath: string; vttPath?: string; metadataPath: string }> = {
+  video: {
+    thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.svg",
+    bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.svg",
+    vttPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt",
+    metadataPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md"
+  },
+  article: {
+    thumbnailPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.svg",
+    bannerPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.svg",
+    metadataPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/title-description.md"
+  },
+  flashcard: {
+    thumbnailPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.svg",
+    bannerPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.svg",
+    metadataPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/title-description.md"
+  },
+  quiz: {
+    thumbnailPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.svg",
+    bannerPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.svg",
+    metadataPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/title-description.md"
+  }
+};
+
+function assetUrlsFor(resource?: { type?: string | null; thumbnailPath?: string | null; bannerPath?: string | null; vttPath?: string | null; metadataPath?: string | null; contentJson?: unknown } | null) {
   if (!resource) {
     return { thumbnail: null, banner: null, vtt: null, metadata: null, media: null };
   }
+  const defaults = resource.type ? defaultAssetPathsByType[resource.type] : undefined;
   return {
-    thumbnail: toAssetUrl(resource.thumbnailPath),
-    banner: toAssetUrl(resource.bannerPath),
-    vtt: toAssetUrl(resource.vttPath),
-    metadata: toAssetUrl(resource.metadataPath),
+    thumbnail: toAssetUrl(resource.thumbnailPath ?? defaults?.thumbnailPath),
+    banner: toAssetUrl(resource.bannerPath ?? defaults?.bannerPath),
+    vtt: toAssetUrl(resource.vttPath ?? defaults?.vttPath),
+    metadata: toAssetUrl(resource.metadataPath ?? defaults?.metadataPath),
     media: readMediaUrl(resource.contentJson)
   };
 }
 
-function withAssetUrls<T extends { thumbnailPath?: string | null; bannerPath?: string | null; vttPath?: string | null; metadataPath?: string | null; contentJson?: unknown }>(resource: T) {
+function withAssetUrls<T extends { type?: string | null; thumbnailPath?: string | null; bannerPath?: string | null; vttPath?: string | null; metadataPath?: string | null; contentJson?: unknown }>(resource: T) {
   return {
     ...resource,
     assetUrls: assetUrlsFor(resource)
+  };
+}
+
+function hasPlaceholderFlashcards(resource: { type?: string | null; flashcards?: Array<{ question: string; answer: string }> }) {
+  if (resource.type !== "flashcard") return false;
+  if (!resource.flashcards?.length) return true;
+  return resource.flashcards.some((card) => {
+    const value = `${card.question} ${card.answer}`.toLowerCase();
+    return /question\s*\d+/.test(value) || /answer\s*\d+/.test(value) || value.includes("quadratic question");
+  });
+}
+
+function withFlashcardFallback<T extends { id: string; type?: string | null; flashcards?: Array<{ id?: string; resourceId?: string; sequence: number; question: string; answer: string; relatedArticleId?: string | null; sourceTag?: string }> }>(resource: T) {
+  if (!hasPlaceholderFlashcards(resource)) return resource;
+  return {
+    ...resource,
+    flashcards: motionFlashcardDeck.map(([question, answer], index) => ({
+      id: `${resource.id}-fallback-card-${index + 1}`,
+      resourceId: resource.id,
+      sequence: index + 1,
+      question,
+      answer,
+      relatedArticleId: null,
+      sourceTag: "mock"
+    }))
   };
 }
 
@@ -891,7 +954,7 @@ app.get("/api/v1/resources/:id", async (req, res) => {
     res.status(404).json({ error: "Resource not found" });
     return;
   }
-  res.json({ data: withAssetUrls(resource) });
+  res.json({ data: withAssetUrls(withFlashcardFallback(resource)) });
 });
 
 app.get("/api/v1/ams/assets/:id", async (req, res) => {
@@ -903,7 +966,7 @@ app.get("/api/v1/ams/assets/:id", async (req, res) => {
     res.status(404).json({ error: "Asset not found" });
     return;
   }
-  res.json({ data: withAssetUrls(resource) });
+  res.json({ data: withAssetUrls(withFlashcardFallback(resource)) });
 });
 
 app.get("/api/v1/resources/:id/quiz", async (req, res) => {
@@ -1551,6 +1614,7 @@ function fallbackPersona(role: Role) {
 
 function toRecommendation(item: {
   id: string;
+  resourceId?: string | null;
   role: string;
   type: string;
   title: string;
@@ -1561,11 +1625,12 @@ function toRecommendation(item: {
     bannerPath?: string | null;
     vttPath?: string | null;
     metadataPath?: string | null;
+    type?: string | null;
     contentJson?: unknown;
   } | null;
 }) {
   return {
-    id: item.id,
+    id: item.resourceId ?? item.id,
     role: item.role,
     type: item.type,
     title: item.title,
