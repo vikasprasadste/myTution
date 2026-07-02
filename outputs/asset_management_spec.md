@@ -13,22 +13,28 @@ Assets include:
 
 All private assets must be accessible only after authentication and authorization. The mobile app must never receive permanent storage credentials or public bucket URLs for protected content.
 
-## 2. Recommended Infra Provider
+## 2. Recommended Storage Strategy
 
-Recommended provider for MVP: Cloudflare R2.
+Recommended provider for MVP: repo-backed AMS storage.
 
 Reasons:
-- S3-compatible API, so the backend can use AWS SDK patterns.
-- Private buckets by default.
-- Supports presigned URLs for temporary GET/PUT access.
-- Simple fit with the current Render API and Neon PostgreSQL setup.
-- Can be replaced with AWS S3 later because the service boundary hides provider-specific details from the mobile app.
+- No external storage account is required for the first implementation.
+- Curated learning content can live in the monorepo, versioned with code.
+- AMS APIs, auth checks, metadata, access logs, and Education Plan integration can be tested now.
+- The mobile app still talks only to AMS, so migration to AWS S3 later does not require a mobile app rewrite.
+- Mock/demo content remains easy to review in pull requests.
 
-Alternative for enterprise scale: AWS S3 + CloudFront signed URLs/cookies.
+Production target: AWS S3 + CloudFront signed URLs/cookies.
 
 Decision:
-- Use Cloudflare R2 now.
+- Use a repo-backed `StorageProvider` now.
 - Keep the Asset Management Service provider-agnostic through an internal `StorageProvider` interface.
+- Add AWS S3 provider later behind the same interface.
+
+Important constraint:
+- Repo-backed storage must be treated as read-only at runtime.
+- It is suitable for seeded/curated MVP content, not for user uploads.
+- Tutor/user uploads, large videos, and production documents should move to S3/R2-style object storage.
 
 ## 3. Architecture
 
@@ -37,7 +43,8 @@ flowchart LR
   A["Mobile App"] --> B["myTution API"]
   B --> C["Asset Management Service"]
   C --> D["Neon PostgreSQL"]
-  C --> E["Cloudflare R2 Private Bucket"]
+  C --> E["Repo Asset Store"]
+  C -. later .-> H["AWS S3 Private Bucket"]
   C --> F["Education Plan Service"]
   C --> G["User Management Service"]
 ```
@@ -55,7 +62,7 @@ Asset access pattern:
 
 ### Binary assets
 
-Stored in R2.
+Stored in the repo for MVP curated content, then migrated to object storage later.
 
 Examples:
 - PDF
@@ -81,7 +88,54 @@ Rationale:
 - Binary content belongs in object storage.
 - Interactive learning content must be queryable, versioned, auditable, and editable without app rebuilds.
 
-## 5. Bucket Design
+## 5. Repo Asset Store Design
+
+Recommended repo path:
+
+```txt
+services/api/assets/
+```
+
+Directory convention:
+
+```txt
+services/api/assets/{env}/{assetType}/{ownerType}/{ownerId}/{assetId}/v{version}/{filename}
+```
+
+Examples:
+
+```txt
+services/api/assets/mock/video/program/neet-foundation/asset_kinematics_intro/v1/kinematics-intro.mp4
+services/api/assets/mock/document/program/neet-foundation/asset_formula_sheet/v1/formula-sheet.pdf
+services/api/assets/mock/image/program/neet-foundation/asset_kinematics_cover/v1/cover.png
+services/api/assets/mock/json/program/neet-foundation/asset_flashcards_motion/v1/content.json
+```
+
+Repo-backed content rules:
+- Store small curated assets only.
+- Store structured articles, flashcards, quizzes, surveys, questionnaires, and tasks as JSON files or DB `contentJson`.
+- Keep large videos out of Git when they become heavy; use short demo clips only in MVP.
+- Use Git LFS only if absolutely needed, but prefer S3 migration before video files become large.
+- Do not write new uploaded files into the repo at runtime.
+- All asset records still live in Neon/Postgres, with `objectKey` pointing to a repo-relative path.
+
+AMS read behavior for repo provider:
+1. Validate bearer token.
+2. Validate access against role/profile/program/milestone/batch.
+3. Resolve `objectKey` to a file inside the allowed repo asset root.
+4. Reject path traversal and unknown MIME types.
+5. Return the file through an authenticated AMS endpoint, or return structured JSON.
+6. Log the access event.
+
+For MVP, the AMS can return an authenticated API URL instead of a presigned storage URL:
+
+```txt
+GET /api/v1/assets/{assetId}/content?token=short_lived_asset_token
+```
+
+The token is issued only after normal auth checks and expires quickly.
+
+## 6. Future Bucket Design
 
 Bucket name:
 - `mytution-assets-prod`
@@ -103,21 +157,22 @@ prod/thumbnail/program/program_123/2026/07/asset_ghi/v1/cover.png
 prod/upload/user/user_123/2026/07/asset_jkl/v1/homework.pdf
 ```
 
-Bucket policy:
+Future bucket policy:
 - No public read.
 - No public write.
 - Only server-side credentials can sign URLs.
 - App upload/download must use presigned URLs issued by Asset Management Service.
 
-## 6. Service Responsibilities
+## 7. Service Responsibilities
 
 Asset Management Service owns:
 - Asset metadata.
 - Asset upload sessions.
 - Asset versions.
 - Asset lifecycle status.
-- Signed upload URL generation.
-- Signed download/read URL generation.
+- Signed upload URL generation when an object-storage provider is enabled.
+- Authenticated repo content URL generation when the repo provider is enabled.
+- Signed download/read URL generation when an object-storage provider is enabled.
 - Access-control checks.
 - Virus scan status tracking.
 - Processing status for video thumbnails/transcoding later.
@@ -131,7 +186,7 @@ It does not own:
 
 Those services may reference assets by `assetId`.
 
-## 7. Access Model
+## 8. Access Model
 
 Access is granted by explicit asset visibility and linkage.
 
@@ -149,16 +204,17 @@ Access rules:
 - Tutor can read and upload assets for batches/programs they own or are assigned to.
 - Parent can read assets tied to linked child dashboards, if allowed by content policy.
 - Admin can create, update, archive, and inspect all assets.
-- Signed URLs must be short-lived.
-- Signed URLs are bearer tokens and must never be logged in full.
+- Signed URLs or repo content tokens must be short-lived.
+- Signed URLs and repo content tokens are bearer tokens and must never be logged in full.
 
 Suggested URL TTL:
-- Upload URL: 10 minutes.
-- Download URL for documents/images: 5 minutes.
-- Video playback segment URL: 5-15 minutes.
+- Repo content token: 2-5 minutes.
+- Upload URL: 10 minutes when object storage is enabled.
+- Download URL for documents/images: 5 minutes when object storage is enabled.
+- Video playback segment URL: 5-15 minutes when object storage is enabled.
 - Admin preview URL: 2 minutes.
 
-## 8. Database Model
+## 9. Database Model
 
 ### Asset
 
@@ -166,7 +222,7 @@ Suggested URL TTL:
 |---|---|---|
 | id | uuid | Primary key |
 | assetType | enum | document, video, article, flashcard, quiz, survey, questionnaire, todo, thumbnail, upload |
-| storageType | enum | object, json, external |
+| storageType | enum | repo, object, json, external |
 | title | text | Display title |
 | description | text nullable | Display description |
 | status | enum | draft, uploading, processing, active, archived, deleted, failed |
@@ -192,7 +248,7 @@ Suggested URL TTL:
 | id | uuid | Primary key |
 | assetId | uuid | FK Asset |
 | versionNumber | int | Starts at 1 |
-| objectKey | text nullable | R2 key for binary object |
+| objectKey | text nullable | Repo-relative path now; S3 key later |
 | fileName | text nullable | Original filename |
 | fileSizeBytes | bigint nullable | |
 | checksumSha256 | text nullable | |
@@ -238,13 +294,13 @@ Connects assets to programs, milestones, modules, batches, users, or activities.
 | assetId | uuid | FK Asset |
 | assetVersionId | uuid | FK AssetVersion |
 | requestedByUserId | uuid | FK User |
-| objectKey | text | R2 object key |
+| objectKey | text | Repo-relative path now; S3 key later |
 | status | enum | created, uploaded, completed, expired, failed |
 | expiresAt | timestamptz | |
 | createdAt | timestamptz | |
 | completedAt | timestamptz nullable | |
 
-## 9. API Specification
+## 10. API Specification
 
 Base path:
 
@@ -287,6 +343,11 @@ Response:
 
 Create a private upload URL for binary assets.
 
+MVP note:
+- This endpoint should return `501 NOT_IMPLEMENTED` for repo-backed runtime uploads.
+- Curated repo assets are added through seed/import scripts.
+- Enable this endpoint when S3/R2 provider is configured.
+
 Request:
 
 ```json
@@ -317,7 +378,7 @@ Response:
 
 ### POST `/assets/upload-sessions/{uploadSessionId}/complete`
 
-Mark upload complete after client uploads to R2.
+Mark upload complete after client uploads to object storage.
 
 Request:
 
@@ -363,6 +424,8 @@ Response for article:
 
 Create a short-lived private read URL for binary content.
 
+For repo-backed MVP, this returns an AMS-hosted content URL rather than a storage-provider URL.
+
 Request:
 
 ```json
@@ -378,11 +441,23 @@ Response:
   "data": {
     "assetId": "asset_123",
     "method": "GET",
-    "readUrl": "https://signed-private-url",
+    "readUrl": "https://api.mytution.com/api/v1/assets/asset_123/content?token=short_lived_asset_token",
     "expiresAt": "2026-07-02T10:05:00Z"
   }
 }
 ```
+
+### GET `/assets/{assetId}/content`
+
+Streams repo-backed or object-backed binary content after validating the short-lived asset token.
+
+Query:
+- `token`: short-lived token issued by `/assets/{assetId}/read-url`.
+
+Response:
+- Binary stream with correct `Content-Type`.
+- `403` if token is invalid or expired.
+- `404` if asset is missing or archived.
 
 ### POST `/assets/{assetId}/links`
 
@@ -422,7 +497,7 @@ Update metadata, visibility, status, content JSON, thumbnail, or tags.
 
 Soft delete asset. Hard delete object storage only via admin cleanup job.
 
-## 10. Content JSON Formats
+## 11. Content JSON Formats
 
 ### Article
 
@@ -475,7 +550,7 @@ Soft delete asset. Hard delete object storage only via admin cleanup job.
 }
 ```
 
-## 11. Education Plan Integration
+## 12. Education Plan Integration
 
 Current education activity records should reference assets.
 
@@ -492,27 +567,67 @@ When activity is opened:
 5. User taps Mark Complete.
 6. Education Plan API marks `ActivityProgress` complete.
 
-## 12. Upload Flow
+## 13. Repo-Backed Import Flow
+
+Admin/developer curated content flow:
+1. Add binary files or JSON files under `services/api/assets/mock/...`.
+2. Add or update a seed/import manifest.
+3. Run seed/import script.
+4. Script creates `Asset`, `AssetVersion`, and `AssetLink` records.
+5. Activity records reference `assetId`.
+6. Mobile app fetches content only through AMS.
+
+Example manifest:
+
+```json
+{
+  "assets": [
+    {
+      "assetId": "asset_kinematics_intro",
+      "assetType": "video",
+      "storageType": "repo",
+      "title": "Kinematics introduction",
+      "visibility": "milestone",
+      "objectKey": "mock/video/program/neet-foundation/asset_kinematics_intro/v1/kinematics-intro.mp4",
+      "mimeType": "video/mp4",
+      "sourceTag": "mock"
+    },
+    {
+      "assetId": "asset_motion_flashcards",
+      "assetType": "flashcard",
+      "storageType": "json",
+      "title": "Motion flashcards",
+      "contentJsonPath": "mock/json/program/neet-foundation/asset_motion_flashcards/v1/content.json",
+      "sourceTag": "mock"
+    }
+  ]
+}
+```
+
+## 14. Future Upload Flow
 
 Admin/tutor upload flow:
 1. Create asset metadata.
 2. Request upload URL.
-3. Upload binary directly to R2 using PUT.
+3. Upload binary directly to S3/R2 using PUT.
 4. Complete upload session.
 5. Backend verifies object exists.
 6. Backend sets status to `scan_pending` or `processing`.
 7. After scan/processing, status becomes `active`.
 8. Asset can now be linked to program/milestone/activity.
 
-Mobile app must never proxy large files through Render API.
+Mobile app must never proxy large production files through Render API.
 
-## 13. Security Controls
+## 15. Security Controls
 
 Required:
-- Private bucket only.
-- Short-lived presigned URLs.
+- Repo asset root allowlist for MVP.
+- Path traversal protection.
+- Short-lived repo content tokens.
+- Private bucket only when object storage is enabled.
+- Short-lived presigned URLs when object storage is enabled.
 - Server-side access-control check before URL issuance.
-- Never log signed URLs in full.
+- Never log signed URLs or repo content tokens in full.
 - Store only object keys in DB, not permanent public URLs.
 - Validate MIME type and size before upload URL is issued.
 - Enforce maximum upload sizes by asset type.
@@ -527,12 +642,16 @@ Recommended next:
 - Content moderation for user uploads.
 - Signed URL invalidation strategy via very short TTL.
 
-## 14. Environment Variables
+## 16. Environment Variables
 
 Render API:
 
 ```txt
-ASSET_STORAGE_PROVIDER=r2
+ASSET_STORAGE_PROVIDER=repo
+ASSET_REPO_ROOT=services/api/assets
+ASSET_CONTENT_TOKEN_TTL_SECONDS=300
+
+# Future S3/R2 settings
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
@@ -546,15 +665,17 @@ ASSET_MAX_VIDEO_MB=500
 
 Do not expose these variables to Expo/mobile.
 
-## 15. Implementation Plan
+## 17. Implementation Plan
 
 ### Phase 1: Foundation
 
 - Add Prisma models: `Asset`, `AssetVersion`, `AssetLink`, `UploadSession`, `AssetAccessLog`.
 - Add shared types for asset DTOs.
 - Add `StorageProvider` interface.
-- Implement R2 provider using AWS SDK S3 client.
-- Add create metadata, upload URL, complete upload, get metadata, and read URL APIs.
+- Implement repo-backed provider.
+- Add seed/import manifest for repo assets.
+- Add get metadata, read URL, and content streaming APIs.
+- Keep upload URL and complete upload APIs behind provider capability checks.
 - Add admin-only authorization guard for create/update/delete.
 
 ### Phase 2: Education Content Integration
@@ -574,6 +695,8 @@ Do not expose these variables to Expo/mobile.
 
 ### Phase 4: Hardening
 
+- Add AWS S3 provider behind the same `StorageProvider` interface.
+- Add migration script to copy repo asset files to S3 and update `objectKey`.
 - Add upload verification using object HEAD.
 - Add access logs.
 - Add rate limits for URL issuance.
@@ -581,22 +704,39 @@ Do not expose these variables to Expo/mobile.
 - Add virus scan hooks for documents.
 - Add object lifecycle policies.
 
-## 16. Open Decisions
+## 18. Migration Path To AWS S3
 
-- Should videos be streamed directly from R2 signed URLs for MVP, or routed through a streaming provider later?
+The mobile app should not change during migration.
+
+Migration steps:
+1. Create private S3 bucket.
+2. Configure IAM policy for AMS only.
+3. Implement `S3StorageProvider`.
+4. Run asset migration script:
+   - Read active `AssetVersion` rows with `storageType = repo`.
+   - Upload matching repo files to S3.
+   - Create new `AssetVersion` rows with `storageType = object`.
+   - Update `Asset.currentVersionId`.
+5. Switch `ASSET_STORAGE_PROVIDER=s3`.
+6. Keep repo provider enabled only for fallback until verified.
+7. Remove large repo assets from Git after production verification.
+
+## 19. Open Decisions
+
+- How large can repo-backed demo videos be before we move videos to S3?
 - Should tutors be allowed to upload class-specific documents in MVP?
 - Should parent accounts be able to view all child assets or only summary/report assets?
 - What is the max video size we want to allow before transcoding exists?
 - Do we need offline downloads in the mobile app? If yes, local encryption and expiration rules are required.
 
-## 17. Near-Term Recommendation
+## 20. Near-Term Recommendation
 
 Start with:
-- Cloudflare R2 private bucket.
-- Presigned PUT for upload.
-- Presigned GET for download/playback.
+- Repo-backed AMS provider for curated MVP content.
+- Authenticated AMS content URLs for document/video/image access.
 - JSON-backed articles, flashcards, and quizzes in PostgreSQL.
 - Asset links from milestones/activities.
 - Authenticated URL generation only through myTution API.
+- Keep AWS S3 as the planned production provider behind the same interface.
 
 This gives myTution a production-shaped asset layer now, while keeping the first implementation small enough to ship in the current monorepo.
