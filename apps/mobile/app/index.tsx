@@ -4,6 +4,7 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
+import type { ComponentType } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -18,6 +19,17 @@ import {
   TextInput,
   View
 } from "react-native";
+import type { SvgProps } from "react-native-svg";
+import AccountActiveIcon from "../assets/nav/Account_active.svg";
+import AccountInactiveIcon from "../assets/nav/Account_inactive.svg";
+import ClassActiveIcon from "../assets/nav/class_active.svg";
+import ClassInactiveIcon from "../assets/nav/class_inactive.svg";
+import CommunityActiveIcon from "../assets/nav/Community_active.svg";
+import CommunityInactiveIcon from "../assets/nav/Community_inactive.svg";
+import HomeActiveIcon from "../assets/nav/Home_active.svg";
+import HomeInactiveIcon from "../assets/nav/Home_inactive.svg";
+import MilesActiveIcon from "../assets/nav/myMiles_active.svg";
+import MilesInactiveIcon from "../assets/nav/myMiles_inactive.svg";
 import { roleValueProps, personas, programMilestones, recommendations } from "@/data/mockData";
 import { useRoleTheme } from "@/theme/useRoleTheme";
 
@@ -1121,7 +1133,7 @@ function SignInScreen({
       <FieldLabel>Password</FieldLabel>
       <Input secureTextEntry value={password} onChangeText={setPassword} placeholder="Password" />
       {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
-      <View style={styles.bottomCta}>
+      <View style={styles.signinActions}>
         <Button disabled={!canSignIn} loading={loading} role={role} label="Sign in" onPress={signIn} />
         {mode === "fresh" ? (
           <Pressable style={({ pressed }) => [styles.registerLink, pressed && styles.pressed]} onPress={register}>
@@ -2577,7 +2589,6 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
 
   return (
     <View style={styles.doubtScreen}>
-      <DoubtHeader title="Clear Doubts" subtitle="Physics • Milestone 3: Gauss's Law" back={back} />
       <View style={styles.doubtSearchBox}>
         <View style={styles.doubtSearchBar}>
           <Text style={styles.doubtSearchIcon}>⌕</Text>
@@ -2729,24 +2740,30 @@ function SimpleScreen({ title, role, back }: { title: string; role: Role; back: 
   );
 }
 
+type NavIcon = ComponentType<SvgProps>;
+
 function BottomNav({ role, screen, setScreen }: { role: Role; screen: AppScreen; setScreen: (screen: AppScreen) => void }) {
   const theme = useRoleTheme(role);
   const hubLabel = role === "tutor" ? "My Students" : role === "student" ? "My Classes" : "My Surveys";
-  const items: Array<[AppScreen, string, string]> = [
-    ["home", "Home", "⌂"],
-    ["sessions", "My Miles", "▥"],
-    ["roleHub", hubLabel, "▣"],
-    ["chat", "Doubts", "▤"],
-    ["account", "Account", "⌾"]
+  const items: Array<{ id: AppScreen; label: string; activeIcon: NavIcon; inactiveIcon: NavIcon }> = [
+    { id: "home", label: "My Home", activeIcon: HomeActiveIcon, inactiveIcon: HomeInactiveIcon },
+    { id: "sessions", label: "My Miles", activeIcon: MilesActiveIcon, inactiveIcon: MilesInactiveIcon },
+    { id: "roleHub", label: hubLabel, activeIcon: ClassActiveIcon, inactiveIcon: ClassInactiveIcon },
+    { id: "chat", label: "My Community", activeIcon: CommunityActiveIcon, inactiveIcon: CommunityInactiveIcon },
+    { id: "account", label: "My Account", activeIcon: AccountActiveIcon, inactiveIcon: AccountInactiveIcon }
   ];
   return (
     <View style={styles.nav}>
-      {items.map(([id, label, icon]) => (
+      {items.map(({ id, label, activeIcon: ActiveIcon, inactiveIcon: InactiveIcon }) => {
+        const selected = screen === id;
+        const Icon = selected ? ActiveIcon : InactiveIcon;
+        return (
         <Pressable key={id} style={styles.navItem} onPress={() => setScreen(id)}>
-          <Text style={[styles.navIcon, { color: screen === id ? "#FFFFFF" : theme.accentStrong }]}>{icon}</Text>
-          <Text style={[styles.navText, { color: screen === id ? "#FFFFFF" : theme.accentStrong }]}>{label}</Text>
+          <Icon width={24} height={24} style={styles.navSvgIcon} />
+          <Text style={[styles.navText, { color: selected ? "#FFFFFF" : theme.accentStrong }]}>{label}</Text>
         </Pressable>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -2900,6 +2917,7 @@ const styles = StyleSheet.create({
   contentWithNav: { paddingBottom: 124 },
   flex: { flex: 1 },
   bottomCta: { flex: 1, justifyContent: "flex-end", minHeight: 260 },
+  signinActions: { gap: 14, marginTop: 18 },
   pressed: { opacity: 0.82, transform: [{ scale: 0.98 }] },
   header: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   headerIcon: { backgroundColor: "rgba(255,255,255,0.78)", borderRadius: 15, fontSize: 18, fontWeight: "900", height: 39, lineHeight: 39, overflow: "hidden", textAlign: "center", width: 39 },
@@ -3507,8 +3525,9 @@ const styles = StyleSheet.create({
   classMeta: { color: "#465A74", fontSize: 13, fontWeight: "700", lineHeight: 19 },
   classLink: { color: "#035C67", fontSize: 13, fontWeight: "900", lineHeight: 19 },
   classLocked: { color: "#8B95A1", fontSize: 12, fontWeight: "800", lineHeight: 18 },
-  nav: { alignItems: "center", backgroundColor: "#242424", borderRadius: 34, bottom: 20, flexDirection: "row", justifyContent: "space-between", left: 16, minHeight: 66, paddingHorizontal: 22, paddingVertical: 10, position: "absolute", right: 16, shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 20, shadowOffset: { width: 0, height: 12 } },
-  navItem: { alignItems: "center", gap: 3, minWidth: 48 },
+  nav: { alignItems: "center", backgroundColor: "#242424", borderRadius: 34, bottom: 20, flexDirection: "row", justifyContent: "space-between", left: 16, minHeight: 66, paddingHorizontal: 14, paddingVertical: 10, position: "absolute", right: 16, shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 20, shadowOffset: { width: 0, height: 12 } },
+  navItem: { alignItems: "center", flex: 1, gap: 3, minWidth: 0 },
   navIcon: { fontSize: 24, fontWeight: "900", height: 25, lineHeight: 25, textAlign: "center", width: 25 },
-  navText: { fontSize: 10, fontWeight: "900", lineHeight: 13 }
+  navSvgIcon: { height: 24, width: 24 },
+  navText: { fontSize: 9, fontWeight: "900", lineHeight: 12, textAlign: "center" }
 });
