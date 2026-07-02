@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-label="Quiz banner">
+  <rect width="1200" height="540" rx="48" fill="#FFF2D6"/>
+  <rect x="118" y="76" width="964" height="388" rx="44" fill="#FFFFFF" stroke="#F6C66F" stroke-width="7"/>
+  <text x="178" y="166" font-family="Arial, sans-serif" font-size="50" font-weight="900" fill="#223142">Check your motion basics</text>
+  <text x="180" y="226" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#52657F">6 MCQs • instant score • learn-more hints</text>
+  <rect x="180" y="286" width="360" height="50" rx="25" fill="#E1F5F9"/>
+  <rect x="180" y="354" width="470" height="50" rx="25" fill="#F4E5FA"/>
+  <circle cx="938" cy="322" r="74" fill="#2DBA65"/>
+  <path d="M902 322l26 26 54-70" fill="none" stroke="#FFFFFF" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

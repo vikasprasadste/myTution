@@ -1,10 +1,12 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
 import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role, TutorSearchResult, UserListItem, UserProfileDetails } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
-import type { ComponentType } from "react";
+import { useVideoPlayer, VideoView } from "expo-video";
+import type { ComponentType, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -19,7 +21,7 @@ import {
   TextInput,
   View
 } from "react-native";
-import type { SvgProps } from "react-native-svg";
+import { SvgXml, type SvgProps } from "react-native-svg";
 import AccountActiveIcon from "../assets/nav/Account_active.svg";
 import AccountInactiveIcon from "../assets/nav/Account_inactive.svg";
 import ClassActiveIcon from "../assets/nav/class_active.svg";
@@ -59,13 +61,33 @@ type AppScreen =
   | "quizResult"
   | "ratings";
 
-const splash = require("../assets/splash-screen.png");
 const icon = require("../assets/AppIcons/appstore.png");
 
 type StreamKey = "junior" | "senior" | "ug" | "pg";
 type AuthSession = { accessToken: string; refreshToken: string; tokenType: string };
 type DashboardCard = { value: string; label: string; target: AppScreen };
 type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number; milestoneTitle?: string; required?: boolean };
+type FlashcardPayload = { id?: string; sequence: number; question: string; answer: string; relatedArticleId?: string | null };
+type ResourceDetailPayload = SelectedActivity & {
+  body?: string | null;
+  contentJson?: Record<string, unknown> | null;
+  flashcards?: FlashcardPayload[];
+  assetSlug?: string | null;
+  storageType?: string | null;
+  thumbnailPath?: string | null;
+  bannerPath?: string | null;
+  vttPath?: string | null;
+  metadataPath?: string | null;
+  sourceUrl?: string | null;
+  assetUrls?: {
+    thumbnail?: string | null;
+    banner?: string | null;
+    vtt?: string | null;
+    metadata?: string | null;
+    media?: string | null;
+  };
+};
+type VttCue = { start: number; end: number; text: string };
 type JourneyActivity = SelectedActivity & { milestoneTitle: string; milestoneSequence: number; activitySequence: number; required: boolean; status: "pending" | "in_progress" | "complete" };
 type QuizQuestion = { id: string; prompt: string; options: string[]; answerIndex: number; learnMore: string };
 type QuizPayload = { resourceId: string; title: string; description: string; questions: QuizQuestion[] };
@@ -94,22 +116,16 @@ const specializationOptions: Record<StreamKey, string[]> = {
   pg: ["MBA Finance", "M.Sc Statistics", "MA English", "M.Tech Data Science"]
 };
 
-const flashcards = [
-  ["What is the standard form of a quadratic equation?", "ax² + bx + c = 0, where a is not 0."],
-  ["What does the discriminant tell us?", "b² - 4ac tells the nature of roots."],
-  ["When are roots real and equal?", "When the discriminant is 0."],
-  ["When are roots real and distinct?", "When the discriminant is greater than 0."],
-  ["When are roots imaginary?", "When the discriminant is less than 0."],
-  ["What is factorisation used for?", "To express a quadratic as product of two linear factors."],
-  ["What is completing the square?", "A way to rewrite a quadratic into square form."],
-  ["What is the quadratic formula?", "x = (-b ± √(b² - 4ac)) / 2a."],
-  ["Why graph a quadratic?", "To inspect roots, vertex, and direction visually."],
-  ["What is the vertex?", "The turning point of the parabola."]
+const fallbackFlashcards: FlashcardPayload[] = [
+  { sequence: 1, question: "What is displacement?", answer: "Displacement is the change in position from start to finish, measured with direction." },
+  { sequence: 2, question: "How is distance different from displacement?", answer: "Distance is total path length. Displacement depends only on initial and final position." },
+  { sequence: 3, question: "What is average speed?", answer: "Average speed equals total distance divided by total time." },
+  { sequence: 4, question: "What is average velocity?", answer: "Average velocity equals displacement divided by total time." }
 ];
 
 export default function Index() {
   const [role, setRole] = useState<Role>("student");
-  const [screen, setScreen] = useState<AppScreen>("signin");
+  const [screen, setScreen] = useState<AppScreen>("role");
   const [showAppSplash, setShowAppSplash] = useState(true);
   const [signInMode, setSignInMode] = useState<SignInMode>("fresh");
   const [valueIndex, setValueIndex] = useState(0);
@@ -154,10 +170,13 @@ export default function Index() {
   const [reminderTitle, setReminderTitle] = useState("Math revision reminder");
   const [reminderDate, setReminderDate] = useState("24/06/2026");
   const [reminderTime, setReminderTime] = useState("06:30 PM");
+  const [connectedPeople, setConnectedPeople] = useState("");
+  const [connectedPeopleByReminder, setConnectedPeopleByReminder] = useState<Record<string, string>>({});
   const [picker, setPicker] = useState<null | { target: "dob" | "reminderDate" | "reminderTime"; mode: "date" | "time"; value: Date }>(null);
   const [recommendationsReady, setRecommendationsReady] = useState(false);
   const [selectedMilestone, setSelectedMilestone] = useState<ProgramMilestone | null>(null);
   const [selectedResource, setSelectedResource] = useState<SelectedActivity | null>(null);
+  const [resourceDetail, setResourceDetail] = useState<ResourceDetailPayload | null>(null);
   const [tutorResults, setTutorResults] = useState<TutorSearchResult[]>([]);
   const [tutorFilterOptions, setTutorFilterOptions] = useState<TutorFilterOptions>({ subjects: [], locations: [], grades: [], boards: [], modes: [], languages: [], genders: [], experience: [], ratings: [] });
   const [batchClasses, setBatchClasses] = useState<BatchClass[]>([]);
@@ -405,7 +424,7 @@ export default function Index() {
       setApiNotice("");
     } catch {
       setBatchClasses([]);
-      setApiNotice("My Classes could not be loaded from API.");
+      setApiNotice("Classes could not be loaded from API.");
     } finally {
       setClassHubLoading(false);
     }
@@ -452,6 +471,8 @@ export default function Index() {
     setSpecialization("CBSE Class 10 Mathematics");
     setAvatarUri(null);
     setReminders([]);
+    setConnectedPeople("");
+    setConnectedPeopleByReminder({});
     setApiPersona(null);
     setApiRecommendations(null);
     setDashboardCards(null);
@@ -462,7 +483,7 @@ export default function Index() {
     setAuthSession(null);
     setApiNotice("");
     setSignInMode("fresh");
-    setScreen("signin");
+    setScreen("role");
   }
 
   function updateOtp(value: string) {
@@ -551,16 +572,29 @@ export default function Index() {
       status: "active"
     };
     setReminders((items) => [...items, optimistic]);
+    if (connectedPeople.trim()) {
+      setConnectedPeopleByReminder((items) => ({ ...items, [optimistic.id]: connectedPeople.trim() }));
+    }
     try {
       const response = await apiPost<{ data: Reminder }>("/api/v1/events-reminders", {
         role,
         title: optimistic.title,
-        startsAt
+        startsAt,
+        connectedPeople: connectedPeople.trim()
       }, authSession?.accessToken);
       setReminders((items) => items.map((item) => item.id === optimistic.id ? response.data : item));
+      setConnectedPeopleByReminder((items) => {
+        const next = { ...items };
+        if (next[optimistic.id]) {
+          next[response.data.id] = next[optimistic.id];
+          delete next[optimistic.id];
+        }
+        return next;
+      });
     } catch {
       setApiNotice("Reminder saved locally. API write failed.");
     } finally {
+      setConnectedPeople("");
       setLoadingAction(null);
     }
   }
@@ -569,12 +603,23 @@ export default function Index() {
     setReminderTitle(reminder.title);
     setReminderDate(reminder.startsAt.split(" ")[0] || reminderDate);
     setReminderTime(reminder.startsAt.split(" ").slice(1).join(" ") || reminderTime);
+    setConnectedPeople(connectedPeopleByReminder[reminder.id] ?? "");
     setReminders((items) => items.filter((item) => item.id !== reminder.id));
-    setScreen("home");
+    setConnectedPeopleByReminder((items) => {
+      const next = { ...items };
+      delete next[reminder.id];
+      return next;
+    });
+    setScreen("events");
   }
 
   async function deleteReminder(id: string) {
     setReminders((items) => items.map((item) => item.id === id ? { ...item, status: "cancelled" } : item));
+    setConnectedPeopleByReminder((items) => {
+      const next = { ...items };
+      delete next[id];
+      return next;
+    });
     try {
       await apiDelete(`/api/v1/events-reminders/${id}`, authSession?.accessToken);
     } catch {
@@ -584,6 +629,26 @@ export default function Index() {
 
   function openResource(resource: SelectedActivity) {
     setSelectedResource(resource);
+    setResourceDetail(null);
+    apiGet<{ data: ResourceDetailPayload }>(`/api/v1/resources/${resource.id}`, authSession?.accessToken)
+      .then((response) => {
+        setResourceDetail({
+          ...resource,
+          ...response.data,
+          id: resource.id,
+          role: resource.role,
+          thumbnailLabel: resource.thumbnailLabel,
+          milestoneId: resource.milestoneId,
+          activityId: resource.activityId,
+          activitySequence: resource.activitySequence,
+          milestoneSequence: resource.milestoneSequence,
+          milestoneTitle: resource.milestoneTitle,
+          required: resource.required
+        });
+      })
+      .catch(() => {
+        setApiNotice("Resource detail could not be loaded from API.");
+      });
     if (resource.type === "flashcard") {
       setScreen("flashIntro");
       return;
@@ -698,6 +763,10 @@ export default function Index() {
     if (screen === "role") {
       return (
         <>
+          <View style={styles.roleLandingBrand}>
+            <Image source={icon} style={styles.roleLandingLogo} resizeMode="contain" />
+            <Text style={styles.freshSigninBrand}>myTution</Text>
+          </View>
           {(["student", "tutor", "parent"] as Role[]).map((item) => (
             <Card key={item} role={role} selected={role === item} onPress={() => {
               setRole(item);
@@ -714,7 +783,12 @@ export default function Index() {
               <Text style={styles.check}>{role === item ? "✓" : ""}</Text>
             </Card>
           ))}
-          <Button role={role} label="Continue" onPress={() => { setValueIndex(0); setScreen("value"); }} />
+          <View style={styles.signinActions}>
+            <Button role={role} label="Sign in" onPress={() => setScreen("signin")} />
+            <Pressable style={({ pressed }) => [styles.registerLink, pressed && styles.pressed]} onPress={() => { setValueIndex(0); setScreen("value"); }}>
+              <Text style={styles.registerLinkText}>Don't have an account? Register Now!!</Text>
+            </Pressable>
+          </View>
         </>
       );
     }
@@ -887,7 +961,7 @@ export default function Index() {
           loading={loadingAction === "signin"}
           apiNotice={apiNotice}
           signIn={signInWithPassword}
-          register={() => setScreen("role")}
+          register={() => { setValueIndex(0); setScreen("value"); }}
         />
       );
     }
@@ -910,7 +984,6 @@ export default function Index() {
               ) : (
                 <>
                   <JourneyResourceCarousel title="For you today" role={role} items={forYouTodayActivities} emptyCopy="No required activities pending." onPress={openResource} />
-                  <JourneyResourceCarousel title="Next steps" role={role} items={nextStepActivities} emptyCopy="No supporting activities pending." onPress={openResource} />
                 </>
               )}
             </>
@@ -978,12 +1051,18 @@ export default function Index() {
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
-    if (screen === "events") return <Events role={role} reminders={roleReminders} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} />;
+    if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
     if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} />;
     if (screen === "milestoneDetail" && selectedMilestone) return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} />;
-    if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} completedTopic={completedTopic} nextTopic={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} myMiles={() => { setCompletedTopic(null); setSelectedResource(null); setScreen("sessions"); }} />;
-    if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "home")} />;
-    if (screen === "flashPlay") return <FlashPlay role={role} index={flashIndex} answer={flashAnswer} setAnswer={setFlashAnswer} next={() => { setFlashIndex((flashIndex + 1) % flashcards.length); setFlashAnswer(false); }} learnMore={() => { setSelectedResource({ id: "article_quadratic", role, type: "article", title: "Quadratic equations deep dive", description: "Worked examples, formula use, and exam-style practice.", thumbnailLabel: "Article" }); setScreen("resource"); }} complete={markComplete} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
+    if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={resourceDetail ?? selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} completedTopic={completedTopic} nextTopic={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} myMiles={() => { setCompletedTopic(null); setSelectedResource(null); setScreen("sessions"); }} />;
+    if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={resourceDetail ?? selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "home")} />;
+    if (screen === "flashPlay" && selectedResource) {
+      const cards = resourceDetail?.id === selectedResource.id && resourceDetail.flashcards?.length ? resourceDetail.flashcards : fallbackFlashcards;
+      return <FlashPlay role={role} resource={resourceDetail ?? selectedResource} cards={cards} index={flashIndex} answer={flashAnswer} setAnswer={setFlashAnswer} next={() => { setFlashIndex((flashIndex + 1) % cards.length); setFlashAnswer(false); }} learnMore={() => {
+        const articleId = cards[flashIndex]?.relatedArticleId;
+        if (articleId) openResource({ id: articleId, role, type: "article", title: "Learn more", description: "Related article for this flashcard.", thumbnailLabel: "Article" });
+      }} complete={markComplete} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
+    }
     if (screen === "quizIntro" && selectedResource) return <QuizIntro role={role} resource={selectedResource} loading={loadingAction === "startQuiz"} start={() => startQuiz(selectedResource)} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
     if (screen === "quizPlay" && selectedResource && quizPayload) return <QuizPlay role={role} payload={quizPayload} index={quizIndex} answers={quizAnswers} setAnswer={(answer) => setQuizAnswers((items) => items.map((item, itemIndex) => itemIndex === quizIndex ? answer : item))} next={() => { if (quizIndex === quizPayload.questions.length - 1) setScreen("quizResult"); else setQuizIndex(quizIndex + 1); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
     if (screen === "quizResult" && selectedResource && quizPayload) return <QuizResult role={role} payload={quizPayload} answers={quizAnswers} complete={markComplete} loading={loadingAction === "markComplete"} backToTopic={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
@@ -991,7 +1070,7 @@ export default function Index() {
     return null;
   }
 
-  const showNav = ["home", "sessions", "roleHub", "chat", "account"].includes(screen);
+  const showNav = ["home", "sessions", "events", "chat", "account"].includes(screen);
 
   if (showAppSplash) {
     return <AppSplash />;
@@ -1043,7 +1122,8 @@ export default function Index() {
 function AppSplash() {
   return (
     <View style={styles.appSplashShell}>
-      <Image source={splash} style={styles.appSplashImage} resizeMode="contain" />
+      <Image source={icon} style={styles.appSplashLogo} resizeMode="contain" />
+      <Text style={styles.freshSigninBrand}>myTution</Text>
     </View>
   );
 }
@@ -1341,8 +1421,11 @@ function RecommendationTile({ role, item, onPress }: { role: Role; item: Recomme
   const glyph = item.type === "video" ? "▶" : item.type === "article" ? "₹" : "P";
   return (
     <Pressable onPress={onPress} style={[styles.recCard, { backgroundColor: theme.card }]}>
-      <View style={[styles.thumb, { backgroundColor: theme.surface }]}>
-        <Text style={[styles.thumbText, { color: theme.text }]}>{glyph}</Text>
+      <View style={[styles.thumb, { backgroundColor: theme.surface, overflow: "hidden" }]}>
+        <SvgAsset
+          pathValue={item.assetUrls?.thumbnail}
+          fallback={<Text style={[styles.thumbText, { color: theme.text }]}>{glyph}</Text>}
+        />
       </View>
       <View style={styles.recBody}>
         <View style={[styles.recBadge, { backgroundColor: theme.surface }]}>
@@ -1368,6 +1451,7 @@ function buildJourneyActivities(role: Role, milestones: ProgramMilestone[]): Jou
         title: activity.title,
         description: activity.description,
         thumbnailLabel: activityTypeLabel(activity.type),
+        assetUrls: activity.assetUrls,
         milestoneId: milestone.id,
         activityId: activity.id,
         activitySequence: activity.sequence,
@@ -1482,8 +1566,11 @@ function JourneyResourceTile({ role, item, onPress }: { role: Role; item: Journe
   const theme = useRoleTheme(role);
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.journeyResourceCard, { backgroundColor: theme.cardSoft }, pressed && styles.pressed]}>
-      <View style={[styles.journeyResourceImage, { backgroundColor: theme.surface }]}>
-        <Text style={[styles.journeyResourceGlyph, { color: theme.text }]}>{activityGlyph(item.type)}</Text>
+      <View style={[styles.journeyResourceImage, { backgroundColor: theme.surface, overflow: "hidden" }]}>
+        <SvgAsset
+          pathValue={item.assetUrls?.thumbnail}
+          fallback={<Text style={[styles.journeyResourceGlyph, { color: theme.text }]}>{activityGlyph(item.type)}</Text>}
+        />
       </View>
       <Text style={styles.journeyResourceTopic}>{item.milestoneSequence}. {item.milestoneTitle}</Text>
       <Text style={styles.journeyResourceTitle}>{item.title}</Text>
@@ -1512,9 +1599,17 @@ function TodayCard({ role, onPress }: { role: Role; onPress: () => void }) {
 function TopBar({ title, left, right, onLeft, onRight }: { title: string; left?: string; right?: string; onLeft?: () => void; onRight?: () => void }) {
   return (
     <View style={styles.topbar}>
-      <Pressable onPress={onLeft} style={styles.topButton}><Text style={styles.topButtonText}>{left ?? ""}</Text></Pressable>
+      {left ? (
+        <Pressable onPress={onLeft} style={styles.topButton}><Text style={styles.topButtonText}>{left}</Text></Pressable>
+      ) : (
+        <View style={styles.topButtonSpacer} />
+      )}
       <Text style={styles.topTitle}>{title}</Text>
-      <Pressable onPress={onRight} style={styles.topButton}><Text style={styles.topButtonText}>{right ?? ""}</Text></Pressable>
+      {right ? (
+        <Pressable onPress={onRight} style={styles.topButton}><Text style={styles.topButtonText}>{right}</Text></Pressable>
+      ) : (
+        <View style={styles.topButtonSpacer} />
+      )}
     </View>
   );
 }
@@ -1698,7 +1793,7 @@ function ReminderPreviewCard({ role, reminders }: { role: Role; reminders: Remin
   );
 }
 
-function SwipeReminderRow({ role, reminder, onEdit, onDelete }: { role: Role; reminder: Reminder; onEdit: () => void; onDelete: () => void }) {
+function SwipeReminderRow({ role, reminder, connectedPeople, onEdit, onDelete }: { role: Role; reminder: Reminder; connectedPeople?: string; onEdit: () => void; onDelete: () => void }) {
   const theme = useRoleTheme(role);
   const translateX = useRef(new Animated.Value(0)).current;
   const currentX = useRef(0);
@@ -1737,6 +1832,7 @@ function SwipeReminderRow({ role, reminder, onEdit, onDelete }: { role: Role; re
         <View style={styles.flex}>
           <Text style={styles.reminderSummaryTitle}>{reminder.title}</Text>
           <Text style={styles.reminderSummaryMeta}>{formatReminderDateTime(reminder.startsAt)}</Text>
+          {connectedPeople ? <Text style={styles.reminderSummaryMeta}>{connectedPeople}</Text> : null}
         </View>
         <View style={[styles.roleBadge, { backgroundColor: theme.surface }]}>
           <Text style={[styles.roleBadgeText, { color: theme.text }]}>{capitalize(role)}</Text>
@@ -1758,19 +1854,176 @@ function formatReminderDateTime(value: string) {
   return `${Number(day)} ${monthName} ${year} • ${time.toLowerCase()}`;
 }
 
-function ResourceDetail({ role, resource, complete, loading, back, completedTopic, nextTopic, myMiles }: { role: Role; resource: SelectedActivity; complete: () => void; loading?: boolean; back: () => void; completedTopic: null | { nextActivity?: SelectedActivity; milestoneComplete: boolean }; nextTopic: () => void; myMiles: () => void }) {
+function resourceArticleText(resource: ResourceDetailPayload | SelectedActivity) {
+  const detail = resource as ResourceDetailPayload;
+  const contentJson = detail.contentJson;
+  if (typeof detail.body === "string" && detail.body.trim()) return detail.body;
+  if (contentJson && typeof contentJson.articleText === "string") return contentJson.articleText;
+  if (contentJson && Array.isArray(contentJson.transcriptSummary)) return contentJson.transcriptSummary.map((item) => `• ${item}`).join("\n");
+  return "Review the concept, note the keywords, and connect this activity with the milestone goal. Use the examples to prepare for board-style answers and quick recall.";
+}
+
+function resourceMetaLine(resource: ResourceDetailPayload | SelectedActivity) {
+  const detail = resource as ResourceDetailPayload;
+  const contentJson = detail.contentJson;
+  if (resource.type === "video" && contentJson && typeof contentJson.durationSeconds === "number") {
+    return `${Math.ceil(contentJson.durationSeconds / 60)} min video${detail.vttPath ? " • captions available" : ""}`;
+  }
+  if (resource.type === "article" && contentJson && typeof contentJson.readingMinutes === "number") {
+    return `${contentJson.readingMinutes} min read`;
+  }
+  return capitalize(resource.type);
+}
+
+function resourceMediaUrl(resource: ResourceDetailPayload | SelectedActivity) {
+  const detail = resource as ResourceDetailPayload;
+  const contentJson = detail.contentJson;
+  if (detail.assetUrls?.media) return detail.assetUrls.media;
+  if (contentJson && typeof contentJson.mediaUrl === "string") return contentJson.mediaUrl;
+  return "";
+}
+
+function amsFileUrl(pathValue?: string | null) {
+  if (!pathValue) return "";
+  if (/^https?:\/\//.test(pathValue)) return pathValue;
+  return `${appConfig.apiBaseUrl}${pathValue}`;
+}
+
+function parseTimestamp(value: string) {
+  const normalized = value.trim().replace(",", ".");
+  const parts = normalized.split(":").map(Number);
+  if (parts.some((item) => Number.isNaN(item))) return 0;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return parts[0] ?? 0;
+}
+
+function parseVtt(value: string): VttCue[] {
+  return value
+    .replace(/\r/g, "")
+    .split("\n\n")
+    .map((block) => block.trim())
+    .filter((block) => block && !block.startsWith("WEBVTT"))
+    .map((block) => {
+      const lines = block.split("\n").filter(Boolean);
+      const timingLine = lines.find((line) => line.includes("-->"));
+      if (!timingLine) return null;
+      const [startRaw, endRaw] = timingLine.split("-->").map((item) => item.trim().split(/\s+/)[0]);
+      const text = lines.slice(lines.indexOf(timingLine) + 1).join(" ").trim();
+      return { start: parseTimestamp(startRaw), end: parseTimestamp(endRaw), text };
+    })
+    .filter((cue): cue is VttCue => Boolean(cue?.text));
+}
+
+function SvgAsset({ pathValue, fallback }: { pathValue?: string | null; fallback: ReactNode }) {
+  const [xml, setXml] = useState("");
+  useEffect(() => {
+    const url = amsFileUrl(pathValue);
+    if (!url) {
+      setXml("");
+      return undefined;
+    }
+    let active = true;
+    fetch(url)
+      .then((response) => response.ok ? response.text() : "")
+      .then((value) => {
+        if (active) setXml(value.trim().startsWith("<svg") ? value : "");
+      })
+      .catch(() => {
+        if (active) setXml("");
+      });
+    return () => {
+      active = false;
+    };
+  }, [pathValue]);
+
+  if (!xml) return <>{fallback}</>;
+  return <SvgXml xml={xml} width="100%" height="100%" />;
+}
+
+function VideoResourcePlayer({ resource }: { resource: ResourceDetailPayload | SelectedActivity }) {
+  const detail = resource as ResourceDetailPayload;
+  const mediaUrl = resourceMediaUrl(resource);
+  const [cues, setCues] = useState<VttCue[]>([]);
+  const [activeCaption, setActiveCaption] = useState("");
+  const player = useVideoPlayer(mediaUrl ? { uri: mediaUrl } : null, (instance) => {
+    instance.loop = false;
+    instance.timeUpdateEventInterval = 0.25;
+  });
+
+  useEffect(() => {
+    const vttUrl = amsFileUrl(detail.assetUrls?.vtt);
+    if (!vttUrl) {
+      setCues([]);
+      setActiveCaption("");
+      return undefined;
+    }
+    let active = true;
+    fetch(vttUrl)
+      .then((response) => response.ok ? response.text() : "")
+      .then((value) => {
+        if (active) setCues(parseVtt(value));
+      })
+      .catch(() => {
+        if (active) setCues([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [detail.assetUrls?.vtt]);
+
+  useEventListener(player, "timeUpdate", ({ currentTime }) => {
+    const cue = cues.find((item) => currentTime >= item.start && currentTime <= item.end);
+    setActiveCaption(cue?.text ?? "");
+  });
+
+  if (!mediaUrl) {
+    return (
+      <View style={styles.videoUnavailable}>
+        <Text style={styles.videoUnavailableTitle}>Video is being prepared</Text>
+        <Text style={styles.videoUnavailableCopy}>The banner, transcript, and captions are available now. Add a media file URL in AMS to enable playback.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.videoPlayerShell}>
+      <VideoView
+        player={player}
+        nativeControls
+        allowsFullscreen
+        contentFit="contain"
+        style={styles.videoView}
+      />
+      {activeCaption ? (
+        <View style={styles.subtitleOverlay}>
+          <Text style={styles.subtitleText}>{activeCaption}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function ResourceDetail({ role, resource, complete, loading, back, completedTopic, nextTopic, myMiles }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; complete: () => void; loading?: boolean; back: () => void; completedTopic: null | { nextActivity?: SelectedActivity; milestoneComplete: boolean }; nextTopic: () => void; myMiles: () => void }) {
   const theme = useRoleTheme(role);
   const cta = resource.type === "article" ? "Mark as read" : resource.type === "video" ? "Mark watched" : "Mark complete";
+  const detail = resource as ResourceDetailPayload;
+  const visualPath = detail.assetUrls?.banner ?? detail.assetUrls?.thumbnail;
   return (
     <>
       <TopBar title={resource.thumbnailLabel.toUpperCase()} left="‹" onLeft={back} />
-      <View style={[styles.player, resource.type === "video" ? styles.videoPlayer : styles.articleHero]}>
-        <Text style={[styles.playerIcon, { color: resource.type === "video" ? "#FFFFFF" : theme.text }]}>{resource.type === "video" ? "▶" : "A"}</Text>
+      <View style={styles.resourceBanner}>
+        <SvgAsset
+          pathValue={visualPath}
+          fallback={<Text style={[styles.playerIcon, { color: resource.type === "video" ? "#FFFFFF" : theme.text }]}>{resource.type === "video" ? "▶" : "A"}</Text>}
+        />
       </View>
       <View style={styles.reactionRow}><Text style={styles.reactionButton}>👍</Text><Text style={styles.reactionButton}>👎</Text></View>
       <Text style={styles.resourceTitle}>{resource.title}</Text>
       <Text style={styles.resourceSubtitle}>{resource.description}</Text>
-      <Text style={styles.articleBody}>Review the concept, note the keywords, and connect this activity with the milestone goal. Use the examples to prepare for board-style answers and quick recall.</Text>
+      <Text style={styles.assetMetaText}>{resourceMetaLine(resource)}</Text>
+      {resource.type === "video" ? <VideoResourcePlayer resource={resource} /> : null}
+      <Text style={styles.articleBody}>{resourceArticleText(resource)}</Text>
       <View style={styles.resourceBottomCta}><Button role={role} label={cta} onPress={complete} loading={loading} /></View>
       {completedTopic ? (
         <View style={styles.topicTrayBackdrop}>
@@ -1790,8 +2043,10 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
   );
 }
 
-function FlashIntro({ role, resource, start, back }: { role: Role; resource: Recommendation; start: () => void; back: () => void }) {
+function FlashIntro({ role, resource, start, back }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; start: () => void; back: () => void }) {
   const theme = useRoleTheme(role);
+  const detail = resource as ResourceDetailPayload;
+  const cards = detail.flashcards?.length ? detail.flashcards : fallbackFlashcards;
   return (
     <>
       <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
@@ -1800,26 +2055,28 @@ function FlashIntro({ role, resource, start, back }: { role: Role; resource: Rec
         <View style={[styles.flashIntroImage, { backgroundColor: theme.accent }]}><Text style={styles.flashIntroIcon}>▤</Text></View>
         <Text style={styles.flashIntroTitle}>{resource.title}</Text>
         <Text style={styles.flashIntroCopy}>{resource.description}</Text>
-        <Text style={styles.flashIntroMeta}>{flashcards.length} cards • Tap each card to reveal the answer</Text>
+        <Text style={styles.flashIntroMeta}>{cards.length} cards • Tap each card to reveal the answer</Text>
       </View>
       <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View>
     </>
   );
 }
 
-function FlashPlay({ role, index, answer, setAnswer, next, learnMore, complete, back }: { role: Role; index: number; answer: boolean; setAnswer: (value: boolean) => void; next: () => void; learnMore: () => void; complete: () => void; back: () => void }) {
-  const progressWidth = (String(Math.round(((index + 1) / flashcards.length) * 100)) + "%") as any;
+function FlashPlay({ role, resource, cards, index, answer, setAnswer, next, learnMore, complete, back }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; cards: FlashcardPayload[]; index: number; answer: boolean; setAnswer: (value: boolean) => void; next: () => void; learnMore: () => void; complete: () => void; back: () => void }) {
+  const activeCard = cards[index] ?? cards[0] ?? fallbackFlashcards[0];
+  const progressWidth = (String(Math.round(((index + 1) / cards.length) * 100)) + "%") as any;
   return (
     <>
       <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
       <View style={styles.flashProgressTrack}><View style={[styles.flashProgressFill, { width: progressWidth }]} /></View>
+      <Text style={styles.quizCount}>{resource.title}</Text>
       <Pressable style={[styles.flashcard, answer && styles.flashcardAnswer]} onPress={() => setAnswer(!answer)}>
-        <Text style={styles.flashCount}>{index + 1} of {flashcards.length}</Text>
-        <Text style={styles.flashText}>{answer ? flashcards[index][1] : flashcards[index][0]}</Text>
+        <Text style={styles.flashCount}>{index + 1} of {cards.length}</Text>
+        <Text style={styles.flashText}>{answer ? activeCard.answer : activeCard.question}</Text>
         <Text style={styles.flipHint}>Tap to flip</Text>
       </Pressable>
       {answer ? <Button role={role} variant="secondary" label="💡  Learn more" onPress={learnMore} /> : null}
-      <Button role={role} label={index === flashcards.length - 1 ? "Mark complete" : "Next"} onPress={index === flashcards.length - 1 ? complete : next} />
+      <Button role={role} label={index === cards.length - 1 ? "Mark complete" : "Next"} onPress={index === cards.length - 1 ? complete : next} />
     </>
   );
 }
@@ -1846,7 +2103,7 @@ function QuizPlay({ role, payload, index, answers, setAnswer, next, back }: { ro
   const progressWidth = (String(Math.round(((index + 1) / payload.questions.length) * 100)) + "%") as any;
   return (
     <>
-      <TopBar title="QUIZ" left="‹" right="×" onLeft={back} onRight={back} />
+      <TopBar title="QUIZ" left="‹" onLeft={back} />
       <View style={styles.flashProgressTrack}><View style={[styles.flashProgressFill, { backgroundColor: theme.accentStrong, width: progressWidth }]} /></View>
       <Text style={styles.quizCount}>{index + 1} of {payload.questions.length}</Text>
       <Text style={styles.quizPrompt}>{question.prompt}</Text>
@@ -1882,7 +2139,7 @@ function QuizResult({ role, payload, answers, complete, loading, backToTopic }: 
           : ["🌱", "Don't worry, learning takes time.", "You got none correct. That just means there is more to learn moving forward."];
   return (
     <>
-      <TopBar title="QUIZ" left="‹" right="×" onLeft={backToTopic} onRight={backToTopic} />
+      <TopBar title="QUIZ" left="‹" onLeft={backToTopic} />
       <View style={styles.quizResultWrap}>
         <Text style={styles.quizResultIcon}>{result[0]}</Text>
         <Text style={styles.quizResultTitle}>{result[1]}</Text>
@@ -2245,7 +2502,7 @@ function FilterDropdown({ label, value, options, onSelect }: { label: string; va
 }
 
 function RoleHub({ role, classes, requests, loading, approveRequest, actionLoading, back }: { role: Role; classes: BatchClass[]; requests: BatchRequestSummary[]; loading: boolean; approveRequest: (id: string) => void; actionLoading: string | null; back: () => void }) {
-  const title = role === "tutor" ? "My Students" : role === "student" ? "My Classes" : "My Surveys";
+  const title = role === "tutor" ? "Students" : role === "student" ? "Classes" : "Surveys";
   if (role === "student") {
     return (
       <>
@@ -2294,15 +2551,75 @@ function ClassTile({ role, item }: { role: Role; item: BatchClass }) {
   );
 }
 
-function Events({ role, reminders, editReminder, deleteReminder, back }: { role: Role; reminders: Reminder[]; editReminder: (item: Reminder) => void; deleteReminder: (id: string) => void; back: () => void }) {
+function Events({
+  role,
+  reminders,
+  connectedPeopleByReminder,
+  editReminder,
+  deleteReminder,
+  back,
+  title,
+  date,
+  time,
+  setTitle,
+  setDate,
+  setTime,
+  connectedPeople,
+  setConnectedPeople,
+  openDatePicker,
+  openTimePicker,
+  createReminder,
+  loading
+}: {
+  role: Role;
+  reminders: Reminder[];
+  connectedPeopleByReminder: Record<string, string>;
+  editReminder: (item: Reminder) => void;
+  deleteReminder: (id: string) => void;
+  back: () => void;
+  title: string;
+  date: string;
+  time: string;
+  setTitle: (value: string) => void;
+  setDate: (value: string) => void;
+  setTime: (value: string) => void;
+  connectedPeople: string;
+  setConnectedPeople: (value: string) => void;
+  openDatePicker: () => void;
+  openTimePicker: () => void;
+  createReminder: () => void;
+  loading: boolean;
+}) {
   return (
     <>
       <TopBar title="Events & reminders" left="‹" onLeft={back} />
+      <ReminderComposer
+        role={role}
+        title={title}
+        date={date}
+        time={time}
+        setTitle={setTitle}
+        setDate={setDate}
+        setTime={setTime}
+        openDatePicker={openDatePicker}
+        openTimePicker={openTimePicker}
+        onCreate={createReminder}
+        loading={loading}
+      />
+      <FieldLabel>Connected people</FieldLabel>
+      <TextInput
+        value={connectedPeople}
+        onChangeText={setConnectedPeople}
+        placeholder="Parent, tutor, student, or guardian names"
+        placeholderTextColor="#94A3B8"
+        style={styles.input}
+      />
       {reminders.length ? reminders.map((item) => (
         <SwipeReminderRow
           key={item.id}
           role={role}
           reminder={item}
+          connectedPeople={connectedPeopleByReminder[item.id]}
           onEdit={() => editReminder(item)}
           onDelete={() => deleteReminder(item.id)}
         />
@@ -2744,13 +3061,12 @@ type NavIcon = ComponentType<SvgProps>;
 
 function BottomNav({ role, screen, setScreen }: { role: Role; screen: AppScreen; setScreen: (screen: AppScreen) => void }) {
   const theme = useRoleTheme(role);
-  const hubLabel = role === "tutor" ? "My Students" : role === "student" ? "My Classes" : "My Surveys";
   const items: Array<{ id: AppScreen; label: string; activeIcon: NavIcon; inactiveIcon: NavIcon }> = [
-    { id: "home", label: "My Home", activeIcon: HomeActiveIcon, inactiveIcon: HomeInactiveIcon },
-    { id: "sessions", label: "My Miles", activeIcon: MilesActiveIcon, inactiveIcon: MilesInactiveIcon },
-    { id: "roleHub", label: hubLabel, activeIcon: ClassActiveIcon, inactiveIcon: ClassInactiveIcon },
-    { id: "chat", label: "My Community", activeIcon: CommunityActiveIcon, inactiveIcon: CommunityInactiveIcon },
-    { id: "account", label: "My Account", activeIcon: AccountActiveIcon, inactiveIcon: AccountInactiveIcon }
+    { id: "home", label: "Home", activeIcon: HomeActiveIcon, inactiveIcon: HomeInactiveIcon },
+    { id: "sessions", label: "Miles", activeIcon: MilesActiveIcon, inactiveIcon: MilesInactiveIcon },
+    { id: "events", label: "Reminders", activeIcon: ClassActiveIcon, inactiveIcon: ClassInactiveIcon },
+    { id: "chat", label: "Community", activeIcon: CommunityActiveIcon, inactiveIcon: CommunityInactiveIcon },
+    { id: "account", label: "Account", activeIcon: AccountActiveIcon, inactiveIcon: AccountInactiveIcon }
   ];
   return (
     <View style={styles.nav}>
@@ -2908,8 +3224,8 @@ async function apiRequest<T = unknown>(path: string, options: RequestInit & { ac
 }
 
 const styles = StyleSheet.create({
-  appSplashShell: { alignItems: "center", backgroundColor: "#FFFFFF", flex: 1, justifyContent: "center", paddingHorizontal: 24, paddingTop: 34, paddingBottom: 18 },
-  appSplashImage: { height: "100%", maxHeight: 780, width: "100%" },
+  appSplashShell: { alignItems: "center", backgroundColor: "#FFFFFF", flex: 1, gap: 16, justifyContent: "center", paddingHorizontal: 24, paddingTop: 34, paddingBottom: 18 },
+  appSplashLogo: { borderRadius: 28, height: 150, width: 150 },
   shell: { flex: 1 },
   content: { flexGrow: 1, gap: 14, padding: 20, paddingTop: 58 },
   homeContent: { gap: 16, paddingHorizontal: 16 },
@@ -2923,6 +3239,7 @@ const styles = StyleSheet.create({
   headerIcon: { backgroundColor: "rgba(255,255,255,0.78)", borderRadius: 15, fontSize: 18, fontWeight: "900", height: 39, lineHeight: 39, overflow: "hidden", textAlign: "center", width: 39 },
   topbar: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   topButton: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.72)", borderRadius: 13, height: 40, justifyContent: "center", width: 40 },
+  topButtonSpacer: { height: 40, width: 40 },
   topButtonText: { color: "#202A35", fontSize: 16, fontWeight: "900" },
   topTitle: { color: "#202A35", fontSize: 16, fontWeight: "900" },
   milesHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", minHeight: 42, position: "relative" },
@@ -2963,6 +3280,8 @@ const styles = StyleSheet.create({
   linkText: { fontWeight: "800", textDecorationLine: "underline" },
   fieldShell: { position: "relative" },
   eye: { alignItems: "center", backgroundColor: "#F1F5F9", borderRadius: 999, height: 34, justifyContent: "center", position: "absolute", right: 8, top: 8, width: 34 },
+  roleLandingBrand: { alignItems: "center", gap: 6, marginBottom: 12, marginTop: 4 },
+  roleLandingLogo: { borderRadius: 22, height: 112, width: 112 },
   signinFormBrand: { alignItems: "center", gap: 6, marginTop: 24, marginBottom: 22 },
   freshSigninLogo: { borderRadius: 28, height: 150, width: 150 },
   freshSigninBrand: { color: "#202A35", fontSize: 31, fontWeight: "900", marginTop: 18 },
@@ -3463,12 +3782,21 @@ const styles = StyleSheet.create({
   topicCompleteTitle: { color: "#111827", fontSize: 27, fontWeight: "900", lineHeight: 34, textAlign: "center" },
   topicCompleteCopy: { color: "#3F4754", fontSize: 16, fontWeight: "600", lineHeight: 24, textAlign: "center" },
   topicActionRow: { alignSelf: "center", gap: 12, marginTop: 10, width: "82%" },
+  resourceBanner: { alignItems: "center", backgroundColor: "#F3F6F9", borderRadius: 0, height: 236, justifyContent: "center", marginHorizontal: -20, overflow: "hidden" },
   videoPlayer: { backgroundColor: "#CFCFCF", borderRadius: 0, height: 270, marginHorizontal: -20 },
+  videoPlayerShell: { backgroundColor: "#111827", borderRadius: 22, height: 236, marginTop: 18, overflow: "hidden", position: "relative" },
+  videoView: { height: "100%", width: "100%" },
+  subtitleOverlay: { alignSelf: "center", backgroundColor: "rgba(17,24,39,0.78)", borderRadius: 10, bottom: 16, left: 14, paddingHorizontal: 12, paddingVertical: 8, position: "absolute", right: 14 },
+  subtitleText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800", lineHeight: 20, textAlign: "center" },
+  videoUnavailable: { alignItems: "center", backgroundColor: "#111827", borderRadius: 22, gap: 8, marginTop: 18, minHeight: 180, justifyContent: "center", padding: 18 },
+  videoUnavailableTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900", textAlign: "center" },
+  videoUnavailableCopy: { color: "#D1D5DB", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
   articleHero: { backgroundColor: "#D1D5DB", borderRadius: 0, height: 270, marginHorizontal: -20 },
   reactionRow: { flexDirection: "row", gap: 18, justifyContent: "flex-end", marginTop: 12 },
   reactionButton: { backgroundColor: "#F3F4F6", borderColor: "#D1D5DB", borderRadius: 999, borderWidth: 1, fontSize: 19, height: 44, lineHeight: 42, overflow: "hidden", textAlign: "center", width: 58 },
   resourceTitle: { color: "#111827", fontSize: 29, fontWeight: "900", lineHeight: 36 },
   resourceSubtitle: { color: "#111827", fontSize: 18, fontWeight: "500", lineHeight: 27 },
+  assetMetaText: { color: "#6B7280", fontSize: 13, fontWeight: "900", letterSpacing: 0, marginTop: 12, textTransform: "uppercase" },
   articleBody: { color: "#374151", fontSize: 15, lineHeight: 24, marginTop: 18 },
   resourceBottomCta: { marginTop: "auto", paddingTop: 24 },
   flashIntroHero: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E9D5FF", borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 330, padding: 24, shadowColor: "#7C3AED", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.10, shadowRadius: 22 },

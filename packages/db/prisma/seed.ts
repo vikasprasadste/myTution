@@ -290,48 +290,157 @@ async function main() {
     });
   }
 
-  const algebraVideo = await prisma.resource.create({
-    data: {
-      type: ResourceType.video,
-      title: "Class 10 algebra refresh",
-      description: "8 minute practice guide for algebra basics",
-      sourceTag
-    }
-  });
+  const motionArticleBody = "Motion in a straight line studies movement along one chosen axis. Choose a positive direction first. Once that choice is made, displacement, velocity, and acceleration can be positive, negative, or zero depending on direction.\n\nDistance is the total path length covered. It is always non-negative. Displacement is the change in position from the starting point to the ending point. A learner can travel a large distance and still have zero displacement if they return to the starting point.\n\nAverage speed equals total distance divided by total time. Average velocity equals displacement divided by total time. Speed is a scalar; velocity is a vector. This distinction matters in graph questions and sign-convention questions.\n\nAcceleration is the rate of change of velocity. If velocity increases in the positive direction, acceleration is positive. If velocity decreases while the object is still moving in the positive direction, acceleration is negative.\n\nGraph clues are powerful. On a position-time graph, slope gives velocity. On a velocity-time graph, slope gives acceleration, while the signed area under the graph gives displacement.\n\nKeep units visible: displacement in metre, velocity in metre per second, and acceleration in metre per second squared. Unit discipline prevents many avoidable mistakes in physics numericals.";
 
-  const plannerArticle = await prisma.resource.create({
+  const motionArticle = await prisma.resource.create({
     data: {
       type: ResourceType.article,
-      title: "CBSE board prep planner",
-      description: "Weekly study rhythm and revision planning",
-      body: "Plan revision by topic, alternate practice and review, and close each week with a timed test.",
+      title: "Kinematics micro-notes for NEET foundation",
+      description: "Exam-ready notes on distance, displacement, velocity, acceleration, units, and graph clues.",
+      body: motionArticleBody,
+      assetSlug: "ams/mock/article/program/neet-foundation/motion-micronotes/v1",
+      storageType: "repo",
+      thumbnailPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.svg",
+      bannerPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.svg",
+      metadataPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/title-description.md",
+      sourceUrl: "https://openstax.org/books/college-physics-2e/pages/2-introduction-to-one-dimensional-kinematics",
+      contentJson: {
+        readingMinutes: 4,
+        articleText: motionArticleBody,
+        sourceNotes: ["OpenStax College Physics 2e", "NCERT Class 11 Physics Motion in a Straight Line", "Khan Academy one-dimensional motion"]
+      },
       sourceTag
     }
   });
 
-  const flashDeck = await prisma.resource.create({
+  const motionVideo = await prisma.resource.create({
+    data: {
+      type: ResourceType.video,
+      title: "Motion in a Straight Line: displacement, velocity, acceleration",
+      description: "Short concept video for Class 11 medical foundation learners.",
+      body: "Use the captions and summary to review the concept video. The lesson connects displacement, velocity, acceleration, and graph interpretation for one-dimensional motion.",
+      assetSlug: "ams/mock/video/program/neet-foundation/kinematics-motion/v1",
+      storageType: "repo",
+      thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.svg",
+      bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.svg",
+      vttPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt",
+      metadataPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md",
+      sourceUrl: "https://www.khanacademy.org/science/physics/one-dimensional-motion",
+      contentJson: {
+        durationSeconds: 480,
+        videoKind: "concept",
+        mediaUrl: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+        mediaNote: "MVP playback sample. Replace with repo or bucket-hosted lesson MP4 when production content is ready.",
+        transcriptSummary: [
+          "Distance is total path length; displacement is change in position with direction.",
+          "Average speed uses distance; average velocity uses displacement.",
+          "Acceleration is change in velocity per unit time.",
+          "Position-time slope gives velocity; velocity-time slope gives acceleration."
+        ]
+      },
+      sourceTag
+    }
+  });
+
+  const motionFlashcards = [
+    ["What is displacement?", "Displacement is the change in position from start to finish, measured with direction."],
+    ["How is distance different from displacement?", "Distance is total path length. Displacement depends only on initial and final position."],
+    ["What is average speed?", "Average speed equals total distance divided by total time."],
+    ["What is average velocity?", "Average velocity equals displacement divided by total time."],
+    ["What does acceleration measure?", "Acceleration measures the rate of change of velocity with time."],
+    ["What is the SI unit of acceleration?", "Metre per second squared, written as m/s²."],
+    ["What does slope on a position-time graph represent?", "The slope of a position-time graph represents velocity."],
+    ["What does slope on a velocity-time graph represent?", "The slope of a velocity-time graph represents acceleration."],
+    ["What does area under a velocity-time graph represent?", "The signed area under a velocity-time graph represents displacement."],
+    ["Can speed be negative?", "No. Speed is a scalar path-rate and is never negative."]
+  ];
+
+  const motionFlashDeck = await prisma.resource.create({
     data: {
       type: ResourceType.flashcard,
-      title: "Quadratic equations",
-      description: "10 quick revision cards",
+      title: "Motion active recall cards",
+      description: "10 flashcards for one-dimensional motion definitions, units, and graphs.",
+      assetSlug: "ams/mock/flashcard/program/neet-foundation/motion-active-recall/v1",
+      storageType: "repo",
+      thumbnailPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.svg",
+      bannerPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.svg",
+      metadataPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/title-description.md",
+      contentJson: {
+        deckPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/deck.json",
+        cardCount: motionFlashcards.length
+      },
       sourceTag,
       flashcards: {
-        create: Array.from({ length: 10 }).map((_, index) => ({
+        create: motionFlashcards.map(([question, answer], index) => ({
           sequence: index + 1,
-          question: `Quadratic question ${index + 1}`,
-          answer: `Quadratic answer ${index + 1}`,
-          relatedArticleId: plannerArticle.id,
+          question,
+          answer,
+          relatedArticleId: motionArticle.id,
           sourceTag
         }))
       }
     }
   });
 
-  const quizResource = await prisma.resource.create({
+  const motionQuizQuestions = [
+    {
+      id: "motion-q1",
+      prompt: "A student walks 5 m east and then 5 m west. What is the displacement?",
+      options: ["10 m east", "10 m west", "0 m", "5 m east"],
+      answerIndex: 2,
+      learnMore: "Displacement depends only on final position relative to the starting point."
+    },
+    {
+      id: "motion-q2",
+      prompt: "Which quantity is always non-negative?",
+      options: ["Velocity", "Displacement", "Acceleration", "Distance"],
+      answerIndex: 3,
+      learnMore: "Distance measures total path length, so it cannot be negative."
+    },
+    {
+      id: "motion-q3",
+      prompt: "The slope of a position-time graph gives which quantity?",
+      options: ["Velocity", "Displacement", "Acceleration", "Distance"],
+      answerIndex: 0,
+      learnMore: "Change in position divided by change in time is velocity."
+    },
+    {
+      id: "motion-q4",
+      prompt: "The SI unit of acceleration is:",
+      options: ["m", "m/s", "m/s²", "s/m"],
+      answerIndex: 2,
+      learnMore: "Acceleration is change in velocity per unit time, so the unit is m/s²."
+    },
+    {
+      id: "motion-q5",
+      prompt: "On a velocity-time graph, the area under the graph represents:",
+      options: ["Acceleration", "Speed only", "Displacement", "Mass"],
+      answerIndex: 2,
+      learnMore: "Velocity multiplied by time gives displacement."
+    },
+    {
+      id: "motion-q6",
+      prompt: "If velocity is constant, acceleration is:",
+      options: ["Zero", "Always positive", "Always negative", "Equal to distance"],
+      answerIndex: 0,
+      learnMore: "Acceleration measures change in velocity. With no change, acceleration is zero."
+    }
+  ];
+
+  const motionQuiz = await prisma.resource.create({
     data: {
       type: ResourceType.quiz,
-      title: "Quadratic equations quiz",
-      description: "Exam-style practice for roots and discriminants",
+      title: "Motion diagnostic quiz",
+      description: "6 MCQs to check distance, displacement, velocity, acceleration, and graph interpretation.",
+      assetSlug: "ams/mock/quiz/program/neet-foundation/motion-diagnostic/v1",
+      storageType: "repo",
+      thumbnailPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.svg",
+      bannerPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.svg",
+      metadataPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/title-description.md",
+      contentJson: {
+        questions: motionQuizQuestions,
+        quizPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/quiz.json"
+      },
       sourceTag
     }
   });
@@ -341,28 +450,37 @@ async function main() {
       {
         role: Role.student,
         type: ResourceType.video,
-        title: algebraVideo.title,
-        description: algebraVideo.description,
+        title: motionVideo.title,
+        description: motionVideo.description,
         thumbnailLabel: "Video",
-        resourceId: algebraVideo.id,
+        resourceId: motionVideo.id,
         sourceTag
       },
       {
         role: Role.student,
         type: ResourceType.flashcard,
-        title: flashDeck.title,
-        description: flashDeck.description,
+        title: motionFlashDeck.title,
+        description: motionFlashDeck.description,
         thumbnailLabel: "Flashcard",
-        resourceId: flashDeck.id,
+        resourceId: motionFlashDeck.id,
         sourceTag
       },
       {
         role: Role.student,
         type: ResourceType.article,
-        title: plannerArticle.title,
-        description: plannerArticle.description,
+        title: motionArticle.title,
+        description: motionArticle.description,
         thumbnailLabel: "Article",
-        resourceId: plannerArticle.id,
+        resourceId: motionArticle.id,
+        sourceTag
+      },
+      {
+        role: Role.student,
+        type: ResourceType.quiz,
+        title: motionQuiz.title,
+        description: motionQuiz.description,
+        thumbnailLabel: "Quiz",
+        resourceId: motionQuiz.id,
         sourceTag
       },
       {
@@ -371,7 +489,7 @@ async function main() {
         title: "Tutor trust checklist",
         description: "Verification signals before trial booking",
         thumbnailLabel: "Article",
-        resourceId: plannerArticle.id,
+        resourceId: motionArticle.id,
         sourceTag
       },
       {
@@ -380,7 +498,7 @@ async function main() {
         title: "How to request reviews",
         description: "Improve profile trust after completed classes",
         thumbnailLabel: "Article",
-        resourceId: plannerArticle.id,
+        resourceId: motionArticle.id,
         sourceTag
       }
     ]
@@ -426,52 +544,52 @@ async function main() {
         data: [
           {
             milestoneId: milestone.id,
-            resourceId: algebraVideo.id,
+            resourceId: motionVideo.id,
             sequence: 1,
             type: ResourceType.video,
-            title: "Concept video: high-yield foundation",
-            description: "An 8-15 minute focused lesson introducing one core concept with diagrams and examples.",
+            title: "Concept video: motion in one dimension",
+            description: "A focused lesson introducing displacement, velocity, acceleration, units, and graph clues.",
             sourceTag
           },
           {
             milestoneId: milestone.id,
-            resourceId: plannerArticle.id,
+            resourceId: motionArticle.id,
             sequence: 2,
             type: ResourceType.article,
-            title: "Interactive article and micro-notes",
-            description: "Bold keywords, step-by-step derivations, labeled diagrams, and board-ready summaries.",
+            title: "Kinematics micro-notes",
+            description: "Read the core definitions, sign convention, graph meanings, and unit reminders.",
             sourceTag
           },
           {
             milestoneId: milestone.id,
-            resourceId: flashDeck.id,
+            resourceId: motionFlashDeck.id,
             sequence: 3,
             type: ResourceType.flashcard,
-            title: "Digital flashcards for active recall",
-            description: "Formulae, named reactions, biology labels, units, and definitions for quick memorization.",
+            title: "Motion active recall cards",
+            description: "Review distance, displacement, speed, velocity, acceleration, and graph facts.",
             sourceTag
           },
           {
             milestoneId: milestone.id,
-            resourceId: plannerArticle.id,
+            resourceId: motionArticle.id,
             sequence: 4,
             type: ResourceType.article,
             title: "Formula and concept cheat sheet",
-            description: "A one-page milestone summary to review before moving to practice and assessment.",
+            description: "A milestone summary for units, graph slopes, and common conceptual traps.",
             sourceTag
           },
           {
             milestoneId: milestone.id,
-            resourceId: quizResource.id,
+            resourceId: motionQuiz.id,
             sequence: 5,
             type: ResourceType.quiz,
             title: "Diagnostic MCQ quiz",
-            description: "5-10 conceptual MCQs to prove readiness before unlocking the next milestone.",
+            description: "Six conceptual MCQs to prove readiness before unlocking the next milestone.",
             sourceTag
           },
           {
             milestoneId: milestone.id,
-            resourceId: quizResource.id,
+            resourceId: motionQuiz.id,
             sequence: 6,
             type: ResourceType.quiz,
             title: "Board-style subjective questions",

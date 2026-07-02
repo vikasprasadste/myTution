@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-label="Kinematics banner">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F7FCFD"/>
+      <stop offset="0.5" stop-color="#E1F5F9"/>
+      <stop offset="1" stop-color="#F2E4FA"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#1EA7B0"/>
+      <stop offset="1" stop-color="#A26CF5"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="540" rx="48" fill="url(#bg)"/>
+  <path d="M120 412h960" stroke="#223142" stroke-opacity="0.18" stroke-width="10" stroke-linecap="round"/>
+  <path d="M150 396c150-170 268-205 355-108 82 91 147 104 246 4 63-64 126-136 242-158" fill="none" stroke="url(#accent)" stroke-width="22" stroke-linecap="round"/>
+  <circle cx="506" cy="288" r="34" fill="#FFFFFF" stroke="#1E7F86" stroke-width="9"/>
+  <circle cx="751" cy="292" r="34" fill="#FFFFFF" stroke="#9B6BE8" stroke-width="9"/>
+  <text x="96" y="112" font-family="Arial, sans-serif" font-size="58" font-weight="900" fill="#223142">Kinematics foundation</text>
+  <text x="98" y="170" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#52657F">Build the basics before NEET motion problems.</text>
+  <rect x="98" y="210" width="338" height="64" rx="32" fill="#FFFFFF" opacity="0.82"/>
+  <text x="128" y="252" font-family="Arial, sans-serif" font-size="24" font-weight="800" fill="#1E7F86">Video • 8 min concept</text>
+</svg>

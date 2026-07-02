@@ -1,0 +1,44 @@
+[
+  {
+    "id": "motion-q1",
+    "prompt": "A student walks 5 m east and then 5 m west. What is the displacement?",
+    "options": ["10 m east", "10 m west", "0 m", "5 m east"],
+    "answerIndex": 2,
+    "learnMore": "Displacement depends only on final position relative to the starting point."
+  },
+  {
+    "id": "motion-q2",
+    "prompt": "Which quantity is always non-negative?",
+    "options": ["Velocity", "Displacement", "Acceleration", "Distance"],
+    "answerIndex": 3,
+    "learnMore": "Distance measures total path length, so it cannot be negative."
+  },
+  {
+    "id": "motion-q3",
+    "prompt": "The slope of a position-time graph gives which quantity?",
+    "options": ["Velocity", "Displacement", "Acceleration", "Distance"],
+    "answerIndex": 0,
+    "learnMore": "Change in position divided by change in time is velocity."
+  },
+  {
+    "id": "motion-q4",
+    "prompt": "The SI unit of acceleration is:",
+    "options": ["m", "m/s", "m/s²", "s/m"],
+    "answerIndex": 2,
+    "learnMore": "Acceleration is change in velocity per unit time, so the unit is m/s²."
+  },
+  {
+    "id": "motion-q5",
+    "prompt": "On a velocity-time graph, the area under the graph represents:",
+    "options": ["Acceleration", "Speed only", "Displacement", "Mass"],
+    "answerIndex": 2,
+    "learnMore": "Velocity multiplied by time gives displacement."
+  },
+  {
+    "id": "motion-q6",
+    "prompt": "If velocity is constant, acceleration is:",
+    "options": ["Zero", "Always positive", "Always negative", "Equal to distance"],
+    "answerIndex": 0,
+    "learnMore": "Acceleration measures change in velocity. With no change, acceleration is zero."
+  }
+]

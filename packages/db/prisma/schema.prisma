@@ -323,6 +323,14 @@ model Resource {
   title            String
   description      String
   body             String?
+  assetSlug        String?            @unique
+  storageType      String             @default("db")
+  contentJson      Json?
+  thumbnailPath    String?
+  bannerPath       String?
+  vttPath          String?
+  metadataPath     String?
+  sourceUrl        String?
   recommendations  Recommendation[]
   flashcards       Flashcard[]
   milestoneActivities MilestoneActivity[]

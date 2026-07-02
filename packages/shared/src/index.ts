@@ -33,6 +33,15 @@ export interface Recommendation {
   title: string;
   description: string;
   thumbnailLabel: string;
+  assetUrls?: ResourceAssetUrls;
+}
+
+export interface ResourceAssetUrls {
+  thumbnail?: string | null;
+  banner?: string | null;
+  vtt?: string | null;
+  metadata?: string | null;
+  media?: string | null;
 }
 
 export interface Reminder {
@@ -56,6 +65,7 @@ export interface ProgramMilestone {
     type: ResourceType;
     title: string;
     description: string;
+    assetUrls?: ResourceAssetUrls;
     status: "pending" | "in_progress" | "complete";
   }>;
 }

@@ -1,5 +1,7 @@
 import "dotenv/config";
 import crypto from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
@@ -10,6 +12,7 @@ import type { CommunityReactionType, ProgramSummary, ResourceType, Role } from "
 
 const app = express();
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
+const assetsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../assets");
 const mockOtp = "123456";
 const mobileClientId = "mytution_mobile_app";
 const medicalProgramCatalog = [
@@ -67,6 +70,38 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));
+app.use("/api/v1/ams/files", express.static(assetsRoot));
+
+function toAssetUrl(assetPath?: string | null) {
+  if (!assetPath) return null;
+  return `/api/v1/ams/files/${assetPath.replace(/^services\/api\/assets\//, "")}`;
+}
+
+function readMediaUrl(contentJson?: unknown) {
+  if (!contentJson || typeof contentJson !== "object" || !("mediaUrl" in contentJson)) return null;
+  const mediaUrl = contentJson.mediaUrl;
+  return typeof mediaUrl === "string" ? mediaUrl : null;
+}
+
+function assetUrlsFor(resource?: { thumbnailPath?: string | null; bannerPath?: string | null; vttPath?: string | null; metadataPath?: string | null; contentJson?: unknown } | null) {
+  if (!resource) {
+    return { thumbnail: null, banner: null, vtt: null, metadata: null, media: null };
+  }
+  return {
+    thumbnail: toAssetUrl(resource.thumbnailPath),
+    banner: toAssetUrl(resource.bannerPath),
+    vtt: toAssetUrl(resource.vttPath),
+    metadata: toAssetUrl(resource.metadataPath),
+    media: readMediaUrl(resource.contentJson)
+  };
+}
+
+function withAssetUrls<T extends { thumbnailPath?: string | null; bannerPath?: string | null; vttPath?: string | null; metadataPath?: string | null; contentJson?: unknown }>(resource: T) {
+  return {
+    ...resource,
+    assetUrls: assetUrlsFor(resource)
+  };
+}
 
 app.get("/health", async (_req, res) => {
   try {
@@ -679,6 +714,7 @@ app.get("/api/v1/recommendations", async (req, res) => {
 
   const data = await prisma.recommendation.findMany({
     where: { role },
+    include: { content: true },
     orderBy: { createdAt: "asc" }
   });
   res.json({ data: data.map(toRecommendation) });
@@ -855,7 +891,19 @@ app.get("/api/v1/resources/:id", async (req, res) => {
     res.status(404).json({ error: "Resource not found" });
     return;
   }
-  res.json({ data: resource });
+  res.json({ data: withAssetUrls(resource) });
+});
+
+app.get("/api/v1/ams/assets/:id", async (req, res) => {
+  const resource = await prisma.resource.findUnique({
+    where: { id: req.params.id },
+    include: { flashcards: { orderBy: { sequence: "asc" } } }
+  });
+  if (!resource) {
+    res.status(404).json({ error: "Asset not found" });
+    return;
+  }
+  res.json({ data: withAssetUrls(resource) });
 });
 
 app.get("/api/v1/resources/:id/quiz", async (req, res) => {
@@ -864,12 +912,16 @@ app.get("/api/v1/resources/:id/quiz", async (req, res) => {
     res.status(400).json({ error: "Resource is not a quiz" });
     return;
   }
+  const contentJson = resource?.contentJson as { questions?: QuizQuestion[] } | null | undefined;
+  const resourceQuestions = contentJson && Array.isArray(contentJson.questions)
+    ? contentJson.questions
+    : null;
   res.json({
     data: {
       resourceId: req.params.id,
       title: resource?.title ?? "Diagnostic MCQ quiz",
       description: resource?.description ?? "Answer each question to calculate your score and unlock the next learning step.",
-      questions: quizQuestionBank
+      questions: resourceQuestions ?? quizQuestionBank
     }
   });
 });
@@ -1374,6 +1426,7 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
           activities: {
             orderBy: { sequence: "asc" },
             include: {
+              resource: true,
               progress: scopedProfile ? { where: { profileId: scopedProfile.id } } : false
             }
           }
@@ -1408,6 +1461,7 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
         type: activity.type,
         title: activity.title,
         description: activity.description,
+        assetUrls: assetUrlsFor(activity.resource),
         status: activity.progress?.[0]?.status ?? "pending"
       }))
     }))
@@ -1502,6 +1556,13 @@ function toRecommendation(item: {
   title: string;
   description: string;
   thumbnailLabel: string;
+  content?: {
+    thumbnailPath?: string | null;
+    bannerPath?: string | null;
+    vttPath?: string | null;
+    metadataPath?: string | null;
+    contentJson?: unknown;
+  } | null;
 }) {
   return {
     id: item.id,
@@ -1509,7 +1570,8 @@ function toRecommendation(item: {
     type: item.type,
     title: item.title,
     description: item.description,
-    thumbnailLabel: item.thumbnailLabel
+    thumbnailLabel: item.thumbnailLabel,
+    assetUrls: assetUrlsFor(item.content)
   };
 }
 

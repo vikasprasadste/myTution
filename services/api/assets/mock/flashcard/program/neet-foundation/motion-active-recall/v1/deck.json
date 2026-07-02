@@ -1,0 +1,42 @@
+[
+  {
+    "question": "What is displacement?",
+    "answer": "Displacement is the change in position from start to finish, measured with direction."
+  },
+  {
+    "question": "How is distance different from displacement?",
+    "answer": "Distance is total path length. Displacement depends only on initial and final position."
+  },
+  {
+    "question": "What is average speed?",
+    "answer": "Average speed equals total distance divided by total time."
+  },
+  {
+    "question": "What is average velocity?",
+    "answer": "Average velocity equals displacement divided by total time."
+  },
+  {
+    "question": "What does acceleration measure?",
+    "answer": "Acceleration measures the rate of change of velocity with time."
+  },
+  {
+    "question": "What is the SI unit of acceleration?",
+    "answer": "Metre per second squared, written as m/s²."
+  },
+  {
+    "question": "What does slope on a position-time graph represent?",
+    "answer": "The slope of a position-time graph represents velocity."
+  },
+  {
+    "question": "What does slope on a velocity-time graph represent?",
+    "answer": "The slope of a velocity-time graph represents acceleration."
+  },
+  {
+    "question": "What does area under a velocity-time graph represent?",
+    "answer": "The signed area under a velocity-time graph represents displacement."
+  },
+  {
+    "question": "Can speed be negative?",
+    "answer": "No. Speed is a scalar path-rate and is never negative."
+  }
+]
