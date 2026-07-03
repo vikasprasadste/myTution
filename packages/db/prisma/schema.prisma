@@ -38,6 +38,9 @@ enum BatchRequestStatus {
   pending
   approved
   rejected
+  deferred
+  suggested
+  dismissed
 }
 
 enum EnrollmentStatus {
@@ -274,9 +277,11 @@ model TutorBatch {
 model BatchRequest {
   id               String             @id @default(cuid())
   batchId          String
+  suggestedBatchId String?
   studentProfileId String
   status           BatchRequestStatus @default(pending)
   message          String?
+  tutorResponse    String?
   sourceTag        String             @default("app")
   batch            TutorBatch         @relation(fields: [batchId], references: [id], onDelete: Cascade)
   studentProfile   Profile            @relation("StudentBatchRequests", fields: [studentProfileId], references: [id], onDelete: Cascade)

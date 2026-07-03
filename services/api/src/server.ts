@@ -808,6 +808,16 @@ app.post("/api/v1/usermanagement/batch-requests/:id/approve", async (req, res) =
       update: { status: "active", requestId: request.id },
       create: { batchId: request.batchId, studentProfileId: request.studentProfileId, requestId: request.id, status: "active", sourceTag: "app" }
     });
+    await tx.reminder.create({
+      data: {
+        userId: request.studentProfile.userId,
+        profileId: request.studentProfileId,
+        role: "student",
+        title: `Class: ${request.batch.title}`,
+        startsAt: request.batch.startsAt,
+        sourceTag: "app"
+      }
+    });
     return { approved, enrollment };
   });
   res.json({ data: result });
@@ -825,8 +835,71 @@ app.post("/api/v1/usermanagement/batch-requests/:id/reject", async (req, res) =>
     res.status(404).json({ error: "Request not found" });
     return;
   }
-  const rejected = await prisma.batchRequest.update({ where: { id: request.id }, data: { status: "rejected" } });
+  const rejected = await prisma.batchRequest.update({ where: { id: request.id }, data: { status: "rejected", tutorResponse: stringOrNull(req.body.message) ?? "Tutor denied this request." } });
   res.json({ data: rejected });
+});
+
+app.post("/api/v1/usermanagement/batch-requests/:id/defer", async (req, res) => {
+  const userId = await readUserId(req);
+  const tutor = await findProfile("tutor", userId);
+  if (!tutor) {
+    res.status(404).json({ error: "Tutor profile not found" });
+    return;
+  }
+  const request = await prisma.batchRequest.findUnique({ where: { id: req.params.id }, include: { batch: { include: { tutorProfile: true } } } });
+  if (!request || request.batch.tutorProfile.profileId !== tutor.id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  const deferred = await prisma.batchRequest.update({ where: { id: request.id }, data: { status: "deferred", tutorResponse: stringOrNull(req.body.message) ?? "Tutor deferred this request for a later slot." } });
+  res.json({ data: deferred });
+});
+
+app.post("/api/v1/usermanagement/batch-requests/:id/suggest", async (req, res) => {
+  const userId = await readUserId(req);
+  const tutor = await findProfile("tutor", userId);
+  if (!tutor) {
+    res.status(404).json({ error: "Tutor profile not found" });
+    return;
+  }
+  const request = await prisma.batchRequest.findUnique({ where: { id: req.params.id }, include: { batch: { include: { tutorProfile: true } } } });
+  if (!request || request.batch.tutorProfile.profileId !== tutor.id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  let suggestedBatchId = stringOrNull(req.body.suggestedBatchId);
+  if (!suggestedBatchId || suggestedBatchId === request.batchId) {
+    const alternate = await prisma.tutorBatch.findFirst({
+      where: { tutorProfileId: request.batch.tutorProfileId, id: { not: request.batchId } },
+      orderBy: { startsAt: "asc" }
+    });
+    suggestedBatchId = alternate?.id ?? suggestedBatchId;
+  }
+  const suggested = await prisma.batchRequest.update({
+    where: { id: request.id },
+    data: {
+      status: "suggested",
+      suggestedBatchId,
+      tutorResponse: stringOrNull(req.body.message) ?? "Tutor suggested another batch."
+    }
+  });
+  res.json({ data: suggested });
+});
+
+app.post("/api/v1/usermanagement/batch-requests/:id/dismiss", async (req, res) => {
+  const userId = await readUserId(req);
+  const student = await findProfile("student", userId);
+  if (!student) {
+    res.status(404).json({ error: "Student profile not found" });
+    return;
+  }
+  const request = await prisma.batchRequest.findUnique({ where: { id: req.params.id } });
+  if (!request || request.studentProfileId !== student.id) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  const dismissed = await prisma.batchRequest.update({ where: { id: request.id }, data: { status: "dismissed" } });
+  res.json({ data: dismissed });
 });
 
 app.get("/api/v1/usermanagement/classes", async (req, res) => {
@@ -849,7 +922,7 @@ app.get("/api/v1/usermanagement/classes", async (req, res) => {
   }
   const enrollments = await prisma.batchEnrollment.findMany({
     where: { studentProfileId: profile.id, status: "active" },
-    include: { batch: { include: { tutorProfile: { include: { profile: true } } } } },
+    include: { batch: { include: { tutorProfile: { include: { profile: true } }, enrollments: { include: { studentProfile: true } } } } },
     orderBy: { createdAt: "desc" }
   });
   res.json({ data: enrollments.map((enrollment) => toStudentClass(enrollment.batch, enrollment.id)) });
@@ -1588,6 +1661,9 @@ function toTutionDetail(batch: any, tutor: any) {
 }
 
 function toBatchSummary(batch: any) {
+  const enrolledCount = batch.enrollments?.length ?? 0;
+  const fillPercent = batch.capacity ? Math.min(100, Math.round((enrolledCount / batch.capacity) * 100)) : 0;
+  const availabilityStatus = fillPercent >= 100 ? "booked" : fillPercent >= 70 ? "filling_fast" : "available";
   return {
     id: batch.id,
     title: batch.title,
@@ -1600,8 +1676,10 @@ function toBatchSummary(batch: any) {
     classroomLocation: batch.classroomLocation,
     startsAt: batch.startsAt.toISOString(),
     capacity: batch.capacity,
-    enrolledCount: batch.enrollments?.length ?? 0,
+    enrolledCount,
     requestCount: batch.requests?.length ?? 0,
+    fillPercent,
+    availabilityStatus,
     onlineVideoLink: classReadyLink(batch)
   };
 }
@@ -1612,6 +1690,8 @@ function toBatchRequestSummary(request: any) {
     id: request.id,
     status: request.status,
     message: request.message,
+    tutorResponse: request.tutorResponse,
+    suggestedBatchId: request.suggestedBatchId,
     createdAt: request.createdAt.toISOString(),
     student: {
       id: request.studentProfile.id,
@@ -1645,7 +1725,12 @@ function toStudentClass(batch: any, enrollmentId?: string) {
     startsAt: batch.startsAt.toISOString(),
     tutorName: tutorProfile.profile.firstName + " " + tutorProfile.profile.lastName,
     tutorHeadline: tutorProfile.headline,
-    tutorRating: tutorProfile.rating
+    tutorRating: tutorProfile.rating,
+    enrolledStudents: batch.enrollments?.map((enrollment: any) => ({
+      id: enrollment.studentProfile.id,
+      name: enrollment.studentProfile.firstName + " " + enrollment.studentProfile.lastName,
+      city: enrollment.studentProfile.city
+    })) ?? []
   };
 }
 

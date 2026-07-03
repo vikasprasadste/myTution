@@ -198,7 +198,7 @@ async function main() {
     const tutorUser = await prisma.user.create({
       data: {
         phone: index === 0 ? "+917838920129" : "+9198000000" + String(index + 1).padStart(2, "0"),
-        passwordHash: await hashPassword("Password@123"),
+        passwordHash: await hashPassword(index === 0 ? "Tutor@123" : "Password@123"),
         sourceTag,
         profiles: {
           create: {
@@ -268,7 +268,7 @@ async function main() {
           classroomLocation: mode.includes("Home Tuition") ? location + " learning studio" : null,
           onlineLink: mode.includes("Online") ? "https://meet.mytution.test/batch-" + (index + 1) : null,
           startsAt: new Date("2026-06-" + String(26 + (index % 3)).padStart(2, "0") + "T12:30:00.000Z"),
-          capacity: 12,
+          capacity: index === 0 ? 2 : 12,
           sourceTag
         },
         {
@@ -283,12 +283,68 @@ async function main() {
           classroomLocation: null,
           onlineLink: "https://meet.mytution.test/weekend-" + (index + 1),
           startsAt: new Date("2026-06-" + String(27 + (index % 2)).padStart(2, "0") + "T04:30:00.000Z"),
-          capacity: 20,
+          capacity: index === 0 ? 5 : 20,
           sourceTag
         }
       ]
     });
     if (index === 0) {
+      await prisma.tutorBatch.create({
+        data: {
+          tutorProfileId: tutorProfile.id,
+          title: "Class 10 Mathematics offline intensive",
+          course: "CBSE Mathematics board intensive",
+          subject: primarySubject,
+          grade: primaryGrade,
+          board: primaryBoard,
+          mode: "Home Tuition",
+          schedule: "Tue, Thu • 5:00 PM",
+          classroomLocation: "South Delhi learning studio",
+          onlineLink: null,
+          startsAt: new Date("2026-06-28T11:30:00.000Z"),
+          capacity: 4,
+          sourceTag
+        }
+      });
+      const nehaBatches = await prisma.tutorBatch.findMany({ where: { tutorProfileId: tutorProfile.id }, orderBy: { startsAt: "asc" } });
+      const classmates = await Promise.all(["Riya Mehta", "Kabir Arora", "Ishaan Bedi", "Tara Joshi"].map(async (name, studentIndex) => {
+        const [studentFirstName, studentLastName] = name.split(" ");
+        const studentUser = await prisma.user.create({
+          data: {
+            phone: "+91783893" + String(studentIndex + 1).padStart(4, "0"),
+            passwordHash: await hashPassword("Password@123"),
+            sourceTag,
+            profiles: {
+              create: {
+                role: Role.student,
+                firstName: studentFirstName,
+                lastName: studentLastName,
+                dob: new Date("2010-04-14T00:00:00.000Z"),
+                city: "Delhi",
+                communicationAddress: "South Delhi",
+                stream: "senior",
+                specialization: "CBSE Class 10 Mathematics",
+                sourceTag
+              }
+            }
+          },
+          include: { profiles: true }
+        });
+        return studentUser.profiles[0];
+      }));
+      for (const batch of nehaBatches) {
+        const fillCount = batch.capacity === 2 ? 2 : batch.capacity === 5 ? 4 : 1;
+        for (const classmate of classmates.slice(0, fillCount)) {
+          await prisma.batchEnrollment.create({
+            data: {
+              batchId: batch.id,
+              studentProfileId: classmate.id,
+              status: "active",
+              sourceTag
+            }
+          });
+        }
+      }
       await createMockTutorProgram(profile.id, {
         title: "Class 10 board exam free foundation",
         description: "Free starter program with algebra notes, video, flashcards, and a diagnostic quiz.",

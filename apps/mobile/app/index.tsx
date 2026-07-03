@@ -337,10 +337,12 @@ export default function Index() {
 
   useEffect(() => {
     if (screen === "search" && role === "student") refreshTutorSearch({ subject: "Mathematics" });
+    if (screen === "home" && role === "student") refreshStudentBatchRequests();
     if (screen === "roleHub") {
       if (role === "student") refreshClasses();
       if (role === "tutor") refreshBatchRequests();
     }
+    if (screen === "account" && role === "tutor") refreshBatchRequests();
   }, [screen, role, authSession?.accessToken]);
 
   async function prepareProgram(nextProgramId?: string | null) {
@@ -561,6 +563,15 @@ export default function Index() {
     }
   }
 
+  async function refreshStudentBatchRequests() {
+    try {
+      const response = await apiGet<{ data: BatchRequestSummary[] }>("/api/v1/usermanagement/batch-requests?role=student", authSession?.accessToken);
+      setBatchRequests(response.data);
+    } catch {
+      setBatchRequests([]);
+    }
+  }
+
   async function approveBatchRequest(requestId: string) {
     setLoadingAction("approveRequest:" + requestId);
     try {
@@ -569,6 +580,22 @@ export default function Index() {
       await refreshBatchRequests();
     } catch {
       setApiNotice("Approval failed. Please check API deployment and login state.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function actOnBatchRequest(requestId: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) {
+    setLoadingAction(action + "Request:" + requestId);
+    try {
+      await apiPost("/api/v1/usermanagement/batch-requests/" + requestId + "/" + action, {
+        message: action === "reject" ? "This batch is not the right fit right now." : action === "defer" ? "Let's revisit this after the next slot opens." : "Please consider another batch from my schedule.",
+        suggestedBatchId
+      }, authSession?.accessToken);
+      if (role === "tutor") await refreshBatchRequests();
+      if (role === "student") await refreshStudentBatchRequests();
+    } catch {
+      setApiNotice("Batch request action failed. Please check API deployment and login state.");
     } finally {
       setLoadingAction(null);
     }
@@ -1155,6 +1182,8 @@ export default function Index() {
             </Pressable>
           ) : null}
 
+          {role === "student" ? <StudentBatchRequestAlerts role={role} requests={batchRequests} openTutorSearch={() => setScreen("search")} dismiss={(id) => actOnBatchRequest(id, "dismiss")} actionLoading={loadingAction} /> : null}
+
           <SectionTitle>Dashboard</SectionTitle>
           <DashboardGrid role={role} cards={dashboardCards} setScreen={setScreen} />
         </>
@@ -1164,9 +1193,9 @@ export default function Index() {
     if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestLoading={loadingAction} search={refreshTutorSearch} back={() => setScreen("home")} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
-    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} />;
+    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} />;
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
-    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} />;
+    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
     if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} />;
@@ -2839,13 +2868,17 @@ function TutorDiscovery({
             <Text style={styles.batchMeta}>{program.milestoneCount} milestones • {program.activityCount} activities</Text>
             <Button role={role} label="Add to program" loading={requestLoading === "addTutorProgram:" + program.id} onPress={() => addTutorProgram(program.id)} />
           </View>
-        )) : <Card role={role}><CardTitle>No programs yet</CardTitle><Muted>This tutor has not published any program offerings.</Muted></Card>}
+        )) : <View style={styles.emptyInlineCard}><Text style={styles.todayTitle}>No programs yet</Text><Text style={styles.todayMeta}>This tutor has not published any program offerings.</Text></View>}
         <SectionTitle>Batches</SectionTitle>
         {selectedTutor.batches.map((batch) => (
           <View key={batch.id} style={styles.batchMiniCard}>
-            <Text style={styles.batchTitle}>{batch.title}</Text>
+            <View style={styles.rowBetween}>
+              <Text style={styles.batchTitle}>{batch.title}</Text>
+              <Text style={styles.tutorResourcePill}>{batch.availabilityStatus === "booked" ? "Booked" : batch.availabilityStatus === "filling_fast" ? "Filling fast" : "Available"}</Text>
+            </View>
             <Text style={styles.batchMeta}>{batch.course} • {batch.schedule}</Text>
             <Text style={styles.batchMeta}>{batch.mode}{batch.classroomLocation ? " • " + batch.classroomLocation : ""}</Text>
+            <Text style={styles.batchMeta}>{batch.enrolledCount}/{batch.capacity} seats filled • {batch.fillPercent ?? 0}%</Text>
             <Button role={role} label="Request batch" loading={requestLoading === "requestBatch:" + batch.id} onPress={() => requestBatch(batch.id)} />
           </View>
         ))}
@@ -2909,7 +2942,7 @@ function FilterDropdown({ label, value, options, onSelect }: { label: string; va
   );
 }
 
-function RoleHub({ role, classes, requests, loading, approveRequest, actionLoading, back }: { role: Role; classes: BatchClass[]; requests: BatchRequestSummary[]; loading: boolean; approveRequest: (id: string) => void; actionLoading: string | null; back: () => void }) {
+function RoleHub({ role, classes, requests, loading, approveRequest, requestAction, actionLoading, back }: { role: Role; classes: BatchClass[]; requests: BatchRequestSummary[]; loading: boolean; approveRequest: (id: string) => void; requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void; actionLoading: string | null; back: () => void }) {
   const title = role === "tutor" ? "Students" : role === "student" ? "Classes" : "Surveys";
   if (role === "student") {
     return (
@@ -2926,14 +2959,7 @@ function RoleHub({ role, classes, requests, loading, approveRequest, actionLoadi
       <>
         <TopBar title={title} left="‹" onLeft={back} />
         {loading ? <ActivityIndicator /> : null}
-        {requests.map((request) => (
-          <Card role={role} key={request.id}>
-            <CardTitle>{request.student.name}</CardTitle>
-            <Muted>{request.batch.title} • {request.batch.schedule}</Muted>
-            <Muted>Status: {capitalize(request.status)}</Muted>
-            {request.status === "pending" ? <Button role={role} label="Approve request" loading={actionLoading === "approveRequest:" + request.id} onPress={() => approveRequest(request.id)} /> : null}
-          </Card>
-        ))}
+        {requests.map((request) => <BatchRequestCard key={request.id} role={role} request={request} approveRequest={approveRequest} requestAction={requestAction} actionLoading={actionLoading} />)}
         {!loading && !requests.length ? <Card role={role}><CardTitle>No student requests yet</CardTitle><Muted>Batch requests from students will appear here for approval.</Muted></Card> : null}
       </>
     );
@@ -2954,8 +2980,46 @@ function ClassTile({ role, item }: { role: Role; item: BatchClass }) {
       <Text style={styles.classMeta}>{item.schedule} • {formatReminderDateTime(item.startsAt)}</Text>
       <Text style={styles.classMeta}>Tutor: {item.tutorName} • ★ {item.tutorRating}</Text>
       <Text style={styles.classMeta}>Classroom: {item.classroomLocation ?? "Online"}</Text>
+      {item.enrolledStudents?.length ? <Text style={styles.classMeta}>Students: {item.enrolledStudents.map((student) => student.name).join(", ")}</Text> : null}
       {item.onlineVideoLink ? <Text style={styles.classLink}>{item.onlineVideoLink}</Text> : <Text style={styles.classLocked}>Video link unlocks 5 minutes before class.</Text>}
     </View>
+  );
+}
+
+function BatchRequestCard({ role, request, approveRequest, requestAction, actionLoading }: { role: Role; request: BatchRequestSummary; approveRequest: (id: string) => void; requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void; actionLoading: string | null }) {
+  return (
+    <Card role={role}>
+      <CardTitle>{request.student.name}</CardTitle>
+      <Muted>{request.batch.title} • {request.batch.schedule}</Muted>
+      <Muted>Status: {capitalize(request.status)}{request.tutorResponse ? " • " + request.tutorResponse : ""}</Muted>
+      {request.status === "pending" ? (
+        <View style={styles.requestActionGrid}>
+          <Button role={role} label="Approve" loading={actionLoading === "approveRequest:" + request.id} onPress={() => approveRequest(request.id)} />
+          <Button role={role} variant="secondary" label="Deny" loading={actionLoading === "rejectRequest:" + request.id} onPress={() => requestAction(request.id, "reject")} />
+          <Button role={role} variant="secondary" label="Defer" loading={actionLoading === "deferRequest:" + request.id} onPress={() => requestAction(request.id, "defer")} />
+          <Button role={role} variant="secondary" label="Suggest another" loading={actionLoading === "suggestRequest:" + request.id} onPress={() => requestAction(request.id, "suggest", request.batch.batchId)} />
+        </View>
+      ) : null}
+    </Card>
+  );
+}
+
+function StudentBatchRequestAlerts({ role, requests, openTutorSearch, dismiss, actionLoading }: { role: Role; requests: BatchRequestSummary[]; openTutorSearch: () => void; dismiss: (id: string) => void; actionLoading: string | null }) {
+  const visible = requests.filter((request) => ["rejected", "deferred", "suggested"].includes(request.status));
+  if (!visible.length) return null;
+  return (
+    <>
+      <SectionTitle>Batch updates</SectionTitle>
+      {visible.map((request) => (
+        <View key={request.id} style={styles.batchAlertCard}>
+          <Pressable style={styles.alertClose} onPress={() => dismiss(request.id)}><Text style={styles.alertCloseText}>×</Text></Pressable>
+          <Text style={styles.batchTitle}>{request.batch.title}</Text>
+          <Text style={styles.batchMeta}>{capitalize(request.status)} by {request.tutor.name}</Text>
+          <Text style={styles.batchMeta}>{request.tutorResponse ?? "Please choose your next action."}</Text>
+          {request.status === "suggested" ? <Button role={role} label="View tutor batches" onPress={openTutorSearch} /> : null}
+        </View>
+      ))}
+    </>
   );
 }
 
@@ -3411,13 +3475,21 @@ function Account({
   persona,
   avatarUri,
   signOut,
-  setScreen
+  setScreen,
+  requests,
+  approveRequest,
+  requestAction,
+  actionLoading
 }: {
   role: Role;
   persona: typeof personas[Role];
   avatarUri: string | null;
   signOut: () => void;
   setScreen: (screen: AppScreen) => void;
+  requests: BatchRequestSummary[];
+  approveRequest: (id: string) => void;
+  requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void;
+  actionLoading: string | null;
 }) {
   const theme = useRoleTheme(role);
   return (
@@ -3441,6 +3513,12 @@ function Account({
       </View>
       <Button role={role} variant="secondary" label="Edit profile" onPress={() => setScreen("editProfile")} />
       <Button role={role} variant="secondary" label="Payments" onPress={() => setScreen("payments")} />
+      {role === "tutor" ? (
+        <>
+          <SectionTitle>Batch Requests</SectionTitle>
+          {requests.length ? requests.map((request) => <BatchRequestCard key={request.id} role={role} request={request} approveRequest={approveRequest} requestAction={requestAction} actionLoading={actionLoading} />) : <Card role={role}><CardTitle>No batch requests</CardTitle><Muted>Student admission requests will appear here.</Muted></Card>}
+        </>
+      ) : null}
       <Button role={role} variant="secondary" label="Sign out" onPress={signOut} />
     </>
   );
@@ -4277,6 +4355,10 @@ const styles = StyleSheet.create({
   batchMiniCard: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 16, borderWidth: 1, gap: 8, padding: 12 },
   batchTitle: { color: "#111827", fontSize: 15, fontWeight: "900", lineHeight: 20 },
   batchMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17 },
+  requestActionGrid: { gap: 8, marginTop: 10 },
+  batchAlertCard: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, padding: 14, paddingRight: 44, position: "relative", shadowColor: "#0F172A", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.06, shadowRadius: 16 },
+  alertClose: { alignItems: "center", backgroundColor: "#F8FAFC", borderRadius: 999, height: 30, justifyContent: "center", position: "absolute", right: 10, top: 10, width: 30, zIndex: 2 },
+  alertCloseText: { color: "#111827", fontSize: 18, fontWeight: "900", lineHeight: 20 },
   classTile: { backgroundColor: "rgba(255,255,255,0.95)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 7, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
   classTitle: { color: "#111827", fontSize: 18, fontWeight: "900", lineHeight: 23 },
   classMeta: { color: "#465A74", fontSize: 13, fontWeight: "700", lineHeight: 19 },

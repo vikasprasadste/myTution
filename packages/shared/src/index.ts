@@ -135,6 +135,8 @@ export interface TutorBatchSummary {
   capacity: number;
   enrolledCount: number;
   requestCount: number;
+  fillPercent?: number;
+  availabilityStatus?: "booked" | "filling_fast" | "available" | string;
   onlineVideoLink: string | null;
 }
 
@@ -230,8 +232,10 @@ export interface BatchClass {
 
 export interface BatchRequestSummary {
   id: string;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "deferred" | "suggested" | "dismissed";
   message: string | null;
+  tutorResponse?: string | null;
+  suggestedBatchId?: string | null;
   createdAt: string;
   student: { id: string; name: string; city: string | null };
   tutor: { id: string; name: string; headline: string; rating: number };
