@@ -175,6 +175,8 @@ function normalizeTutorProgramInput(body: unknown): TutorProgramCreateInput {
     description: String(input.description ?? "").trim(),
     milestoneTitle: String(input.milestoneTitle ?? "").trim(),
     visibility: input.visibility === "private" ? "private" : "published",
+    feeType: input.feeType === "paid" ? "paid" : "free",
+    feeAmount: input.feeType === "paid" ? Number(input.feeAmount ?? 0) || 0 : null,
     resources: Array.isArray(input.resources)
       ? input.resources.map(normalizeTutorResourceInput).filter((item): item is TutorProgramResourceInput => Boolean(item))
       : []
@@ -630,6 +632,11 @@ app.get("/api/v1/usermanagement/getUserProfile", async (req, res) => {
             include: { requests: true, enrollments: true }
           }
         }
+      },
+      authoredPrograms: {
+        where: { status: "published", visibility: "published" },
+        orderBy: { title: "asc" },
+        include: { milestones: { include: { activities: true } } }
       }
     },
     orderBy: { createdAt: "asc" }
@@ -692,7 +699,15 @@ app.get("/api/v1/usermanagement/tutors", async (req, res) => {
   const tutors = await prisma.tutorProfile.findMany({
     where: tutorWhere,
     include: {
-      profile: true,
+      profile: {
+        include: {
+          authoredPrograms: {
+            where: { status: "published", visibility: "published" },
+            orderBy: { title: "asc" },
+            include: { milestones: { include: { activities: true } } }
+          }
+        }
+      },
       batches: {
         where: batchWhere,
         orderBy: { startsAt: "asc" },
@@ -928,7 +943,7 @@ app.get("/api/v1/education-plan/programs", async (req, res) => {
   const programs = await prisma.program.findMany({
     where: { role, ...(role === "tutor" && profile ? { creatorProfileId: profile.id } : {}) },
     orderBy: { title: "asc" },
-    select: { id: true, role: true, title: true, description: true, status: true, visibility: true, creatorProfileId: true }
+    select: { id: true, role: true, title: true, description: true, status: true, visibility: true, creatorProfileId: true, feeType: true, feeAmount: true }
   });
   res.json({ data: programs });
 });
@@ -946,7 +961,15 @@ app.post("/api/v1/education-plan/programs/select", async (req, res) => {
     return;
   }
   const programId = String(req.body.programId ?? "");
-  const program = await prisma.program.findFirst({ where: { id: programId, role } });
+  const program = await prisma.program.findFirst({
+    where: {
+      id: programId,
+      OR: [
+        { role },
+        { role: "tutor", status: "published", visibility: "published" }
+      ]
+    }
+  });
   if (!program) {
     res.status(404).json({ error: "Program not found" });
     return;
@@ -1014,6 +1037,8 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
         creatorProfileId: tutor.id,
         visibility: input.visibility ?? "published",
         status: "published",
+        feeType: input.feeType ?? "free",
+        feeAmount: input.feeType === "paid" ? input.feeAmount ?? 0 : null,
         sourceTag: "app"
       }
     });
@@ -1170,7 +1195,7 @@ app.post("/api/v1/education-plan/activities/:id/complete", async (req, res) => {
       where: { id: req.params.id },
       include: { milestone: { include: { program: true, activities: true } } }
     });
-    if (!activity || activity.milestone.program.role !== role) return null;
+    if (!activity || (activity.milestone.program.role !== role && !(role === "student" && activity.milestone.program.role === "tutor"))) return null;
 
     const completedActivity = await tx.activityProgress.upsert({
       where: { profileId_activityId: { profileId: profile.id, activityId: activity.id } },
@@ -1473,6 +1498,7 @@ function toTutorSearchResult(tutor: any) {
     location: tutor.location,
     bio: tutor.bio,
     batches: tutor.batches.map(toBatchSummary),
+    programs: (tutor.profile.authoredPrograms ?? []).map(toTutorProgramSummary),
     tutionDetails: tutor.batches.map((batch: any) => toTutionDetail(batch, tutor))
   };
 }
@@ -1501,7 +1527,23 @@ function toUserProfileDetails(profile: any) {
     location: tutorProfile.location,
     bio: tutorProfile.bio,
     batches: tutorProfile.batches.map(toBatchSummary),
+    programs: (profile.authoredPrograms ?? []).map(toTutorProgramSummary),
     tutionDetails: tutorProfile.batches.map((batch: any) => toTutionDetail(batch, tutorProfile))
+  };
+}
+
+function toTutorProgramSummary(program: any) {
+  const milestones = program.milestones ?? [];
+  return {
+    id: program.id,
+    title: program.title,
+    description: program.description,
+    status: program.status,
+    visibility: program.visibility,
+    feeType: program.feeType,
+    feeAmount: program.feeAmount,
+    milestoneCount: milestones.length,
+    activityCount: milestones.reduce((count: number, milestone: any) => count + (milestone.activities?.length ?? 0), 0)
   };
 }
 
@@ -1608,9 +1650,11 @@ async function listProgramSummaries(role: Role, profileId?: string | null): Prom
     : [];
   const selectedIds = new Set(selections.map((selection) => selection.programId));
   const programs = await prisma.program.findMany({
-    where: { role },
+    where: role === "student"
+      ? { OR: [{ role }, { id: { in: Array.from(selectedIds) } }] }
+      : { role },
     orderBy: { title: "asc" },
-    select: { id: true, role: true, title: true, description: true, status: true, visibility: true, creatorProfileId: true }
+    select: { id: true, role: true, title: true, description: true, status: true, visibility: true, creatorProfileId: true, feeType: true, feeAmount: true }
   });
   if (programs.length) {
     return programs.map((program) => ({ ...program, role: readRole(program.role), selected: selectedIds.has(program.id) }));
@@ -1627,7 +1671,7 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
   if (!isFeatureEnabled("programSessions", role)) return null;
   const scopedProfile = userId ? await findProfile(role, userId) : null;
   const program = await prisma.program.findFirst({
-    where: { role, ...(programId ? { id: programId } : {}) },
+    where: programId ? { id: programId } : { role },
     include: {
       milestones: {
         orderBy: { sequence: "asc" },

@@ -79,6 +79,20 @@ export interface ProgramSummary {
   status?: string;
   visibility?: string;
   creatorProfileId?: string | null;
+  feeType?: "free" | "paid" | string;
+  feeAmount?: number | null;
+}
+
+export interface TutorProgramSummary {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  visibility: string;
+  feeType: "free" | "paid" | string;
+  feeAmount: number | null;
+  milestoneCount: number;
+  activityCount: number;
 }
 
 export interface TutorProgramResourceInput {
@@ -96,6 +110,8 @@ export interface TutorProgramCreateInput {
   description: string;
   milestoneTitle: string;
   visibility?: "private" | "published";
+  feeType?: "free" | "paid";
+  feeAmount?: number | null;
   resources: TutorProgramResourceInput[];
 }
 
@@ -136,6 +152,7 @@ export interface TutorSearchResult {
   location: string;
   bio: string;
   batches: TutorBatchSummary[];
+  programs?: TutorProgramSummary[];
   tutionDetails?: TutionDetail[];
 }
 
@@ -183,6 +200,7 @@ export interface UserProfileDetails extends UserListItem {
   bio?: string;
   tutionDetails: TutionDetail[];
   batches?: TutorBatchSummary[];
+  programs?: TutorProgramSummary[];
 }
 
 export interface BatchClass {

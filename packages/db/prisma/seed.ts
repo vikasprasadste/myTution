@@ -197,7 +197,7 @@ async function main() {
     const [firstName, lastName, headline, subjects, boards, grades, languages, mode, experienceYears, rating, hourlyRate, gender, location, bio] = item;
     const tutorUser = await prisma.user.create({
       data: {
-        phone: "+9198000000" + String(index + 1).padStart(2, "0"),
+        phone: index === 0 ? "+917838920129" : "+9198000000" + String(index + 1).padStart(2, "0"),
         passwordHash: await hashPassword("Password@123"),
         sourceTag,
         profiles: {
@@ -288,6 +288,22 @@ async function main() {
         }
       ]
     });
+    if (index === 0) {
+      await createMockTutorProgram(profile.id, {
+        title: "Class 10 board exam free foundation",
+        description: "Free starter program with algebra notes, video, flashcards, and a diagnostic quiz.",
+        milestoneTitle: "Milestone 1: Algebra foundations",
+        feeType: "free",
+        feeAmount: null
+      });
+      await createMockTutorProgram(profile.id, {
+        title: "Class 10 board exam 2 month crash course",
+        description: "Paid crash course with weekly milestones for board exam revision and practice.",
+        milestoneTitle: "Milestone 1: High-yield algebra revision",
+        feeType: "paid",
+        feeAmount: 2500
+      });
+    }
   }
 
   const motionArticleBody = "Motion in a straight line studies movement along one chosen axis. Choose a positive direction first. Once that choice is made, displacement, velocity, and acceleration can be positive, negative, or zero depending on direction.\n\nDistance is the total path length covered. It is always non-negative. Displacement is the change in position from the starting point to the ending point. A learner can travel a large distance and still have zero displacement if they return to the starting point.\n\nAverage speed equals total distance divided by total time. Average velocity equals displacement divided by total time. Speed is a scalar; velocity is a vector. This distinction matters in graph questions and sign-convention questions.\n\nAcceleration is the rate of change of velocity. If velocity increases in the positive direction, acceleration is positive. If velocity decreases while the object is still moving in the positive direction, acceleration is negative.\n\nGraph clues are powerful. On a position-time graph, slope gives velocity. On a velocity-time graph, slope gives acceleration, while the signed area under the graph gives displacement.\n\nKeep units visible: displacement in metre, velocity in metre per second, and acceleration in metre per second squared. Unit discipline prevents many avoidable mistakes in physics numericals.";
@@ -633,6 +649,106 @@ async function main() {
       }
     });
   }
+}
+
+async function createMockTutorProgram(profileId: string, input: { title: string; description: string; milestoneTitle: string; feeType: "free" | "paid"; feeAmount: number | null }) {
+  const article = await prisma.resource.create({
+    data: {
+      creatorProfileId: profileId,
+      type: ResourceType.article,
+      title: input.title + " notes",
+      description: "Board-focused micro-notes with formulas, examples, and answer-writing tips.",
+      body: "Use this article to revise definitions, identities, worked examples, and step-by-step board answer patterns.",
+      storageType: "db",
+      sourceTag
+    }
+  });
+  const video = await prisma.resource.create({
+    data: {
+      creatorProfileId: profileId,
+      type: ResourceType.video,
+      title: input.title + " concept video",
+      description: "Short lesson explaining the core concept before practice.",
+      sourceUrl: "https://example.com/mytution/class-10-board-program.mp4",
+      storageType: "db",
+      sourceTag
+    }
+  });
+  const flashcard = await prisma.resource.create({
+    data: {
+      creatorProfileId: profileId,
+      type: ResourceType.flashcard,
+      title: input.title + " recall cards",
+      description: "Quick active recall cards for identities, terms, and common traps.",
+      storageType: "db",
+      sourceTag
+    }
+  });
+  await prisma.flashcard.createMany({
+    data: [
+      { resourceId: flashcard.id, sequence: 1, question: "What is (a + b)^2?", answer: "a^2 + 2ab + b^2", sourceTag },
+      { resourceId: flashcard.id, sequence: 2, question: "What is (a - b)^2?", answer: "a^2 - 2ab + b^2", sourceTag },
+      { resourceId: flashcard.id, sequence: 3, question: "What should every algebra answer include?", answer: "Formula, substitution, calculation steps, and final statement.", sourceTag }
+    ]
+  });
+  const quiz = await prisma.resource.create({
+    data: {
+      creatorProfileId: profileId,
+      type: ResourceType.quiz,
+      title: input.title + " diagnostic quiz",
+      description: "Short MCQ check before moving to the next milestone.",
+      storageType: "db",
+      contentJson: {
+        questions: [
+          {
+            id: "class-10-board-q1",
+            prompt: "Which expression is equal to a^2 - b^2?",
+            options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + b^2", "2ab"],
+            answerIndex: 0,
+            learnMore: "Difference of squares factors into sum and difference terms."
+          },
+          {
+            id: "class-10-board-q2",
+            prompt: "What is the highest power in a linear equation?",
+            options: ["1", "2", "3", "0"],
+            answerIndex: 0,
+            learnMore: "A linear equation has variables with highest power 1."
+          }
+        ]
+      },
+      sourceTag
+    }
+  });
+  const program = await prisma.program.create({
+    data: {
+      creatorProfileId: profileId,
+      role: Role.tutor,
+      title: input.title,
+      description: input.description,
+      visibility: "published",
+      status: "published",
+      feeType: input.feeType,
+      feeAmount: input.feeAmount,
+      sourceTag,
+      milestones: {
+        create: {
+          sequence: 1,
+          title: input.milestoneTitle,
+          sourceTag
+        }
+      }
+    },
+    include: { milestones: true }
+  });
+  const milestone = program.milestones[0];
+  await prisma.milestoneActivity.createMany({
+    data: [
+      { milestoneId: milestone.id, resourceId: video.id, sequence: 1, type: ResourceType.video, title: video.title, description: video.description, sourceTag },
+      { milestoneId: milestone.id, resourceId: article.id, sequence: 2, type: ResourceType.article, title: article.title, description: article.description, sourceTag },
+      { milestoneId: milestone.id, resourceId: flashcard.id, sequence: 3, type: ResourceType.flashcard, title: flashcard.title, description: flashcard.description, sourceTag },
+      { milestoneId: milestone.id, resourceId: quiz.id, sequence: 4, type: ResourceType.quiz, title: quiz.title, description: quiz.description, sourceTag }
+    ]
+  });
 }
 
 function hashPassword(password: string) {

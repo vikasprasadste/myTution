@@ -148,6 +148,8 @@ const defaultTutorProgramDraft: TutorProgramDraft = {
   description: "A focused two month program with weekly milestones for board exam readiness.",
   milestoneTitle: "Milestone 1: Algebra fundamentals",
   visibility: "published",
+  feeType: "paid",
+  feeAmount: 2500,
   resources: [
     {
       type: "article",
@@ -500,6 +502,27 @@ export default function Index() {
       await refreshTutorSearch({ subject: "Mathematics" });
     } catch {
       setApiNotice("Batch request failed. Please check API deployment and login state.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function addTutorProgramToStudent(programId: string) {
+    setLoadingAction("addTutorProgram:" + programId);
+    try {
+      const response = await apiPost<{ programs: ProgramSummary[]; selectedPrograms: ProgramSummary[]; maxSelectedPrograms: number }>("/api/v1/education-plan/programs/select", {
+        role: "student",
+        programId
+      }, authSession?.accessToken);
+      setPrograms(response.programs);
+      setSelectedPrograms(response.selectedPrograms);
+      setSelectedProgramId(programId);
+      setProgramRefreshKey((value) => value + 1);
+      setProgramToast("Program added to Program.");
+      setScreen("sessions");
+      setApiNotice("");
+    } catch {
+      setApiNotice("Program could not be added. Please check login/API.");
     } finally {
       setLoadingAction(null);
     }
@@ -1133,7 +1156,7 @@ export default function Index() {
       );
     }
 
-    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} requestLoading={loadingAction} search={refreshTutorSearch} back={() => setScreen("home")} />;
+    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestLoading={loadingAction} search={refreshTutorSearch} back={() => setScreen("home")} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} />;
@@ -2558,6 +2581,14 @@ function TutorProgramAuthoring({
           <Input value={draft.milestoneTitle} onChangeText={(milestoneTitle) => updateDraft({ milestoneTitle })} />
           <FieldLabel>Visibility</FieldLabel>
           <DropdownField value={draft.visibility === "private" ? "Private draft" : "Published"} options={["Published", "Private draft"]} onSelect={(value) => updateDraft({ visibility: value === "Private draft" ? "private" : "published" })} />
+          <FieldLabel>Program fee</FieldLabel>
+          <DropdownField value={draft.feeType === "paid" ? "Paid" : "Free"} options={["Free", "Paid"]} onSelect={(value) => updateDraft({ feeType: value === "Paid" ? "paid" : "free", feeAmount: value === "Paid" ? draft.feeAmount ?? 2500 : null })} />
+          {draft.feeType === "paid" ? (
+            <>
+              <FieldLabel>Fee amount</FieldLabel>
+              <Input keyboardType="numeric" value={String(draft.feeAmount ?? "")} onChangeText={(value) => updateDraft({ feeAmount: Number(value.replace(/\D/g, "")) || 0 })} />
+            </>
+          ) : null}
           {draft.resources.map((resource, index) => (
             <View key={`${resource.type}-${index}`} style={styles.tutorResourceEditor}>
               <View style={styles.rowBetween}>
@@ -2683,6 +2714,7 @@ function TutorDiscovery({
   options,
   loading,
   requestBatch,
+  addTutorProgram,
   requestLoading,
   search,
   back
@@ -2692,6 +2724,7 @@ function TutorDiscovery({
   options: TutorFilterOptions;
   loading: boolean;
   requestBatch: (batchId: string) => void;
+  addTutorProgram: (programId: string) => void;
   requestLoading: string | null;
   search: (filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string; language?: string; gender?: string; experience?: string; rating?: string }) => void;
   back: () => void;
@@ -2746,6 +2779,22 @@ function TutorDiscovery({
           <Text style={styles.tutorMeta}>{tutor.subjects.join(", ")} • {tutor.boards.join(", ")} • {tutor.location}</Text>
           <Text style={styles.tutorMeta}>{tutor.experienceYears} yrs exp • ₹{tutor.hourlyRate}/hr • {tutor.mode.join(" / ")}</Text>
           <Text style={styles.tutorBio}>{tutor.bio}</Text>
+          {tutor.programs?.length ? (
+            <>
+              <Text style={styles.tutorProgramSectionTitle}>Programs offered</Text>
+              {tutor.programs.map((program) => (
+                <View key={program.id} style={styles.batchMiniCard}>
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.batchTitle}>{program.title}</Text>
+                    <Text style={styles.tutorResourcePill}>{program.feeType === "paid" ? `₹${program.feeAmount ?? 0}` : "Free"}</Text>
+                  </View>
+                  <Text style={styles.batchMeta}>{program.description}</Text>
+                  <Text style={styles.batchMeta}>{program.milestoneCount} milestones • {program.activityCount} activities</Text>
+                  <Button role={role} label="Add to program" loading={requestLoading === "addTutorProgram:" + program.id} onPress={() => addTutorProgram(program.id)} />
+                </View>
+              ))}
+            </>
+          ) : null}
           {tutor.batches.map((batch) => (
             <View key={batch.id} style={styles.batchMiniCard}>
               <Text style={styles.batchTitle}>{batch.title}</Text>
@@ -3412,6 +3461,7 @@ function userProfileToTutorResult(profile: UserProfileDetails): TutorSearchResul
     location: profile.location ?? profile.tutionDetails[0]?.location ?? profile.city ?? "",
     bio: profile.bio ?? "",
     batches: profile.batches ?? [],
+    programs: profile.programs ?? [],
     tutionDetails: profile.tutionDetails
   };
 }
@@ -3771,6 +3821,7 @@ const styles = StyleSheet.create({
   tutorResourceEditor: { backgroundColor: "rgba(255,255,255,0.86)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, marginTop: 8, padding: 12 },
   tutorResourceTitle: { color: "#202A35", fontSize: 16, fontWeight: "900" },
   tutorResourcePill: { backgroundColor: "#F2F7FB", borderRadius: 999, color: "#536A86", fontSize: 11, fontWeight: "900", overflow: "hidden", paddingHorizontal: 10, paddingVertical: 5 },
+  tutorProgramSectionTitle: { color: "#202A35", fontSize: 15, fontWeight: "900", marginTop: 4 },
   rowBetween: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   textAreaSmall: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 16, borderWidth: 1, color: "#111827", minHeight: 64, padding: 14, textAlignVertical: "top" },
   flashcardEditorRow: { gap: 8 },
