@@ -170,6 +170,21 @@ function withFlashcardFallback<T extends { id: string; type?: string | null; tit
 
 function normalizeTutorProgramInput(body: unknown): TutorProgramCreateInput {
   const input = (body ?? {}) as Partial<TutorProgramCreateInput>;
+  const legacyResources = Array.isArray(input.resources)
+    ? input.resources.map(normalizeTutorResourceInput).filter((item): item is TutorProgramResourceInput => Boolean(item))
+    : [];
+  const milestones = Array.isArray(input.milestones)
+    ? input.milestones.map((milestone, index) => {
+      const resources = Array.isArray(milestone.resources)
+        ? milestone.resources.map(normalizeTutorResourceInput).filter((item): item is TutorProgramResourceInput => Boolean(item))
+        : [];
+      return {
+        title: String(milestone.title ?? "").trim(),
+        sequence: Math.max(1, Number(milestone.sequence ?? index + 1) || index + 1),
+        resources
+      };
+    }).filter((milestone) => milestone.title && milestone.resources.length)
+    : [];
   return {
     title: String(input.title ?? "").trim(),
     description: String(input.description ?? "").trim(),
@@ -177,9 +192,12 @@ function normalizeTutorProgramInput(body: unknown): TutorProgramCreateInput {
     visibility: input.visibility === "private" ? "private" : "published",
     feeType: input.feeType === "paid" ? "paid" : "free",
     feeAmount: input.feeType === "paid" ? Number(input.feeAmount ?? 0) || 0 : null,
-    resources: Array.isArray(input.resources)
-      ? input.resources.map(normalizeTutorResourceInput).filter((item): item is TutorProgramResourceInput => Boolean(item))
-      : []
+    resources: legacyResources,
+    milestones: milestones.length ? milestones : legacyResources.length ? [{
+      title: String(input.milestoneTitle ?? "").trim(),
+      sequence: 1,
+      resources: legacyResources
+    }] : []
   };
 }
 
@@ -1023,7 +1041,7 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
   }
 
   const input = normalizeTutorProgramInput(req.body);
-  if (!input.title || !input.description || !input.milestoneTitle || input.resources.length === 0) {
+  if (!input.title || !input.description || !input.milestones?.length) {
     res.status(400).json({ error: "Program title, description, milestone, and resources are required" });
     return;
   }
@@ -1042,58 +1060,60 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
         sourceTag: "app"
       }
     });
-    const milestone = await tx.programMilestone.create({
-      data: {
-        programId: createdProgram.id,
-        sequence: 1,
-        title: input.milestoneTitle,
-        sourceTag: "app"
-      }
-    });
-
-    for (const [index, resourceInput] of input.resources.entries()) {
-      const resource = await tx.resource.create({
+    const orderedMilestones = [...(input.milestones ?? [])].sort((a, b) => a.sequence - b.sequence);
+    for (const milestoneInput of orderedMilestones) {
+      const milestone = await tx.programMilestone.create({
         data: {
-          creatorProfileId: tutor.id,
-          type: resourceInput.type,
-          title: resourceInput.title,
-          description: resourceInput.description,
-          body: resourceInput.body || resourceInput.description,
-          sourceUrl: resourceInput.mediaUrl || null,
-          storageType: "db",
-          contentJson: resourceInput.type === "quiz" ? {
-            questions: (resourceInput.quizQuestions ?? []).map((question, questionIndex) => ({
-              id: `${createdProgram.id}-q${questionIndex + 1}`,
-              prompt: question.prompt,
-              options: question.options,
-              answerIndex: question.answerIndex,
-              learnMore: question.learnMore ?? "Review the linked notes and try the concept again."
-            }))
-          } : undefined,
+          programId: createdProgram.id,
+          sequence: milestoneInput.sequence,
+          title: milestoneInput.title,
           sourceTag: "app"
         }
       });
-      if (resourceInput.type === "flashcard") {
-        const cards = (resourceInput.flashcards?.length ? resourceInput.flashcards : defaultTutorFlashcards(resourceInput.title)).map((card, cardIndex) => ({
-          resourceId: resource.id,
-          sequence: cardIndex + 1,
-          question: card.question,
-          answer: card.answer,
-          sourceTag: "app"
-        }));
-        await tx.flashcard.createMany({ data: cards });
-      }
-      await tx.milestoneActivity.create({
-        data: {
-          milestoneId: milestone.id,
-          resourceId: resource.id,
-          sequence: index + 1,
-          type: resourceInput.type,
-          title: resourceInput.title,
-          description: resourceInput.description,
-          sourceTag: "app"
+      for (const [index, resourceInput] of milestoneInput.resources.entries()) {
+        const resource = await tx.resource.create({
+          data: {
+            creatorProfileId: tutor.id,
+            type: resourceInput.type,
+            title: resourceInput.title,
+            description: resourceInput.description,
+            body: resourceInput.body || resourceInput.description,
+            sourceUrl: resourceInput.mediaUrl || null,
+            storageType: "db",
+            contentJson: resourceInput.type === "quiz" ? {
+              questions: (resourceInput.quizQuestions ?? []).map((question, questionIndex) => ({
+                id: `${createdProgram.id}-m${milestoneInput.sequence}-q${questionIndex + 1}`,
+                prompt: question.prompt,
+                options: question.options,
+                answerIndex: question.answerIndex,
+                learnMore: question.learnMore ?? "Review the linked notes and try the concept again."
+              }))
+            } : undefined,
+            sourceTag: "app"
+          }
+        });
+        if (resourceInput.type === "flashcard") {
+          const cards = (resourceInput.flashcards?.length ? resourceInput.flashcards : defaultTutorFlashcards(resourceInput.title)).map((card, cardIndex) => ({
+            resourceId: resource.id,
+            sequence: cardIndex + 1,
+            question: card.question,
+            answer: card.answer,
+            sourceTag: "app"
+          }));
+          await tx.flashcard.createMany({ data: cards });
         }
-      });
+        await tx.milestoneActivity.create({
+          data: {
+            milestoneId: milestone.id,
+            resourceId: resource.id,
+            sequence: index + 1,
+            type: resourceInput.type,
+            title: resourceInput.title,
+            description: resourceInput.description,
+            sourceTag: "app"
+          }
+        });
+      }
     }
 
     return tx.program.findUnique({

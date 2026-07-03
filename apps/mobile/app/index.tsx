@@ -146,43 +146,48 @@ const defaultAssetPathsByType: Record<string, { thumbnail: string; banner: strin
 const defaultTutorProgramDraft: TutorProgramDraft = {
   title: "Class 10 board exam 2 month crash course",
   description: "A focused two month program with weekly milestones for board exam readiness.",
-  milestoneTitle: "Milestone 1: Algebra fundamentals",
   visibility: "published",
   feeType: "paid",
   feeAmount: 2500,
-  resources: [
+  milestones: [
     {
-      type: "article",
-      title: "Algebra quick notes",
-      description: "Micro-notes covering identities, equations, and common board patterns.",
-      body: "Cover definitions, formulas, worked examples, and board-style answer steps."
-    },
-    {
-      type: "video",
-      title: "Solving linear equations",
-      description: "Short concept video for equation solving and checking answers.",
-      mediaUrl: "https://example.com/class-10-linear-equations.mp4"
-    },
-    {
-      type: "flashcard",
-      title: "Formula recall cards",
-      description: "Active recall cards for algebra identities and terms.",
-      flashcards: [
-        { question: "What is (a + b)^2?", answer: "a^2 + 2ab + b^2" },
-        { question: "What is (a - b)^2?", answer: "a^2 - 2ab + b^2" },
-        { question: "What is a linear equation?", answer: "An equation where the highest power of the variable is 1." }
-      ]
-    },
-    {
-      type: "quiz",
-      title: "Algebra diagnostic quiz",
-      description: "A short quiz to check readiness before the next milestone.",
-      quizQuestions: [
+      title: "Milestone 1: Algebra fundamentals",
+      sequence: 1,
+      resources: [
         {
-          prompt: "Which identity equals a^2 - b^2?",
-          options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + 2ab + b^2", "2ab"],
-          answerIndex: 0,
-          learnMore: "Difference of squares factors into the sum and difference of the terms."
+          type: "article",
+          title: "Algebra quick notes",
+          description: "Micro-notes covering identities, equations, and common board patterns.",
+          body: "Cover definitions, formulas, worked examples, and board-style answer steps."
+        },
+        {
+          type: "video",
+          title: "Solving linear equations",
+          description: "Short concept video for equation solving and checking answers.",
+          mediaUrl: "https://example.com/class-10-linear-equations.mp4"
+        },
+        {
+          type: "flashcard",
+          title: "Formula recall cards",
+          description: "Active recall cards for algebra identities and terms.",
+          flashcards: [
+            { question: "What is (a + b)^2?", answer: "a^2 + 2ab + b^2" },
+            { question: "What is (a - b)^2?", answer: "a^2 - 2ab + b^2" },
+            { question: "What is a linear equation?", answer: "An equation where the highest power of the variable is 1." }
+          ]
+        },
+        {
+          type: "quiz",
+          title: "Algebra diagnostic quiz",
+          description: "A short quiz to check readiness before the next milestone.",
+          quizQuestions: [
+            {
+              prompt: "Which identity equals a^2 - b^2?",
+              options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + 2ab + b^2", "2ab"],
+              answerIndex: 0,
+              learnMore: "Difference of squares factors into the sum and difference of the terms."
+            }
+          ]
         }
       ]
     }
@@ -2530,33 +2535,86 @@ function TutorProgramAuthoring({
 }) {
   const theme = useRoleTheme(role);
   const updateDraft = (patch: Partial<TutorProgramDraft>) => setDraft((current) => ({ ...current, ...patch }));
-  const updateResource = (index: number, patch: Partial<TutorProgramResourceInput>) => {
+  const milestones = draft.milestones?.length ? draft.milestones : [{
+    title: draft.milestoneTitle ?? "Milestone 1",
+    sequence: 1,
+    resources: draft.resources ?? []
+  }];
+  const defaultActivity = (type: ResourceType = "article"): TutorProgramResourceInput => ({
+    type,
+    title: type === "video" ? "New concept video" : type === "flashcard" ? "New flashcards" : type === "quiz" ? "New quiz" : "New article",
+    description: "Describe what students will learn in this activity.",
+    ...(type === "flashcard" ? { flashcards: defaultTutorProgramDraft.milestones?.[0]?.resources[2]?.flashcards ?? [] } : {}),
+    ...(type === "quiz" ? { quizQuestions: defaultTutorProgramDraft.milestones?.[0]?.resources[3]?.quizQuestions ?? [] } : {})
+  });
+  const updateMilestone = (milestoneIndex: number, patch: Partial<NonNullable<TutorProgramDraft["milestones"]>[number]>) => {
     setDraft((current) => ({
       ...current,
-      resources: current.resources.map((resource, resourceIndex) => resourceIndex === index ? { ...resource, ...patch } : resource)
+      milestones: milestones.map((milestone, index) => index === milestoneIndex ? { ...milestone, ...patch } : milestone)
     }));
   };
-  const updateFlashcard = (resourceIndex: number, cardIndex: number, patch: { question?: string; answer?: string }) => {
+  const addMilestone = () => {
     setDraft((current) => ({
       ...current,
-      resources: current.resources.map((resource, index) => {
-        if (index !== resourceIndex) return resource;
-        const cards = resource.flashcards?.length ? resource.flashcards : defaultTutorProgramDraft.resources[2].flashcards ?? [];
-        return { ...resource, flashcards: cards.map((card, innerIndex) => innerIndex === cardIndex ? { ...card, ...patch } : card) };
+      milestones: [
+        ...milestones,
+        {
+          title: `Milestone ${milestones.length + 1}`,
+          sequence: milestones.length + 1,
+          resources: [defaultActivity("article")]
+        }
+      ]
+    }));
+  };
+  const addActivity = (milestoneIndex: number) => updateMilestone(milestoneIndex, {
+    resources: [...milestones[milestoneIndex].resources, defaultActivity("article")]
+  });
+  const updateResource = (milestoneIndex: number, resourceIndex: number, patch: Partial<TutorProgramResourceInput>) => {
+    setDraft((current) => ({
+      ...current,
+      milestones: milestones.map((milestone, index) => index === milestoneIndex
+        ? { ...milestone, resources: milestone.resources.map((resource, innerIndex) => innerIndex === resourceIndex ? { ...resource, ...patch } : resource) }
+        : milestone)
+    }));
+  };
+  const updateFlashcard = (milestoneIndex: number, resourceIndex: number, cardIndex: number, patch: { question?: string; answer?: string }) => {
+    setDraft((current) => ({
+      ...current,
+      milestones: milestones.map((milestone, index) => {
+        if (index !== milestoneIndex) return milestone;
+        return {
+          ...milestone,
+          resources: milestone.resources.map((resource, innerIndex) => {
+            if (innerIndex !== resourceIndex) return resource;
+            const cards = resource.flashcards?.length ? resource.flashcards : defaultTutorProgramDraft.milestones?.[0]?.resources[2]?.flashcards ?? [];
+            return { ...resource, flashcards: cards.map((card, cardInnerIndex) => cardInnerIndex === cardIndex ? { ...card, ...patch } : card) };
+          })
+        };
       })
     }));
   };
-  const updateQuizQuestion = (resourceIndex: number, patch: Partial<NonNullable<TutorProgramResourceInput["quizQuestions"]>[number]>) => {
+  const updateQuizQuestion = (milestoneIndex: number, resourceIndex: number, patch: Partial<NonNullable<TutorProgramResourceInput["quizQuestions"]>[number]>) => {
     setDraft((current) => ({
       ...current,
-      resources: current.resources.map((resource, index) => {
-        if (index !== resourceIndex) return resource;
-        const question = resource.quizQuestions?.[0] ?? defaultTutorProgramDraft.resources[3].quizQuestions?.[0];
-        return { ...resource, quizQuestions: question ? [{ ...question, ...patch }] : [] };
+      milestones: milestones.map((milestone, index) => {
+        if (index !== milestoneIndex) return milestone;
+        return {
+          ...milestone,
+          resources: milestone.resources.map((resource, innerIndex) => {
+            if (innerIndex !== resourceIndex) return resource;
+            const question = resource.quizQuestions?.[0] ?? defaultTutorProgramDraft.milestones?.[0]?.resources[3]?.quizQuestions?.[0];
+            return { ...resource, quizQuestions: question ? [{ ...question, ...patch }] : [] };
+          })
+        };
       })
     }));
   };
-  const canCreate = Boolean(draft.title.trim() && draft.description.trim() && draft.milestoneTitle.trim() && draft.resources.every((resource) => resource.title.trim() && resource.description.trim()));
+  const canCreate = Boolean(
+    draft.title.trim() &&
+    draft.description.trim() &&
+    milestones.length &&
+    milestones.every((milestone) => milestone.title.trim() && milestone.sequence > 0 && milestone.resources.length && milestone.resources.every((resource) => resource.title.trim() && resource.description.trim()))
+  );
 
   return (
     <View style={styles.tutorProgramPanel}>
@@ -2577,8 +2635,6 @@ function TutorProgramAuthoring({
           <Input value={draft.title} onChangeText={(title) => updateDraft({ title })} />
           <FieldLabel>Description</FieldLabel>
           <TextInput multiline value={draft.description} onChangeText={(description) => updateDraft({ description })} placeholder="What students will achieve" placeholderTextColor="#94A3B8" style={styles.textArea} />
-          <FieldLabel>Milestone 1 title</FieldLabel>
-          <Input value={draft.milestoneTitle} onChangeText={(milestoneTitle) => updateDraft({ milestoneTitle })} />
           <FieldLabel>Visibility</FieldLabel>
           <DropdownField value={draft.visibility === "private" ? "Private draft" : "Published"} options={["Published", "Private draft"]} onSelect={(value) => updateDraft({ visibility: value === "Private draft" ? "private" : "published" })} />
           <FieldLabel>Program fee</FieldLabel>
@@ -2589,37 +2645,47 @@ function TutorProgramAuthoring({
               <Input keyboardType="numeric" value={String(draft.feeAmount ?? "")} onChangeText={(value) => updateDraft({ feeAmount: Number(value.replace(/\D/g, "")) || 0 })} />
             </>
           ) : null}
-          {draft.resources.map((resource, index) => (
+          {milestones.map((milestone, milestoneIndex) => (
+            <View key={`${milestone.sequence}-${milestoneIndex}`} style={styles.tutorMilestoneEditor}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.tutorResourceTitle}>Milestone {milestoneIndex + 1}</Text>
+                <Text style={styles.tutorResourcePill}>Seq {milestone.sequence}</Text>
+              </View>
+              <FieldLabel>Milestone title</FieldLabel>
+              <Input value={milestone.title} onChangeText={(title) => updateMilestone(milestoneIndex, { title })} />
+              <FieldLabel>Sequence</FieldLabel>
+              <Input keyboardType="numeric" value={String(milestone.sequence)} onChangeText={(value) => updateMilestone(milestoneIndex, { sequence: Number(value.replace(/\D/g, "")) || milestoneIndex + 1 })} />
+              {milestone.resources.map((resource, index) => (
             <View key={`${resource.type}-${index}`} style={styles.tutorResourceEditor}>
               <View style={styles.rowBetween}>
                 <Text style={styles.tutorResourceTitle}>Activity {index + 1}</Text>
                 <Text style={styles.tutorResourcePill}>{capitalize(resource.type)}</Text>
               </View>
               <FieldLabel>Activity type</FieldLabel>
-              <DropdownField value={capitalize(resource.type)} options={resourceTypeOptions.map(capitalize)} onSelect={(value) => updateResource(index, { type: value.toLowerCase() as ResourceType })} />
+              <DropdownField value={capitalize(resource.type)} options={resourceTypeOptions.map(capitalize)} onSelect={(value) => updateResource(milestoneIndex, index, { type: value.toLowerCase() as ResourceType })} />
               <FieldLabel>Title</FieldLabel>
-              <Input value={resource.title} onChangeText={(title) => updateResource(index, { title })} />
+              <Input value={resource.title} onChangeText={(title) => updateResource(milestoneIndex, index, { title })} />
               <FieldLabel>Description</FieldLabel>
-              <TextInput multiline value={resource.description} onChangeText={(description) => updateResource(index, { description })} placeholder="Student-facing summary" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+              <TextInput multiline value={resource.description} onChangeText={(description) => updateResource(milestoneIndex, index, { description })} placeholder="Student-facing summary" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
               {resource.type === "article" ? (
                 <>
                   <FieldLabel>Article body</FieldLabel>
-                  <TextInput multiline value={resource.body ?? ""} onChangeText={(body) => updateResource(index, { body })} placeholder="Notes, examples, and board-style guidance" placeholderTextColor="#94A3B8" style={styles.textArea} />
+                  <TextInput multiline value={resource.body ?? ""} onChangeText={(body) => updateResource(milestoneIndex, index, { body })} placeholder="Notes, examples, and board-style guidance" placeholderTextColor="#94A3B8" style={styles.textArea} />
                 </>
               ) : null}
               {resource.type === "video" ? (
                 <>
                   <FieldLabel>Video URL</FieldLabel>
-                  <Input value={resource.mediaUrl ?? ""} onChangeText={(mediaUrl) => updateResource(index, { mediaUrl })} placeholder="Private video URL or AMS asset URL" />
+                  <Input value={resource.mediaUrl ?? ""} onChangeText={(mediaUrl) => updateResource(milestoneIndex, index, { mediaUrl })} placeholder="Private video URL or AMS asset URL" />
                 </>
               ) : null}
               {resource.type === "flashcard" ? (
                 <>
-                  {(resource.flashcards?.length ? resource.flashcards : defaultTutorProgramDraft.resources[2].flashcards ?? []).slice(0, 3).map((card, cardIndex) => (
+                  {(resource.flashcards?.length ? resource.flashcards : defaultTutorProgramDraft.milestones?.[0]?.resources[2]?.flashcards ?? []).slice(0, 3).map((card, cardIndex) => (
                     <View key={cardIndex} style={styles.flashcardEditorRow}>
                       <FieldLabel>Flashcard {cardIndex + 1}</FieldLabel>
-                      <Input value={card.question} onChangeText={(question) => updateFlashcard(index, cardIndex, { question })} placeholder="Question" />
-                      <Input value={card.answer} onChangeText={(answer) => updateFlashcard(index, cardIndex, { answer })} placeholder="Answer" />
+                      <Input value={card.question} onChangeText={(question) => updateFlashcard(milestoneIndex, index, cardIndex, { question })} placeholder="Question" />
+                      <Input value={card.answer} onChangeText={(answer) => updateFlashcard(milestoneIndex, index, cardIndex, { answer })} placeholder="Answer" />
                     </View>
                   ))}
                 </>
@@ -2627,15 +2693,19 @@ function TutorProgramAuthoring({
               {resource.type === "quiz" ? (
                 <>
                   <FieldLabel>Quiz question</FieldLabel>
-                  <TextInput multiline value={resource.quizQuestions?.[0]?.prompt ?? ""} onChangeText={(prompt) => updateQuizQuestion(index, { prompt })} placeholder="Question prompt" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                  <TextInput multiline value={resource.quizQuestions?.[0]?.prompt ?? ""} onChangeText={(prompt) => updateQuizQuestion(milestoneIndex, index, { prompt })} placeholder="Question prompt" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
                   <FieldLabel>Options, separated by comma</FieldLabel>
-                  <Input value={(resource.quizQuestions?.[0]?.options ?? []).join(", ")} onChangeText={(value) => updateQuizQuestion(index, { options: value.split(",").map((option) => option.trim()).filter(Boolean) })} />
+                  <Input value={(resource.quizQuestions?.[0]?.options ?? []).join(", ")} onChangeText={(value) => updateQuizQuestion(milestoneIndex, index, { options: value.split(",").map((option) => option.trim()).filter(Boolean) })} />
                   <FieldLabel>Correct option number</FieldLabel>
-                  <DropdownField value={String((resource.quizQuestions?.[0]?.answerIndex ?? 0) + 1)} options={["1", "2", "3", "4"]} onSelect={(value) => updateQuizQuestion(index, { answerIndex: Number(value) - 1 })} />
+                  <DropdownField value={String((resource.quizQuestions?.[0]?.answerIndex ?? 0) + 1)} options={["1", "2", "3", "4"]} onSelect={(value) => updateQuizQuestion(milestoneIndex, index, { answerIndex: Number(value) - 1 })} />
                 </>
               ) : null}
             </View>
+              ))}
+              <Button role={role} variant="secondary" label="Add activity" onPress={() => addActivity(milestoneIndex)} />
+            </View>
           ))}
+          <Button role={role} variant="secondary" label="Add milestone" onPress={addMilestone} />
           <Button role={role} label="Create program" onPress={createProgram} disabled={!canCreate} loading={loading} />
         </View>
       ) : null}
@@ -2730,6 +2800,7 @@ function TutorDiscovery({
   back: () => void;
 }) {
   const any = "Any";
+  const [selectedTutor, setSelectedTutor] = useState<TutorSearchResult | null>(null);
   const [subject, setSubject] = useState(any);
   const [location, setLocation] = useState(any);
   const [grade, setGrade] = useState(any);
@@ -2740,6 +2811,47 @@ function TutorDiscovery({
   const [experience, setExperience] = useState(any);
   const [rating, setRating] = useState(any);
   const cleaned = (value: string) => value === any ? undefined : value;
+  if (selectedTutor) {
+    return (
+      <>
+        <TopBar title="Tutor profile" left="‹" onLeft={() => setSelectedTutor(null)} />
+        <View style={styles.tutorCard}>
+          <View style={styles.tutorHeaderRow}>
+            <Avatar role="tutor" label={selectedTutor.initials} />
+            <View style={styles.flex}>
+              <Text style={styles.tutorName}>{selectedTutor.name}</Text>
+              <Text style={styles.tutorHeadline}>{selectedTutor.headline}</Text>
+            </View>
+            <View style={styles.ratingBadge}><Text style={styles.ratingText}>★ {selectedTutor.rating}</Text></View>
+          </View>
+          <Text style={styles.tutorMeta}>{selectedTutor.subjects.join(", ")} • {selectedTutor.boards.join(", ")} • {selectedTutor.location}</Text>
+          <Text style={styles.tutorMeta}>{selectedTutor.experienceYears} yrs exp • ₹{selectedTutor.hourlyRate}/hr • {selectedTutor.mode.join(" / ")}</Text>
+          <Text style={styles.tutorBio}>{selectedTutor.bio}</Text>
+        </View>
+        <SectionTitle>Program offerings</SectionTitle>
+        {selectedTutor.programs?.length ? selectedTutor.programs.map((program) => (
+          <View key={program.id} style={styles.batchMiniCard}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.batchTitle}>{program.title}</Text>
+              <Text style={styles.tutorResourcePill}>{program.feeType === "paid" ? `₹${program.feeAmount ?? 0}` : "Free"}</Text>
+            </View>
+            <Text style={styles.batchMeta}>{program.description}</Text>
+            <Text style={styles.batchMeta}>{program.milestoneCount} milestones • {program.activityCount} activities</Text>
+            <Button role={role} label="Add to program" loading={requestLoading === "addTutorProgram:" + program.id} onPress={() => addTutorProgram(program.id)} />
+          </View>
+        )) : <Card role={role}><CardTitle>No programs yet</CardTitle><Muted>This tutor has not published any program offerings.</Muted></Card>}
+        <SectionTitle>Batches</SectionTitle>
+        {selectedTutor.batches.map((batch) => (
+          <View key={batch.id} style={styles.batchMiniCard}>
+            <Text style={styles.batchTitle}>{batch.title}</Text>
+            <Text style={styles.batchMeta}>{batch.course} • {batch.schedule}</Text>
+            <Text style={styles.batchMeta}>{batch.mode}{batch.classroomLocation ? " • " + batch.classroomLocation : ""}</Text>
+            <Button role={role} label="Request batch" loading={requestLoading === "requestBatch:" + batch.id} onPress={() => requestBatch(batch.id)} />
+          </View>
+        ))}
+      </>
+    );
+  }
   return (
     <>
       <TopBar title="Tutor discovery" left="‹" onLeft={back} />
@@ -2767,7 +2879,7 @@ function TutorDiscovery({
       </View>
       {loading ? <ActivityIndicator /> : null}
       {tutors.map((tutor) => (
-        <View key={tutor.id} style={styles.tutorCard}>
+        <Pressable key={tutor.id} style={({ pressed }) => [styles.tutorCard, pressed && styles.pressed]} onPress={() => setSelectedTutor(tutor)}>
           <View style={styles.tutorHeaderRow}>
             <Avatar role="tutor" label={tutor.initials} />
             <View style={styles.flex}>
@@ -2779,31 +2891,9 @@ function TutorDiscovery({
           <Text style={styles.tutorMeta}>{tutor.subjects.join(", ")} • {tutor.boards.join(", ")} • {tutor.location}</Text>
           <Text style={styles.tutorMeta}>{tutor.experienceYears} yrs exp • ₹{tutor.hourlyRate}/hr • {tutor.mode.join(" / ")}</Text>
           <Text style={styles.tutorBio}>{tutor.bio}</Text>
-          {tutor.programs?.length ? (
-            <>
-              <Text style={styles.tutorProgramSectionTitle}>Programs offered</Text>
-              {tutor.programs.map((program) => (
-                <View key={program.id} style={styles.batchMiniCard}>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.batchTitle}>{program.title}</Text>
-                    <Text style={styles.tutorResourcePill}>{program.feeType === "paid" ? `₹${program.feeAmount ?? 0}` : "Free"}</Text>
-                  </View>
-                  <Text style={styles.batchMeta}>{program.description}</Text>
-                  <Text style={styles.batchMeta}>{program.milestoneCount} milestones • {program.activityCount} activities</Text>
-                  <Button role={role} label="Add to program" loading={requestLoading === "addTutorProgram:" + program.id} onPress={() => addTutorProgram(program.id)} />
-                </View>
-              ))}
-            </>
-          ) : null}
-          {tutor.batches.map((batch) => (
-            <View key={batch.id} style={styles.batchMiniCard}>
-              <Text style={styles.batchTitle}>{batch.title}</Text>
-              <Text style={styles.batchMeta}>{batch.course} • {batch.schedule}</Text>
-              <Text style={styles.batchMeta}>{batch.mode}{batch.classroomLocation ? " • " + batch.classroomLocation : ""}</Text>
-              <Button role={role} label="Request batch" loading={requestLoading === "requestBatch:" + batch.id} onPress={() => requestBatch(batch.id)} />
-            </View>
-          ))}
-        </View>
+          <Text style={styles.tutorProgramSectionTitle}>{tutor.programs?.length ?? 0} programs • {tutor.batches.length} batches</Text>
+          <Text style={styles.tutorMeta}>Tap to view offerings</Text>
+        </Pressable>
       ))}
       {!loading && !tutors.length ? <Muted>No tutors found. Try another subject or location.</Muted> : null}
     </>
@@ -3818,6 +3908,7 @@ const styles = StyleSheet.create({
   smallOutlineButtonText: { fontSize: 13, fontWeight: "900" },
   tutorComposerCard: { borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 10, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.07, shadowRadius: 18 },
   tutorComposerTitle: { color: "#202A35", fontSize: 22, fontWeight: "900", lineHeight: 28 },
+  tutorMilestoneEditor: { backgroundColor: "rgba(255,255,255,0.68)", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, gap: 10, marginTop: 10, padding: 12 },
   tutorResourceEditor: { backgroundColor: "rgba(255,255,255,0.86)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, marginTop: 8, padding: 12 },
   tutorResourceTitle: { color: "#202A35", fontSize: 16, fontWeight: "900" },
   tutorResourcePill: { backgroundColor: "#F2F7FB", borderRadius: 999, color: "#536A86", fontSize: 11, fontWeight: "900", overflow: "hidden", paddingHorizontal: 10, paddingVertical: 5 },

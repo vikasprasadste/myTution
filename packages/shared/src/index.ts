@@ -108,11 +108,16 @@ export interface TutorProgramResourceInput {
 export interface TutorProgramCreateInput {
   title: string;
   description: string;
-  milestoneTitle: string;
+  milestoneTitle?: string;
   visibility?: "private" | "published";
   feeType?: "free" | "paid";
   feeAmount?: number | null;
-  resources: TutorProgramResourceInput[];
+  resources?: TutorProgramResourceInput[];
+  milestones?: Array<{
+    title: string;
+    sequence: number;
+    resources: TutorProgramResourceInput[];
+  }>;
 }
 
 
