@@ -150,10 +150,12 @@ function hasPlaceholderFlashcards(resource: { type?: string | null; flashcards?:
   });
 }
 
-function withFlashcardFallback<T extends { id: string; type?: string | null; flashcards?: Array<{ id?: string; resourceId?: string; sequence: number; question: string; answer: string; relatedArticleId?: string | null; sourceTag?: string }> }>(resource: T) {
+function withFlashcardFallback<T extends { id: string; type?: string | null; title?: string; description?: string; flashcards?: Array<{ id?: string; resourceId?: string; sequence: number; question: string; answer: string; relatedArticleId?: string | null; sourceTag?: string }> }>(resource: T) {
   if (!hasPlaceholderFlashcards(resource)) return resource;
   return {
     ...resource,
+    title: "Motion active recall cards",
+    description: "10 flashcards for one-dimensional motion definitions, units, and graphs.",
     flashcards: motionFlashcardDeck.map(([question, answer], index) => ({
       id: `${resource.id}-fallback-card-${index + 1}`,
       resourceId: resource.id,

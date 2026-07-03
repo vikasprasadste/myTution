@@ -123,6 +123,25 @@ const fallbackFlashcards: FlashcardPayload[] = [
   { sequence: 4, question: "What is average velocity?", answer: "Average velocity equals displacement divided by total time." }
 ];
 
+const defaultAssetPathsByType: Record<string, { thumbnail: string; banner: string }> = {
+  video: {
+    thumbnail: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.svg",
+    banner: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/banner.svg"
+  },
+  article: {
+    thumbnail: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.svg",
+    banner: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/banner.svg"
+  },
+  flashcard: {
+    thumbnail: "/api/v1/ams/files/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.svg",
+    banner: "/api/v1/ams/files/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.svg"
+  },
+  quiz: {
+    thumbnail: "/api/v1/ams/files/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.svg",
+    banner: "/api/v1/ams/files/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.svg"
+  }
+};
+
 export default function Index() {
   const [role, setRole] = useState<Role>("student");
   const [screen, setScreen] = useState<AppScreen>("role");
@@ -1063,7 +1082,7 @@ export default function Index() {
         if (articleId) openResource({ id: articleId, role, type: "article", title: "Learn more", description: "Related article for this flashcard.", thumbnailLabel: "Article" });
       }} complete={markComplete} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
     }
-    if (screen === "quizIntro" && selectedResource) return <QuizIntro role={role} resource={selectedResource} loading={loadingAction === "startQuiz"} start={() => startQuiz(selectedResource)} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
+    if (screen === "quizIntro" && selectedResource) return <QuizIntro role={role} resource={resourceDetail ?? selectedResource} loading={loadingAction === "startQuiz"} start={() => startQuiz(selectedResource)} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
     if (screen === "quizPlay" && selectedResource && quizPayload) return <QuizPlay role={role} payload={quizPayload} index={quizIndex} answers={quizAnswers} setAnswer={(answer) => setQuizAnswers((items) => items.map((item, itemIndex) => itemIndex === quizIndex ? answer : item))} next={() => { if (quizIndex === quizPayload.questions.length - 1) setScreen("quizResult"); else setQuizIndex(quizIndex + 1); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
     if (screen === "quizResult" && selectedResource && quizPayload) return <QuizResult role={role} payload={quizPayload} answers={quizAnswers} complete={markComplete} loading={loadingAction === "markComplete"} backToTopic={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
 
@@ -1423,7 +1442,7 @@ function RecommendationTile({ role, item, onPress }: { role: Role; item: Recomme
     <Pressable onPress={onPress} style={[styles.recCard, { backgroundColor: theme.card }]}>
       <View style={[styles.thumb, { backgroundColor: theme.surface, overflow: "hidden" }]}>
         <SvgAsset
-          pathValue={item.assetUrls?.thumbnail}
+          pathValue={assetPathFor(item.type, item.assetUrls)}
           fallback={<Text style={[styles.thumbText, { color: theme.text }]}>{glyph}</Text>}
         />
       </View>
@@ -1568,7 +1587,7 @@ function JourneyResourceTile({ role, item, onPress }: { role: Role; item: Journe
     <Pressable onPress={onPress} style={({ pressed }) => [styles.journeyResourceCard, { backgroundColor: theme.cardSoft }, pressed && styles.pressed]}>
       <View style={[styles.journeyResourceImage, { backgroundColor: theme.surface, overflow: "hidden" }]}>
         <SvgAsset
-          pathValue={item.assetUrls?.thumbnail}
+          pathValue={assetPathFor(item.type, item.assetUrls)}
           fallback={<Text style={[styles.journeyResourceGlyph, { color: theme.text }]}>{activityGlyph(item.type)}</Text>}
         />
       </View>
@@ -1883,6 +1902,10 @@ function resourceMediaUrl(resource: ResourceDetailPayload | SelectedActivity) {
   return "";
 }
 
+function assetPathFor(type: string, assetUrls?: { thumbnail?: string | null; banner?: string | null }, kind: "thumbnail" | "banner" = "thumbnail") {
+  return assetUrls?.[kind] ?? defaultAssetPathsByType[type]?.[kind] ?? null;
+}
+
 function amsFileUrl(pathValue?: string | null) {
   if (!pathValue) return "";
   if (/^https?:\/\//.test(pathValue)) return pathValue;
@@ -2008,7 +2031,7 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
   const theme = useRoleTheme(role);
   const cta = resource.type === "article" ? "Mark as read" : resource.type === "video" ? "Mark watched" : "Mark complete";
   const detail = resource as ResourceDetailPayload;
-  const visualPath = detail.assetUrls?.banner ?? detail.assetUrls?.thumbnail;
+  const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
   return (
     <>
       <TopBar title={resource.thumbnailLabel.toUpperCase()} left="‹" onLeft={back} />
@@ -2047,14 +2070,22 @@ function FlashIntro({ role, resource, start, back }: { role: Role; resource: Res
   const theme = useRoleTheme(role);
   const detail = resource as ResourceDetailPayload;
   const cards = detail.flashcards?.length ? detail.flashcards : fallbackFlashcards;
+  const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
+  const title = /quadratic/i.test(resource.title) ? "Motion active recall cards" : resource.title;
+  const description = /quadratic|quick revision/i.test(resource.description) ? "10 flashcards for one-dimensional motion definitions, units, and graphs." : resource.description;
   return (
     <>
       <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
       <View style={styles.flashProgressTrack}><View style={[styles.flashProgressFill, { backgroundColor: theme.accentStrong, width: "18%" }]} /></View>
       <View style={styles.flashIntroLanding}>
-        <View style={[styles.flashIntroImage, { backgroundColor: theme.accent }]}><Text style={styles.flashIntroIcon}>▤</Text></View>
-        <Text style={styles.flashIntroTitle}>{resource.title}</Text>
-        <Text style={styles.flashIntroCopy}>{resource.description}</Text>
+        <View style={[styles.flashIntroBanner, { backgroundColor: theme.accent }]}>
+          <SvgAsset
+            pathValue={visualPath}
+            fallback={<Text style={styles.flashIntroIcon}>▤</Text>}
+          />
+        </View>
+        <Text style={styles.flashIntroTitle}>{title}</Text>
+        <Text style={styles.flashIntroCopy}>{description}</Text>
         <Text style={styles.flashIntroMeta}>{cards.length} cards • Tap each card to reveal the answer</Text>
       </View>
       <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View>
@@ -2081,11 +2112,19 @@ function FlashPlay({ role, resource, cards, index, answer, setAnswer, next, lear
   );
 }
 
-function QuizIntro({ role, resource, loading, start, back }: { role: Role; resource: SelectedActivity; loading: boolean; start: () => void; back: () => void }) {
+function QuizIntro({ role, resource, loading, start, back }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; loading: boolean; start: () => void; back: () => void }) {
+  const detail = resource as ResourceDetailPayload;
+  const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
   return (
     <>
       <TopBar title="QUIZ" left="‹" onLeft={back} />
       <View style={styles.quizLandingHero}>
+        <View style={styles.quizHeroVisual}>
+          <SvgAsset
+            pathValue={visualPath}
+            fallback={<Text style={styles.quizHeroBadge}>Quiz</Text>}
+          />
+        </View>
         <Text style={styles.quizHeroBadge}>Quiz</Text>
         <Text style={styles.quizHeroTitle}>{resource.title}</Text>
         <Text style={styles.quizHeroCopy}>{resource.description}</Text>
@@ -2195,7 +2234,12 @@ function ActivityRow({ activity, onPress }: { activity: NonNullable<ProgramMiles
   const palette = activity.type === "video" ? ["#FBE7FA", "▷"] : activity.type === "flashcard" ? ["#EAD8FF", "▤"] : activity.type === "quiz" ? ["#FFE8D8", "?"] : ["#E5F6FD", "▣"];
   return (
     <Pressable style={({ pressed }) => [styles.activityRow, activity.status === "complete" && styles.activityRowComplete, pressed && styles.pressed]} onPress={onPress}>
-      <View style={[styles.activityIconBox, { backgroundColor: palette[0] }]}><Text style={styles.activityIcon}>{palette[1]}</Text></View>
+      <View style={[styles.activityIconBox, { backgroundColor: palette[0], overflow: "hidden" }]}>
+        <SvgAsset
+          pathValue={assetPathFor(activity.type, activity.assetUrls)}
+          fallback={<Text style={styles.activityIcon}>{palette[1]}</Text>}
+        />
+      </View>
       <View style={styles.flex}>
         <Text style={styles.activityTitle}>{activity.title}</Text>
         <Text style={styles.activityType}>{capitalize(activity.type)}</Text>
@@ -2751,7 +2795,8 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
     setDoubtLoading(true);
     try {
       const response = await apiGet<{ data: CommunityThread[] }>(`/api/v1/community/threads?role=${role}`, accessToken);
-      setApiDoubts(response.data.map(communityThreadToDoubt));
+      const apiItems = response.data.map(communityThreadToDoubt);
+      setApiDoubts(apiItems.length ? apiItems : null);
       setDoubtNotice("");
     } catch {
       setDoubtNotice("Using local doubts until community API is available.");
@@ -3801,6 +3846,7 @@ const styles = StyleSheet.create({
   resourceBottomCta: { marginTop: "auto", paddingTop: 24 },
   flashIntroHero: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E9D5FF", borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 330, padding: 24, shadowColor: "#7C3AED", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.10, shadowRadius: 22 },
   flashIntroLanding: { alignItems: "center", flex: 1, justifyContent: "center", gap: 18, paddingVertical: 34 },
+  flashIntroBanner: { alignItems: "center", borderRadius: 28, height: 210, justifyContent: "center", overflow: "hidden", width: "100%" },
   flashIntroImage: { alignItems: "center", borderRadius: 999, height: 190, justifyContent: "center", width: 190 },
   flashIntroIcon: { color: "#3B0764", fontSize: 82, fontWeight: "900" },
   flashIntroTitle: { color: "#111827", fontSize: 28, fontWeight: "900", lineHeight: 34, textAlign: "center" },
@@ -3816,6 +3862,7 @@ const styles = StyleSheet.create({
   flipHint: { color: "#C026D3", fontSize: 16, fontWeight: "800" },
   flashText: { color: "#111827", fontSize: 20, fontWeight: "800", lineHeight: 30, textAlign: "center" },
   quizLandingHero: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 24, borderWidth: 1, gap: 13, marginTop: 24, minHeight: 360, padding: 24, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.08, shadowRadius: 20 },
+  quizHeroVisual: { alignItems: "center", borderRadius: 22, height: 170, justifyContent: "center", marginBottom: 6, overflow: "hidden", width: "100%" },
   quizHeroBadge: { alignSelf: "flex-start", backgroundColor: "#EFE7FF", borderRadius: 999, color: "#3B0764", fontSize: 14, fontWeight: "900", paddingHorizontal: 14, paddingVertical: 8 },
   quizHeroTitle: { color: "#111827", fontSize: 30, fontWeight: "900", lineHeight: 36, marginTop: "auto" },
   quizHeroCopy: { color: "#374151", fontSize: 16, fontWeight: "600", lineHeight: 25 },
