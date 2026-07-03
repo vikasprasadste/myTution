@@ -124,6 +124,8 @@ model Profile {
   resourceProgress   ResourceProgress[]
   activityProgress   ActivityProgress[]
   studentProgramSelections StudentProgramSelection[]
+  authoredPrograms  Program[]          @relation("ProgramCreator")
+  authoredResources Resource[]         @relation("ResourceCreator")
   tutorProfile       TutorProfile?
   studentBatchRequests BatchRequest[] @relation("StudentBatchRequests")
   studentBatchEnrollments BatchEnrollment[] @relation("StudentBatchEnrollments")
@@ -319,6 +321,7 @@ model Recommendation {
 
 model Resource {
   id               String             @id @default(cuid())
+  creatorProfileId String?
   type             ResourceType
   title            String
   description      String
@@ -335,8 +338,11 @@ model Resource {
   flashcards       Flashcard[]
   milestoneActivities MilestoneActivity[]
   progress         ResourceProgress[]
+  creatorProfile   Profile?           @relation("ResourceCreator", fields: [creatorProfileId], references: [id], onDelete: SetNull)
   sourceTag        String             @default("app")
   createdAt        DateTime           @default(now())
+
+  @@index([creatorProfileId, type])
 }
 
 model Flashcard {
@@ -369,13 +375,19 @@ model Reminder {
 
 model Program {
   id          String             @id @default(cuid())
+  creatorProfileId String?
   role        Role
   title       String
   description String
+  visibility  String             @default("private")
+  status      String             @default("draft")
   sourceTag   String             @default("app")
+  creatorProfile Profile?         @relation("ProgramCreator", fields: [creatorProfileId], references: [id], onDelete: SetNull)
   milestones  ProgramMilestone[]
   progress    ProgramProgress[]
   studentSelections StudentProgramSelection[]
+
+  @@index([creatorProfileId, status])
 }
 
 model StudentProgramSelection {

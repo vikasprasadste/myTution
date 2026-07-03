@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, Role, TutorSearchResult, UserListItem, UserProfileDetails } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, UserListItem, UserProfileDetails } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -67,6 +67,7 @@ type StreamKey = "junior" | "senior" | "ug" | "pg";
 type AuthSession = { accessToken: string; refreshToken: string; tokenType: string };
 type DashboardCard = { value: string; label: string; target: AppScreen };
 type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number; milestoneTitle?: string; required?: boolean };
+type TutorProgramDraft = TutorProgramCreateInput;
 type FlashcardPayload = { id?: string; sequence: number; question: string; answer: string; relatedArticleId?: string | null };
 type ResourceDetailPayload = SelectedActivity & {
   body?: string | null;
@@ -142,6 +143,50 @@ const defaultAssetPathsByType: Record<string, { thumbnail: string; banner: strin
   }
 };
 
+const defaultTutorProgramDraft: TutorProgramDraft = {
+  title: "Class 10 board exam 2 month crash course",
+  description: "A focused two month program with weekly milestones for board exam readiness.",
+  milestoneTitle: "Milestone 1: Algebra fundamentals",
+  visibility: "published",
+  resources: [
+    {
+      type: "article",
+      title: "Algebra quick notes",
+      description: "Micro-notes covering identities, equations, and common board patterns.",
+      body: "Cover definitions, formulas, worked examples, and board-style answer steps."
+    },
+    {
+      type: "video",
+      title: "Solving linear equations",
+      description: "Short concept video for equation solving and checking answers.",
+      mediaUrl: "https://example.com/class-10-linear-equations.mp4"
+    },
+    {
+      type: "flashcard",
+      title: "Formula recall cards",
+      description: "Active recall cards for algebra identities and terms.",
+      flashcards: [
+        { question: "What is (a + b)^2?", answer: "a^2 + 2ab + b^2" },
+        { question: "What is (a - b)^2?", answer: "a^2 - 2ab + b^2" },
+        { question: "What is a linear equation?", answer: "An equation where the highest power of the variable is 1." }
+      ]
+    },
+    {
+      type: "quiz",
+      title: "Algebra diagnostic quiz",
+      description: "A short quiz to check readiness before the next milestone.",
+      quizQuestions: [
+        {
+          prompt: "Which identity equals a^2 - b^2?",
+          options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + 2ab + b^2", "2ab"],
+          answerIndex: 0,
+          learnMore: "Difference of squares factors into the sum and difference of the terms."
+        }
+      ]
+    }
+  ]
+};
+
 export default function Index() {
   const [role, setRole] = useState<Role>("student");
   const [screen, setScreen] = useState<AppScreen>("role");
@@ -184,6 +229,8 @@ export default function Index() {
   const [programRefreshKey, setProgramRefreshKey] = useState(0);
   const [programToast, setProgramToast] = useState("");
   const [programMenuOpen, setProgramMenuOpen] = useState(false);
+  const [tutorProgramDraft, setTutorProgramDraft] = useState<TutorProgramDraft>(defaultTutorProgramDraft);
+  const [tutorProgramComposerOpen, setTutorProgramComposerOpen] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [reminderTitle, setReminderTitle] = useState("Math revision reminder");
@@ -321,6 +368,11 @@ export default function Index() {
   }
 
   function openProgramPicker() {
+    if (role === "tutor") {
+      setProgramMenuOpen(false);
+      setTutorProgramComposerOpen(true);
+      return;
+    }
     if (role === "student" && selectedPrograms.length >= 3) {
       setProgramMenuOpen(false);
       setProgramToast("You can keep up to 3 active programs.");
@@ -332,6 +384,24 @@ export default function Index() {
     setProgramMenuOpen(false);
     setProgramModalCanClose(true);
     setProgramModalVisible(true);
+  }
+
+  async function createTutorProgram() {
+    setLoadingAction("createTutorProgram");
+    try {
+      const response = await apiPost<{ data: ProgramSummary }>("/api/v1/education-plan/tutor/programs", tutorProgramDraft, authSession?.accessToken);
+      setPrograms((items) => [response.data, ...items.filter((item) => item.id !== response.data.id)]);
+      setSelectedProgramId(response.data.id);
+      setTutorProgramComposerOpen(false);
+      setTutorProgramDraft(defaultTutorProgramDraft);
+      setProgramRefreshKey((value) => value + 1);
+      setProgramToast("Program created and ready to configure.");
+      setApiNotice("");
+    } catch {
+      setApiNotice("Program could not be created. Please check API deployment and login state.");
+    } finally {
+      setLoadingAction(null);
+    }
   }
 
   useEffect(() => {
@@ -1071,7 +1141,7 @@ export default function Index() {
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
-    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} />;
+    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} />;
     if (screen === "milestoneDetail" && selectedMilestone) return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} />;
     if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={resourceDetail ?? selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} completedTopic={completedTopic} nextTopic={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} myMiles={() => { setCompletedTopic(null); setSelectedResource(null); setScreen("sessions"); }} />;
     if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={resourceDetail ?? selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "home")} />;
@@ -1705,7 +1775,7 @@ function Metric({ role, label, value, onPress }: { role: Role; label: string; va
 function DashboardGrid({ role, cards, setScreen }: { role: Role; cards: DashboardCard[] | null; setScreen: (screen: AppScreen) => void }) {
   const metrics: Record<Role, Array<{ value: string; label: string; target: AppScreen }>> = {
     student: [
-      { value: "0", label: "My Miles", target: "sessions" },
+      { value: "0", label: "Program", target: "sessions" },
       { value: "0", label: "Completed", target: "sessions" },
       { value: "0", label: "Smart picks", target: "home" },
       { value: "0", label: "Reminders", target: "events" }
@@ -2057,7 +2127,7 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
             <Text style={styles.topicCompleteCopy}>Great job finishing this topic. The next topic is now unlocked and ready for you to explore.</Text>
             <View style={styles.topicActionRow}>
               {completedTopic.nextActivity ? <Button role={role} label="Next topic" onPress={nextTopic} /> : null}
-              <Button role={role} variant="secondary" label="My Miles" onPress={myMiles} />
+              <Button role={role} variant="secondary" label="Program" onPress={myMiles} />
             </View>
           </View>
         </View>
@@ -2261,7 +2331,13 @@ function Sessions({
   menuOpen,
   setMenuOpen,
   openProgramPicker,
-  archiveProgram
+  archiveProgram,
+  tutorProgramDraft,
+  setTutorProgramDraft,
+  tutorProgramComposerOpen,
+  setTutorProgramComposerOpen,
+  createTutorProgram,
+  createTutorProgramLoading
 }: {
   role: Role;
   programs: ProgramSummary[];
@@ -2275,6 +2351,12 @@ function Sessions({
   setMenuOpen: (value: boolean) => void;
   openProgramPicker: () => void;
   archiveProgram: () => void;
+  tutorProgramDraft: TutorProgramDraft;
+  setTutorProgramDraft: (value: TutorProgramDraft | ((draft: TutorProgramDraft) => TutorProgramDraft)) => void;
+  tutorProgramComposerOpen: boolean;
+  setTutorProgramComposerOpen: (value: boolean) => void;
+  createTutorProgram: () => void;
+  createTutorProgramLoading: boolean;
 }) {
   const theme = useRoleTheme(role);
   const selectedProgram = selectedPrograms.find((program) => program.id === selectedProgramId) ?? programs.find((program) => program.id === selectedProgramId) ?? selectedPrograms[0] ?? programs[0];
@@ -2283,7 +2365,7 @@ function Sessions({
     <>
       <View style={styles.milesHeader}>
         <View style={styles.milesHeaderSpacer} />
-        <Text style={styles.milesHeaderTitle}>My Miles</Text>
+        <Text style={styles.milesHeaderTitle}>{role === "tutor" ? "Program" : "My Miles"}</Text>
         <Pressable style={styles.headerIconButton} onPress={() => setMenuOpen(!menuOpen)}>
           <Text style={[styles.headerIconButtonText, { color: theme.accentStrong }]}>⋮</Text>
         </Pressable>
@@ -2318,6 +2400,19 @@ function Sessions({
             }}
           />
         </View>
+      ) : null}
+      {role === "tutor" ? (
+        <TutorProgramAuthoring
+          role={role}
+          programs={programs}
+          selectedProgram={selectedProgram}
+          draft={tutorProgramDraft}
+          setDraft={setTutorProgramDraft}
+          open={tutorProgramComposerOpen}
+          setOpen={setTutorProgramComposerOpen}
+          createProgram={createTutorProgram}
+          loading={createTutorProgramLoading}
+        />
       ) : null}
       <View style={styles.milesTimeline}>
         {milestones.map((milestone, index) => {
@@ -2384,6 +2479,136 @@ function Sessions({
         })}
       </View>
     </>
+  );
+}
+
+const resourceTypeOptions: ResourceType[] = ["article", "video", "flashcard", "quiz"];
+
+function TutorProgramAuthoring({
+  role,
+  programs,
+  selectedProgram,
+  draft,
+  setDraft,
+  open,
+  setOpen,
+  createProgram,
+  loading
+}: {
+  role: Role;
+  programs: ProgramSummary[];
+  selectedProgram?: ProgramSummary;
+  draft: TutorProgramDraft;
+  setDraft: (value: TutorProgramDraft | ((draft: TutorProgramDraft) => TutorProgramDraft)) => void;
+  open: boolean;
+  setOpen: (value: boolean) => void;
+  createProgram: () => void;
+  loading: boolean;
+}) {
+  const theme = useRoleTheme(role);
+  const updateDraft = (patch: Partial<TutorProgramDraft>) => setDraft((current) => ({ ...current, ...patch }));
+  const updateResource = (index: number, patch: Partial<TutorProgramResourceInput>) => {
+    setDraft((current) => ({
+      ...current,
+      resources: current.resources.map((resource, resourceIndex) => resourceIndex === index ? { ...resource, ...patch } : resource)
+    }));
+  };
+  const updateFlashcard = (resourceIndex: number, cardIndex: number, patch: { question?: string; answer?: string }) => {
+    setDraft((current) => ({
+      ...current,
+      resources: current.resources.map((resource, index) => {
+        if (index !== resourceIndex) return resource;
+        const cards = resource.flashcards?.length ? resource.flashcards : defaultTutorProgramDraft.resources[2].flashcards ?? [];
+        return { ...resource, flashcards: cards.map((card, innerIndex) => innerIndex === cardIndex ? { ...card, ...patch } : card) };
+      })
+    }));
+  };
+  const updateQuizQuestion = (resourceIndex: number, patch: Partial<NonNullable<TutorProgramResourceInput["quizQuestions"]>[number]>) => {
+    setDraft((current) => ({
+      ...current,
+      resources: current.resources.map((resource, index) => {
+        if (index !== resourceIndex) return resource;
+        const question = resource.quizQuestions?.[0] ?? defaultTutorProgramDraft.resources[3].quizQuestions?.[0];
+        return { ...resource, quizQuestions: question ? [{ ...question, ...patch }] : [] };
+      })
+    }));
+  };
+  const canCreate = Boolean(draft.title.trim() && draft.description.trim() && draft.milestoneTitle.trim() && draft.resources.every((resource) => resource.title.trim() && resource.description.trim()));
+
+  return (
+    <View style={styles.tutorProgramPanel}>
+      <View style={[styles.tutorProgramSummary, { backgroundColor: theme.card }]}>
+        <View style={styles.flex}>
+          <Text style={styles.tutorProgramEyebrow}>Educator programs</Text>
+          <Text style={styles.tutorProgramTitle}>{selectedProgram?.title ?? "Create your first program"}</Text>
+          <Text style={styles.tutorProgramCopy}>{programs.length ? `${programs.length} program${programs.length === 1 ? "" : "s"} configured from your tutor profile.` : "Add a program and configure milestones with your own education content."}</Text>
+        </View>
+        <Pressable style={({ pressed }) => [styles.smallOutlineButton, pressed && styles.pressed]} onPress={() => setOpen(!open)}>
+          <Text style={[styles.smallOutlineButtonText, { color: theme.text }]}>{open ? "Hide" : "Add"}</Text>
+        </Pressable>
+      </View>
+      {open ? (
+        <View style={[styles.tutorComposerCard, { backgroundColor: theme.cardAlt }]}>
+          <Text style={styles.tutorComposerTitle}>Add a program</Text>
+          <FieldLabel>Program title</FieldLabel>
+          <Input value={draft.title} onChangeText={(title) => updateDraft({ title })} />
+          <FieldLabel>Description</FieldLabel>
+          <TextInput multiline value={draft.description} onChangeText={(description) => updateDraft({ description })} placeholder="What students will achieve" placeholderTextColor="#94A3B8" style={styles.textArea} />
+          <FieldLabel>Milestone 1 title</FieldLabel>
+          <Input value={draft.milestoneTitle} onChangeText={(milestoneTitle) => updateDraft({ milestoneTitle })} />
+          <FieldLabel>Visibility</FieldLabel>
+          <DropdownField value={draft.visibility === "private" ? "Private draft" : "Published"} options={["Published", "Private draft"]} onSelect={(value) => updateDraft({ visibility: value === "Private draft" ? "private" : "published" })} />
+          {draft.resources.map((resource, index) => (
+            <View key={`${resource.type}-${index}`} style={styles.tutorResourceEditor}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.tutorResourceTitle}>Activity {index + 1}</Text>
+                <Text style={styles.tutorResourcePill}>{capitalize(resource.type)}</Text>
+              </View>
+              <FieldLabel>Activity type</FieldLabel>
+              <DropdownField value={capitalize(resource.type)} options={resourceTypeOptions.map(capitalize)} onSelect={(value) => updateResource(index, { type: value.toLowerCase() as ResourceType })} />
+              <FieldLabel>Title</FieldLabel>
+              <Input value={resource.title} onChangeText={(title) => updateResource(index, { title })} />
+              <FieldLabel>Description</FieldLabel>
+              <TextInput multiline value={resource.description} onChangeText={(description) => updateResource(index, { description })} placeholder="Student-facing summary" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+              {resource.type === "article" ? (
+                <>
+                  <FieldLabel>Article body</FieldLabel>
+                  <TextInput multiline value={resource.body ?? ""} onChangeText={(body) => updateResource(index, { body })} placeholder="Notes, examples, and board-style guidance" placeholderTextColor="#94A3B8" style={styles.textArea} />
+                </>
+              ) : null}
+              {resource.type === "video" ? (
+                <>
+                  <FieldLabel>Video URL</FieldLabel>
+                  <Input value={resource.mediaUrl ?? ""} onChangeText={(mediaUrl) => updateResource(index, { mediaUrl })} placeholder="Private video URL or AMS asset URL" />
+                </>
+              ) : null}
+              {resource.type === "flashcard" ? (
+                <>
+                  {(resource.flashcards?.length ? resource.flashcards : defaultTutorProgramDraft.resources[2].flashcards ?? []).slice(0, 3).map((card, cardIndex) => (
+                    <View key={cardIndex} style={styles.flashcardEditorRow}>
+                      <FieldLabel>Flashcard {cardIndex + 1}</FieldLabel>
+                      <Input value={card.question} onChangeText={(question) => updateFlashcard(index, cardIndex, { question })} placeholder="Question" />
+                      <Input value={card.answer} onChangeText={(answer) => updateFlashcard(index, cardIndex, { answer })} placeholder="Answer" />
+                    </View>
+                  ))}
+                </>
+              ) : null}
+              {resource.type === "quiz" ? (
+                <>
+                  <FieldLabel>Quiz question</FieldLabel>
+                  <TextInput multiline value={resource.quizQuestions?.[0]?.prompt ?? ""} onChangeText={(prompt) => updateQuizQuestion(index, { prompt })} placeholder="Question prompt" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                  <FieldLabel>Options, separated by comma</FieldLabel>
+                  <Input value={(resource.quizQuestions?.[0]?.options ?? []).join(", ")} onChangeText={(value) => updateQuizQuestion(index, { options: value.split(",").map((option) => option.trim()).filter(Boolean) })} />
+                  <FieldLabel>Correct option number</FieldLabel>
+                  <DropdownField value={String((resource.quizQuestions?.[0]?.answerIndex ?? 0) + 1)} options={["1", "2", "3", "4"]} onSelect={(value) => updateQuizQuestion(index, { answerIndex: Number(value) - 1 })} />
+                </>
+              ) : null}
+            </View>
+          ))}
+          <Button role={role} label="Create program" onPress={createProgram} disabled={!canCreate} loading={loading} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -3108,7 +3333,7 @@ function BottomNav({ role, screen, setScreen }: { role: Role; screen: AppScreen;
   const theme = useRoleTheme(role);
   const items: Array<{ id: AppScreen; label: string; activeIcon: NavIcon; inactiveIcon: NavIcon }> = [
     { id: "home", label: "Home", activeIcon: HomeActiveIcon, inactiveIcon: HomeInactiveIcon },
-    { id: "sessions", label: "Miles", activeIcon: MilesActiveIcon, inactiveIcon: MilesInactiveIcon },
+    { id: "sessions", label: "Program", activeIcon: MilesActiveIcon, inactiveIcon: MilesInactiveIcon },
     { id: "events", label: "Reminders", activeIcon: ClassActiveIcon, inactiveIcon: ClassInactiveIcon },
     { id: "chat", label: "Community", activeIcon: CommunityActiveIcon, inactiveIcon: CommunityInactiveIcon },
     { id: "account", label: "Account", activeIcon: AccountActiveIcon, inactiveIcon: AccountInactiveIcon }
@@ -3534,6 +3759,21 @@ const styles = StyleSheet.create({
   milesSummaryTitle: { color: "#202A35", fontSize: 17, fontWeight: "900", lineHeight: 22 },
   milesSummaryCopy: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19 },
   selectedProgramPanel: { borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, padding: 12 },
+  tutorProgramPanel: { gap: 14 },
+  tutorProgramSummary: { borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, flexDirection: "row", gap: 12, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
+  tutorProgramEyebrow: { color: "#64748B", fontSize: 12, fontWeight: "900", letterSpacing: 0 },
+  tutorProgramTitle: { color: "#202A35", fontSize: 18, fontWeight: "900", lineHeight: 24, marginTop: 4 },
+  tutorProgramCopy: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19, marginTop: 4 },
+  smallOutlineButton: { alignItems: "center", alignSelf: "flex-start", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, minHeight: 38, justifyContent: "center", paddingHorizontal: 18 },
+  smallOutlineButtonText: { fontSize: 13, fontWeight: "900" },
+  tutorComposerCard: { borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 10, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.07, shadowRadius: 18 },
+  tutorComposerTitle: { color: "#202A35", fontSize: 22, fontWeight: "900", lineHeight: 28 },
+  tutorResourceEditor: { backgroundColor: "rgba(255,255,255,0.86)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, marginTop: 8, padding: 12 },
+  tutorResourceTitle: { color: "#202A35", fontSize: 16, fontWeight: "900" },
+  tutorResourcePill: { backgroundColor: "#F2F7FB", borderRadius: 999, color: "#536A86", fontSize: 11, fontWeight: "900", overflow: "hidden", paddingHorizontal: 10, paddingVertical: 5 },
+  rowBetween: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
+  textAreaSmall: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 16, borderWidth: 1, color: "#111827", minHeight: 64, padding: 14, textAlignVertical: "top" },
+  flashcardEditorRow: { gap: 8 },
   milesTimeline: { gap: 10, paddingBottom: 18, paddingTop: 10 },
   mileRow: { flexDirection: "row", minHeight: 148 },
   mileRail: { alignItems: "center", marginRight: 12, width: 44 },

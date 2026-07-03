@@ -8,7 +8,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { featureFlags, isFeatureEnabled, paletteConfig, roleThemes } from "@mytution/config";
 import { prisma } from "@mytution/db";
-import type { CommunityReactionType, ProgramSummary, ResourceType, Role } from "@mytution/shared";
+import type { CommunityReactionType, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
 
 const app = express();
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
@@ -166,6 +166,58 @@ function withFlashcardFallback<T extends { id: string; type?: string | null; tit
       sourceTag: "mock"
     }))
   };
+}
+
+function normalizeTutorProgramInput(body: unknown): TutorProgramCreateInput {
+  const input = (body ?? {}) as Partial<TutorProgramCreateInput>;
+  return {
+    title: String(input.title ?? "").trim(),
+    description: String(input.description ?? "").trim(),
+    milestoneTitle: String(input.milestoneTitle ?? "").trim(),
+    visibility: input.visibility === "private" ? "private" : "published",
+    resources: Array.isArray(input.resources)
+      ? input.resources.map(normalizeTutorResourceInput).filter((item): item is TutorProgramResourceInput => Boolean(item))
+      : []
+  };
+}
+
+function normalizeTutorResourceInput(resource: unknown): TutorProgramResourceInput | null {
+  const input = (resource ?? {}) as Partial<TutorProgramResourceInput>;
+  const type = input.type;
+  if (!type || !["article", "video", "flashcard", "quiz"].includes(type)) return null;
+  const title = String(input.title ?? "").trim();
+  const description = String(input.description ?? "").trim();
+  if (!title || !description) return null;
+  const quizQuestions = Array.isArray(input.quizQuestions)
+    ? input.quizQuestions.map((question, index) => {
+      const options = Array.isArray(question.options) ? question.options.map((option) => String(option).trim()).filter(Boolean).slice(0, 4) : [];
+      return {
+        prompt: String(question.prompt ?? "").trim(),
+        options: options.length >= 2 ? options : ["Option A", "Option B", "Option C", "Option D"],
+        answerIndex: Math.min(Math.max(Number(question.answerIndex ?? 0), 0), Math.max(options.length - 1, 0)),
+        learnMore: String(question.learnMore ?? "").trim() || `Review ${title} and try again.`
+      };
+    }).filter((question) => question.prompt)
+    : [];
+  return {
+    type,
+    title,
+    description,
+    body: String(input.body ?? "").trim(),
+    mediaUrl: String(input.mediaUrl ?? "").trim(),
+    flashcards: Array.isArray(input.flashcards)
+      ? input.flashcards.map((card) => ({ question: String(card.question ?? "").trim(), answer: String(card.answer ?? "").trim() })).filter((card) => card.question && card.answer)
+      : undefined,
+    quizQuestions
+  };
+}
+
+function defaultTutorFlashcards(title: string) {
+  return [
+    { question: `What is the core idea in ${title}?`, answer: "Identify the definition, formula, or key process before solving examples." },
+    { question: `What should students recall first for ${title}?`, answer: "Recall the main terms, units, and exam keywords connected to this topic." },
+    { question: `How should students revise ${title}?`, answer: "Use active recall, solve one example, and write a short summary in their own words." }
+  ];
 }
 
 app.get("/health", async (_req, res) => {
@@ -871,10 +923,12 @@ app.get("/api/v1/education-plan/programs", async (req, res) => {
     });
     return;
   }
+  const userId = await readUserId(req);
+  const profile = userId ? await findProfile(role, userId) : null;
   const programs = await prisma.program.findMany({
-    where: { role },
+    where: { role, ...(role === "tutor" && profile ? { creatorProfileId: profile.id } : {}) },
     orderBy: { title: "asc" },
-    select: { id: true, role: true, title: true, description: true }
+    select: { id: true, role: true, title: true, description: true, status: true, visibility: true, creatorProfileId: true }
   });
   res.json({ data: programs });
 });
@@ -934,6 +988,96 @@ app.post("/api/v1/education-plan/programs/select", async (req, res) => {
     selectedPrograms: programs.filter((item) => item.selected),
     maxSelectedPrograms: 3
   });
+});
+
+app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const tutor = await findProfile("tutor", userId);
+  if (!tutor) {
+    res.status(404).json({ error: "Tutor profile not found" });
+    return;
+  }
+
+  const input = normalizeTutorProgramInput(req.body);
+  if (!input.title || !input.description || !input.milestoneTitle || input.resources.length === 0) {
+    res.status(400).json({ error: "Program title, description, milestone, and resources are required" });
+    return;
+  }
+
+  const program = await prisma.$transaction(async (tx) => {
+    const createdProgram = await tx.program.create({
+      data: {
+        role: "tutor",
+        title: input.title,
+        description: input.description,
+        creatorProfileId: tutor.id,
+        visibility: input.visibility ?? "published",
+        status: "published",
+        sourceTag: "app"
+      }
+    });
+    const milestone = await tx.programMilestone.create({
+      data: {
+        programId: createdProgram.id,
+        sequence: 1,
+        title: input.milestoneTitle,
+        sourceTag: "app"
+      }
+    });
+
+    for (const [index, resourceInput] of input.resources.entries()) {
+      const resource = await tx.resource.create({
+        data: {
+          creatorProfileId: tutor.id,
+          type: resourceInput.type,
+          title: resourceInput.title,
+          description: resourceInput.description,
+          body: resourceInput.body || resourceInput.description,
+          sourceUrl: resourceInput.mediaUrl || null,
+          storageType: "db",
+          contentJson: resourceInput.type === "quiz" ? {
+            questions: (resourceInput.quizQuestions ?? []).map((question, questionIndex) => ({
+              id: `${createdProgram.id}-q${questionIndex + 1}`,
+              prompt: question.prompt,
+              options: question.options,
+              answerIndex: question.answerIndex,
+              learnMore: question.learnMore ?? "Review the linked notes and try the concept again."
+            }))
+          } : undefined,
+          sourceTag: "app"
+        }
+      });
+      if (resourceInput.type === "flashcard") {
+        const cards = (resourceInput.flashcards?.length ? resourceInput.flashcards : defaultTutorFlashcards(resourceInput.title)).map((card, cardIndex) => ({
+          resourceId: resource.id,
+          sequence: cardIndex + 1,
+          question: card.question,
+          answer: card.answer,
+          sourceTag: "app"
+        }));
+        await tx.flashcard.createMany({ data: cards });
+      }
+      await tx.milestoneActivity.create({
+        data: {
+          milestoneId: milestone.id,
+          resourceId: resource.id,
+          sequence: index + 1,
+          type: resourceInput.type,
+          title: resourceInput.title,
+          description: resourceInput.description,
+          sourceTag: "app"
+        }
+      });
+    }
+
+    return tx.program.findUnique({
+      where: { id: createdProgram.id },
+      include: { milestones: { include: { activities: true }, orderBy: { sequence: "asc" } } }
+    });
+  });
+
+  res.status(201).json({ data: program });
 });
 
 app.get("/api/v1/programs/current", async (req, res) => {
@@ -1466,7 +1610,7 @@ async function listProgramSummaries(role: Role, profileId?: string | null): Prom
   const programs = await prisma.program.findMany({
     where: { role },
     orderBy: { title: "asc" },
-    select: { id: true, role: true, title: true, description: true }
+    select: { id: true, role: true, title: true, description: true, status: true, visibility: true, creatorProfileId: true }
   });
   if (programs.length) {
     return programs.map((program) => ({ ...program, role: readRole(program.role), selected: selectedIds.has(program.id) }));

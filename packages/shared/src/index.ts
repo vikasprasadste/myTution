@@ -76,6 +76,27 @@ export interface ProgramSummary {
   title: string;
   description: string;
   selected?: boolean;
+  status?: string;
+  visibility?: string;
+  creatorProfileId?: string | null;
+}
+
+export interface TutorProgramResourceInput {
+  type: ResourceType;
+  title: string;
+  description: string;
+  body?: string;
+  mediaUrl?: string;
+  flashcards?: Array<{ question: string; answer: string }>;
+  quizQuestions?: Array<{ prompt: string; options: string[]; answerIndex: number; learnMore?: string }>;
+}
+
+export interface TutorProgramCreateInput {
+  title: string;
+  description: string;
+  milestoneTitle: string;
+  visibility?: "private" | "published";
+  resources: TutorProgramResourceInput[];
 }
 
 
