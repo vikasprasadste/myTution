@@ -623,6 +623,7 @@ app.get("/api/v1/usermanagement/profile", async (req, res) => {
 
 app.get("/api/v1/usermanagement/users", async (req, res) => {
   const role = readRole(req.query.Role ?? req.query.role);
+  if (role === "tutor") await ensureSharedTutorFixture();
   const profiles = await prisma.profile.findMany({
     where: { role },
     include: { user: true },
@@ -633,6 +634,7 @@ app.get("/api/v1/usermanagement/users", async (req, res) => {
 });
 
 app.get("/api/v1/usermanagement/getUserProfile", async (req, res) => {
+  await ensureSharedTutorFixture();
   const userId = stringOrNull(req.query.userId);
   const role = req.query.Role || req.query.role ? readRole(req.query.Role ?? req.query.role) : undefined;
   if (!userId) {
@@ -700,6 +702,7 @@ app.put("/api/v1/usermanagement/profile", async (req, res) => {
 });
 
 app.get("/api/v1/usermanagement/tutors", async (req, res) => {
+  await ensureSharedTutorFixture();
   const batchWhere: Record<string, unknown> = {};
   if (req.query.subject) batchWhere.subject = textContains(req.query.subject);
   if (req.query.grade) batchWhere.grade = textContains(req.query.grade);
@@ -1905,6 +1908,280 @@ function fallbackPersona(role: Role) {
     phone: "",
     profileLabel: `${capitalize(role)} • myTution`
   };
+}
+
+async function ensureSharedTutorFixture() {
+  const phone = "+917838920129";
+  const passwordHash = await hashPassword("Tutor@123");
+  const user = await prisma.user.upsert({
+    where: { phone },
+    update: { passwordHash, sourceTag: "mock" },
+    create: {
+      phone,
+      passwordHash,
+      sourceTag: "mock"
+    }
+  });
+  const existingProfile = await prisma.profile.findFirst({ where: { userId: user.id, role: "tutor" } });
+  const profile = existingProfile ? await prisma.profile.update({
+    where: { id: existingProfile.id },
+    data: {
+      firstName: "Kartik",
+      lastName: "Sohani",
+      city: "Jabalpur",
+      communicationAddress: "Jabalpur teaching centre",
+      alternatePhone: "7838920129",
+      stream: "senior",
+      specialization: "CBSE Class 10 Mathematics",
+      sourceTag: "mock"
+    }
+  }) : await prisma.profile.create({
+    data: {
+      userId: user.id,
+      role: "tutor",
+      firstName: "Kartik",
+      lastName: "Sohani",
+      dob: new Date("1988-05-15T00:00:00.000Z"),
+      city: "Jabalpur",
+      communicationAddress: "Jabalpur teaching centre",
+      alternatePhone: "7838920129",
+      stream: "senior",
+      specialization: "CBSE Class 10 Mathematics",
+      sourceTag: "mock"
+    }
+  });
+  await prisma.userManagement.upsert({
+    where: { userId_role: { userId: user.id, role: "tutor" } },
+    update: {
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      city: profile.city,
+      communicationAddress: profile.communicationAddress,
+      alternatePhone: profile.alternatePhone,
+      stream: profile.stream,
+      specialization: profile.specialization,
+      sourceTag: "mock"
+    },
+    create: {
+      userId: user.id,
+      role: "tutor",
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      dob: profile.dob,
+      city: profile.city,
+      communicationAddress: profile.communicationAddress,
+      alternatePhone: profile.alternatePhone,
+      stream: profile.stream,
+      specialization: profile.specialization,
+      sourceTag: "mock"
+    }
+  });
+  const tutorProfile = await prisma.tutorProfile.upsert({
+    where: { profileId: profile.id },
+    update: {
+      headline: "Class 10 board booster",
+      subjects: "Mathematics",
+      boards: "CBSE",
+      grades: "Class 10",
+      languages: "English,Hindi",
+      mode: "Online,Home Tuition",
+      experienceYears: 10,
+      rating: 4.8,
+      hourlyRate: 800,
+      gender: "Male",
+      location: "Jabalpur",
+      bio: "Board revision, previous-year papers, exam strategy, and structured answer practice.",
+      sourceTag: "mock"
+    },
+    create: {
+      profileId: profile.id,
+      headline: "Class 10 board booster",
+      subjects: "Mathematics",
+      boards: "CBSE",
+      grades: "Class 10",
+      languages: "English,Hindi",
+      mode: "Online,Home Tuition",
+      experienceYears: 10,
+      rating: 4.8,
+      hourlyRate: 800,
+      gender: "Male",
+      location: "Jabalpur",
+      bio: "Board revision, previous-year papers, exam strategy, and structured answer practice.",
+      sourceTag: "mock"
+    }
+  });
+
+  await ensureSharedTutorProgram(profile.id, {
+    title: "Class 10 board exam free foundation",
+    description: "Free starter program with algebra notes, video, flashcards, and a diagnostic quiz.",
+    feeType: "free",
+    feeAmount: null
+  });
+  await ensureSharedTutorProgram(profile.id, {
+    title: "Class 10 board exam 2 month crash course",
+    description: "Paid crash course with weekly milestones for board exam revision and practice.",
+    feeType: "paid",
+    feeAmount: 2500
+  });
+
+  const batches = [
+    {
+      title: "Class 10 Mathematics weekday batch",
+      course: "CBSE Mathematics foundation",
+      mode: "Online",
+      schedule: "Mon, Wed, Fri • 6:00 PM",
+      classroomLocation: null,
+      onlineLink: "https://meet.mytution.test/kartik-weekday",
+      startsAt: new Date("2026-07-06T12:30:00.000Z"),
+      capacity: 2,
+      fillCount: 2
+    },
+    {
+      title: "Mathematics weekend booster",
+      course: "Mathematics exam practice",
+      mode: "Online",
+      schedule: "Sat, Sun • 10:00 AM",
+      classroomLocation: null,
+      onlineLink: "https://meet.mytution.test/kartik-weekend",
+      startsAt: new Date("2026-07-04T04:30:00.000Z"),
+      capacity: 5,
+      fillCount: 4
+    },
+    {
+      title: "Class 10 Mathematics offline intensive",
+      course: "CBSE Mathematics board intensive",
+      mode: "Home Tuition",
+      schedule: "Tue, Thu • 5:00 PM",
+      classroomLocation: "Jabalpur learning studio",
+      onlineLink: null,
+      startsAt: new Date("2026-07-07T11:30:00.000Z"),
+      capacity: 4,
+      fillCount: 1
+    }
+  ];
+  for (const batch of batches) {
+    const existingBatch = await prisma.tutorBatch.findFirst({ where: { tutorProfileId: tutorProfile.id, title: batch.title } });
+    const createdBatch = existingBatch ? await prisma.tutorBatch.update({
+      where: { id: existingBatch.id },
+      data: {
+        course: batch.course,
+        subject: "Mathematics",
+        grade: "Class 10",
+        board: "CBSE",
+        mode: batch.mode,
+        schedule: batch.schedule,
+        classroomLocation: batch.classroomLocation,
+        onlineLink: batch.onlineLink,
+        startsAt: batch.startsAt,
+        capacity: batch.capacity,
+        sourceTag: "mock"
+      }
+    }) : await prisma.tutorBatch.create({
+      data: {
+        tutorProfileId: tutorProfile.id,
+        title: batch.title,
+        course: batch.course,
+        subject: "Mathematics",
+        grade: "Class 10",
+        board: "CBSE",
+        mode: batch.mode,
+        schedule: batch.schedule,
+        classroomLocation: batch.classroomLocation,
+        onlineLink: batch.onlineLink,
+        startsAt: batch.startsAt,
+        capacity: batch.capacity,
+        sourceTag: "mock"
+      }
+    });
+    await ensureMockBatchEnrollments(createdBatch.id, batch.fillCount);
+  }
+}
+
+async function ensureSharedTutorProgram(profileId: string, input: { title: string; description: string; feeType: "free" | "paid"; feeAmount: number | null }) {
+  const existing = await prisma.program.findFirst({ where: { creatorProfileId: profileId, title: input.title } });
+  if (existing) {
+    await prisma.program.update({
+      where: { id: existing.id },
+      data: { description: input.description, visibility: "published", status: "published", feeType: input.feeType, feeAmount: input.feeAmount, sourceTag: "mock" }
+    });
+    return existing;
+  }
+  const resources = await Promise.all([
+    prisma.resource.create({ data: { creatorProfileId: profileId, type: "video", title: input.title + " concept video", description: "Short lesson explaining the core concept before practice.", sourceUrl: "https://example.com/mytution/class-10-board-program.mp4", storageType: "db", sourceTag: "mock" } }),
+    prisma.resource.create({ data: { creatorProfileId: profileId, type: "article", title: input.title + " notes", description: "Board-focused micro-notes with formulas, examples, and answer-writing tips.", body: "Revise identities, worked examples, and step-by-step board answer patterns.", storageType: "db", sourceTag: "mock" } }),
+    prisma.resource.create({ data: { creatorProfileId: profileId, type: "flashcard", title: input.title + " recall cards", description: "Quick active recall cards for identities, terms, and common traps.", storageType: "db", sourceTag: "mock" } }),
+    prisma.resource.create({ data: { creatorProfileId: profileId, type: "quiz", title: input.title + " diagnostic quiz", description: "Short MCQ check before moving to the next milestone.", storageType: "db", contentJson: { questions: [{ id: "class-10-board-q1", prompt: "Which expression is equal to a^2 - b^2?", options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + b^2", "2ab"], answerIndex: 0, learnMore: "Difference of squares factors into sum and difference terms." }] }, sourceTag: "mock" } })
+  ]);
+  await prisma.flashcard.createMany({
+    data: [
+      { resourceId: resources[2].id, sequence: 1, question: "What is (a + b)^2?", answer: "a^2 + 2ab + b^2", sourceTag: "mock" },
+      { resourceId: resources[2].id, sequence: 2, question: "What is (a - b)^2?", answer: "a^2 - 2ab + b^2", sourceTag: "mock" },
+      { resourceId: resources[2].id, sequence: 3, question: "What should every algebra answer include?", answer: "Formula, substitution, calculation steps, and final statement.", sourceTag: "mock" }
+    ]
+  });
+  const program = await prisma.program.create({
+    data: {
+      creatorProfileId: profileId,
+      role: "tutor",
+      title: input.title,
+      description: input.description,
+      visibility: "published",
+      status: "published",
+      feeType: input.feeType,
+      feeAmount: input.feeAmount,
+      sourceTag: "mock",
+      milestones: { create: { sequence: 1, title: "Milestone 1: Algebra foundations", sourceTag: "mock" } }
+    },
+    include: { milestones: true }
+  });
+  const milestone = program.milestones[0];
+  await prisma.milestoneActivity.createMany({
+    data: resources.map((resource, index) => ({
+      milestoneId: milestone.id,
+      resourceId: resource.id,
+      sequence: index + 1,
+      type: resource.type,
+      title: resource.title,
+      description: resource.description,
+      sourceTag: "mock"
+    }))
+  });
+  return program;
+}
+
+async function ensureMockBatchEnrollments(batchId: string, count: number) {
+  const existingCount = await prisma.batchEnrollment.count({ where: { batchId } });
+  if (existingCount >= count) return;
+  for (let index = existingCount; index < count; index += 1) {
+    const user = await prisma.user.upsert({
+      where: { phone: `+91783894${String(index + 1).padStart(4, "0")}` },
+      update: {},
+      create: {
+        phone: `+91783894${String(index + 1).padStart(4, "0")}`,
+        passwordHash: await hashPassword("Password@123"),
+        sourceTag: "mock"
+      }
+    });
+    const existingProfile = await prisma.profile.findFirst({ where: { userId: user.id, role: "student" } });
+    const profile = existingProfile ?? await prisma.profile.create({
+      data: {
+        userId: user.id,
+        role: "student",
+        firstName: ["Riya", "Kabir", "Ishaan", "Tara", "Aarav"][index] ?? `Student${index + 1}`,
+        lastName: ["Mehta", "Arora", "Bedi", "Joshi", "Singh"][index] ?? "Learner",
+        city: "Jabalpur",
+        communicationAddress: "Jabalpur",
+        stream: "senior",
+        specialization: "CBSE Class 10 Mathematics",
+        sourceTag: "mock"
+      }
+    });
+    await prisma.batchEnrollment.upsert({
+      where: { batchId_studentProfileId: { batchId, studentProfileId: profile.id } },
+      update: { status: "active" },
+      create: { batchId, studentProfileId: profile.id, status: "active", sourceTag: "mock" }
+    });
+  }
 }
 
 function toRecommendation(item: {
