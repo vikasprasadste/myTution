@@ -1845,7 +1845,7 @@ function TopBar({ title, left, right, onLeft, onRight }: { title: string; left?:
       )}
       <Text style={styles.topTitle}>{title}</Text>
       {right ? (
-        <Pressable onPress={onRight} style={styles.topButton}><Text style={styles.topButtonText}>{right}</Text></Pressable>
+        <Pressable onPress={onRight} style={styles.topTextAction}><Text style={styles.topTextActionText}>{right}</Text></Pressable>
       ) : (
         <View style={styles.topButtonSpacer} />
       )}
@@ -3686,7 +3686,7 @@ function Account({
     <>
       <View style={styles.accountHeader}>
         <Text style={styles.accountTitle}>My Account</Text>
-        <Pressable style={styles.headerIconButton} onPress={() => setScreen("ratings")}><Text style={styles.headerIconButtonText}>⚙</Text></Pressable>
+        <View style={styles.milesHeaderSpacer} />
       </View>
       <View style={styles.accountProfileCard}>
         <View style={styles.accountIdentityRow}>
@@ -3937,6 +3937,8 @@ const styles = StyleSheet.create({
   topButton: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.88)", borderColor: "rgba(215,227,240,0.92)", borderRadius: 13, borderWidth: 1, height: 40, justifyContent: "center", width: 40 },
   topButtonSpacer: { height: 40, width: 40 },
   topButtonText: { color: "#202A35", fontSize: 17, fontWeight: "800" },
+  topTextAction: { alignItems: "flex-end", justifyContent: "center", minHeight: 40, width: 40 },
+  topTextActionText: { color: "#202A35", fontSize: 12, fontWeight: "800" },
   topTitle: { color: "#202A35", fontSize: 16, fontWeight: "800", letterSpacing: 0.1 },
   milesHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", minHeight: 42, position: "relative" },
   milesHeaderSpacer: { height: 39, width: 39 },
