@@ -12,13 +12,15 @@ export function Card({ children, onPress }: CardProps) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: "rgba(255,255,255,0.92)",
-    borderRadius: 22,
-    padding: 16,
-    shadowColor: "#0F172A",
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 4
+    backgroundColor: "rgba(255,255,255,0.96)",
+    borderColor: "rgba(214,225,235,0.9)",
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 15,
+    shadowColor: "#22304A",
+    shadowOpacity: 0.055,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 2
   }
 });

@@ -281,6 +281,19 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
   }
 
   const profileInput = req.body.profile ?? {};
+  const activationCode = String(req.body.activationCode ?? "").replace(/\D/g, "").slice(0, 6);
+  const activation = role === "parent" ? await prisma.parentActivationCode.findFirst({
+    where: {
+      code: activationCode,
+      status: "active",
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }]
+    }
+  }) : null;
+  if (role === "parent" && !activation) {
+    res.status(400).json({ error: "Something went wrong" });
+    return;
+  }
+
   const user = await prisma.user.create({
     data: {
       phone,
@@ -320,6 +333,17 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
         specialization: profile.specialization
       }
     });
+    if (role === "parent" && activation) {
+      await prisma.parentStudentLink.upsert({
+        where: { studentProfileId_parentProfileId: { studentProfileId: activation.studentProfileId, parentProfileId: profile.id } },
+        update: { status: "active", relationship: activation.relationship },
+        create: { studentProfileId: activation.studentProfileId, parentProfileId: profile.id, relationship: activation.relationship, sourceTag: "app" }
+      });
+      await prisma.parentActivationCode.update({
+        where: { id: activation.id },
+        data: { status: "accepted", acceptedAt: new Date(), parentProfileId: profile.id }
+      });
+    }
   }
 
   const session = await createSession(user.id);
@@ -430,6 +454,76 @@ app.delete("/api/v1/admin/users/by-phone", async (req, res) => {
   });
 
   res.json({ data: result });
+});
+
+function generateActivationCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function uniqueActivationCode() {
+  for (let index = 0; index < 8; index += 1) {
+    const code = generateActivationCode();
+    const existing = await prisma.parentActivationCode.findUnique({ where: { code } });
+    if (!existing) return code;
+  }
+  return String(Date.now()).slice(-6);
+}
+
+app.get("/api/v1/parent-activation", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+  if (role === "student") {
+    const codes = await prisma.parentActivationCode.findMany({
+      where: { studentProfileId: profile.id },
+      orderBy: { createdAt: "desc" },
+      include: { parentProfile: true }
+    });
+    const parents = await prisma.parentStudentLink.findMany({
+      where: { studentProfileId: profile.id, status: "active" },
+      include: { parentProfile: true },
+      orderBy: { createdAt: "asc" }
+    });
+    res.json({ data: {
+      codes: codes.map((item) => ({ id: item.id, code: item.code, relationship: item.relationship, status: item.status, acceptedAt: item.acceptedAt })),
+      parents: parents.map((item) => ({ id: item.parentProfileId, name: item.parentProfile.firstName + " " + item.parentProfile.lastName, relationship: item.relationship, status: item.status }))
+    } });
+    return;
+  }
+  const children = await prisma.parentStudentLink.findMany({
+    where: { parentProfileId: profile.id, status: "active" },
+    include: { studentProfile: true },
+    orderBy: { createdAt: "asc" }
+  });
+  res.json({ data: { children: children.map((item) => ({ id: item.studentProfileId, name: item.studentProfile.firstName + " " + item.studentProfile.lastName, relationship: item.relationship, status: item.status })) } });
+});
+
+app.post("/api/v1/parent-activation", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const student = await findProfile("student", userId);
+  if (!student) {
+    res.status(404).json({ error: "Student profile not found" });
+    return;
+  }
+  const relationship = String(req.body.relationship ?? "Parent").trim() || "Parent";
+  const code = await uniqueActivationCode();
+  const invite = await prisma.parentActivationCode.create({
+    data: {
+      code,
+      studentUserId: userId,
+      studentProfileId: student.id,
+      relationship,
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      sourceTag: "app"
+    }
+  });
+  res.status(201).json({ data: { id: invite.id, code: invite.code, relationship: invite.relationship, status: invite.status } });
 });
 
 app.get("/api/v1/bootstrap", async (req, res) => {
@@ -1034,6 +1128,14 @@ app.get("/api/v1/education-plan/programs", async (req, res) => {
   }
   const userId = await readUserId(req);
   const profile = userId ? await findProfile(role, userId) : null;
+  if (role === "parent" && profile) {
+    const link = await prisma.parentStudentLink.findFirst({ where: { parentProfileId: profile.id, status: "active" }, orderBy: { createdAt: "asc" } });
+    if (link) {
+      const programs = await listProgramSummaries("student", link.studentProfileId);
+      res.json({ data: programs, selectedPrograms: programs.filter((program) => program.selected), maxSelectedPrograms: 3 });
+      return;
+    }
+  }
   const programs = await prisma.program.findMany({
     where: { role, ...(role === "tutor" && profile ? { creatorProfileId: profile.id } : {}) },
     orderBy: { title: "asc" },
@@ -1199,6 +1301,193 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
   });
 
   res.status(201).json({ data: program });
+});
+
+
+function tutorProgramToDraft(program: any) {
+  return {
+    id: program.id,
+    title: program.title,
+    description: program.description,
+    visibility: program.visibility,
+    feeType: program.feeType,
+    feeAmount: program.feeAmount,
+    milestones: (program.milestones ?? []).map((milestone: any) => ({
+      title: milestone.title,
+      sequence: milestone.sequence,
+      resources: (milestone.activities ?? []).map((activity: any) => {
+        const resource = activity.resource ?? {};
+        const questions = Array.isArray(resource.contentJson?.questions) ? resource.contentJson.questions : [];
+        return {
+          type: activity.type,
+          title: activity.title,
+          description: activity.description,
+          body: resource.body ?? "",
+          mediaUrl: resource.sourceUrl ?? "",
+          flashcards: (resource.flashcards ?? []).map((card: any) => ({ question: card.question, answer: card.answer })),
+          quizQuestions: questions.map((question: any) => ({
+            prompt: String(question.prompt ?? ""),
+            options: Array.isArray(question.options) ? question.options.map(String) : [],
+            answerIndex: Number(question.answerIndex ?? 0) || 0,
+            learnMore: String(question.learnMore ?? "")
+          }))
+        };
+      })
+    }))
+  };
+}
+
+function tutorProgramSummary(program: any): ProgramSummary {
+  const milestones = program.milestones ?? [];
+  const activityCount = milestones.reduce((total: number, milestone: any) => total + (milestone.activities?.length ?? 0), 0);
+  return {
+    id: program.id,
+    role: "tutor",
+    title: program.title,
+    description: program.description,
+    status: program.status,
+    visibility: program.visibility,
+    creatorProfileId: program.creatorProfileId,
+    feeType: program.feeType,
+    feeAmount: program.feeAmount,
+    selected: false,
+    milestoneCount: milestones.length,
+    activityCount
+  } as ProgramSummary;
+}
+
+async function writeTutorProgramTree(tx: any, programId: string, tutorId: string, input: TutorProgramCreateInput) {
+  const orderedMilestones = [...(input.milestones ?? [])].sort((a, b) => a.sequence - b.sequence);
+  for (const milestoneInput of orderedMilestones) {
+    const milestone = await tx.programMilestone.create({
+      data: {
+        programId,
+        sequence: milestoneInput.sequence,
+        title: milestoneInput.title,
+        sourceTag: "app"
+      }
+    });
+    for (const [index, resourceInput] of milestoneInput.resources.entries()) {
+      const resource = await tx.resource.create({
+        data: {
+          creatorProfileId: tutorId,
+          type: resourceInput.type,
+          title: resourceInput.title,
+          description: resourceInput.description,
+          body: resourceInput.body || resourceInput.description,
+          sourceUrl: resourceInput.mediaUrl || null,
+          storageType: "db",
+          contentJson: resourceInput.type === "quiz" ? {
+            questions: (resourceInput.quizQuestions ?? []).map((question, questionIndex) => ({
+              id: programId + "-m" + milestoneInput.sequence + "-q" + (questionIndex + 1),
+              prompt: question.prompt,
+              options: question.options,
+              answerIndex: question.answerIndex,
+              learnMore: question.learnMore ?? "Review the linked notes and try the concept again."
+            }))
+          } : undefined,
+          sourceTag: "app"
+        }
+      });
+      if (resourceInput.type === "flashcard") {
+        const cards = (resourceInput.flashcards?.length ? resourceInput.flashcards : defaultTutorFlashcards(resourceInput.title)).map((card, cardIndex) => ({
+          resourceId: resource.id,
+          sequence: cardIndex + 1,
+          question: card.question,
+          answer: card.answer,
+          sourceTag: "app"
+        }));
+        await tx.flashcard.createMany({ data: cards });
+      }
+      await tx.milestoneActivity.create({
+        data: {
+          milestoneId: milestone.id,
+          resourceId: resource.id,
+          sequence: index + 1,
+          type: resourceInput.type,
+          title: resourceInput.title,
+          description: resourceInput.description,
+          sourceTag: "app"
+        }
+      });
+    }
+  }
+}
+
+app.get("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const tutor = await findProfile("tutor", userId);
+  if (!tutor) {
+    res.status(404).json({ error: "Tutor profile not found" });
+    return;
+  }
+  const program = await prisma.program.findFirst({
+    where: { id: req.params.id, creatorProfileId: tutor.id, role: "tutor" },
+    include: {
+      milestones: {
+        orderBy: { sequence: "asc" },
+        include: { activities: { orderBy: { sequence: "asc" }, include: { resource: { include: { flashcards: { orderBy: { sequence: "asc" } } } } } } }
+      }
+    }
+  });
+  if (!program) {
+    res.status(404).json({ error: "Program not found" });
+    return;
+  }
+  res.json({ data: tutorProgramToDraft(program) });
+});
+
+app.put("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const tutor = await findProfile("tutor", userId);
+  if (!tutor) {
+    res.status(404).json({ error: "Tutor profile not found" });
+    return;
+  }
+  const input = normalizeTutorProgramInput(req.body);
+  if (!input.title || !input.description || !input.milestones?.length) {
+    res.status(400).json({ error: "Program title, description, milestone, and resources are required" });
+    return;
+  }
+  const existing = await prisma.program.findFirst({
+    where: { id: req.params.id, creatorProfileId: tutor.id, role: "tutor" },
+    include: { milestones: { include: { activities: true } } }
+  });
+  if (!existing) {
+    res.status(404).json({ error: "Program not found" });
+    return;
+  }
+  const program = await prisma.$transaction(async (tx) => {
+    const milestoneIds = existing.milestones.map((milestone) => milestone.id);
+    const activities = existing.milestones.flatMap((milestone) => milestone.activities);
+    const activityIds = activities.map((activity) => activity.id);
+    const resourceIds = activities.map((activity) => activity.resourceId);
+    if (activityIds.length) await tx.activityProgress.deleteMany({ where: { activityId: { in: activityIds } } });
+    if (activityIds.length) await tx.milestoneActivity.deleteMany({ where: { id: { in: activityIds } } });
+    if (resourceIds.length) await tx.flashcard.deleteMany({ where: { resourceId: { in: resourceIds } } });
+    if (resourceIds.length) await tx.resourceProgress.deleteMany({ where: { resourceId: { in: resourceIds } } });
+    if (resourceIds.length) await tx.resource.deleteMany({ where: { id: { in: resourceIds } } });
+    if (milestoneIds.length) await tx.programMilestone.deleteMany({ where: { id: { in: milestoneIds } } });
+    const updated = await tx.program.update({
+      where: { id: existing.id },
+      data: {
+        title: input.title,
+        description: input.description,
+        visibility: input.visibility ?? "published",
+        status: input.visibility === "private" ? "draft" : "published",
+        feeType: input.feeType ?? "free",
+        feeAmount: input.feeType === "paid" ? input.feeAmount ?? 0 : null
+      }
+    });
+    await writeTutorProgramTree(tx, updated.id, tutor.id, input);
+    return tx.program.findUnique({
+      where: { id: updated.id },
+      include: { milestones: { include: { activities: true }, orderBy: { sequence: "asc" } } }
+    });
+  });
+  res.json({ data: tutorProgramSummary(program) });
 });
 
 app.get("/api/v1/programs/current", async (req, res) => {
@@ -1777,9 +2066,21 @@ async function listProgramSummaries(role: Role, profileId?: string | null): Prom
 
 async function getEducationPlan(role: Role, userId?: string | null, programId?: string | null) {
   if (!isFeatureEnabled("programSessions", role)) return null;
-  const scopedProfile = userId ? await findProfile(role, userId) : null;
+  let scopedProfile: any = userId ? await findProfile(role, userId) : null;
+  let effectiveRole = role;
+  if (role === "parent" && scopedProfile) {
+    const link = await prisma.parentStudentLink.findFirst({
+      where: { parentProfileId: scopedProfile.id, status: "active" },
+      include: { studentProfile: true },
+      orderBy: { createdAt: "asc" }
+    });
+    if (link?.studentProfile) {
+      scopedProfile = link.studentProfile;
+      effectiveRole = "student";
+    }
+  }
   const program = await prisma.program.findFirst({
-    where: programId ? { id: programId } : { role },
+    where: programId ? { id: programId } : { role: effectiveRole },
     include: {
       milestones: {
         orderBy: { sequence: "asc" },
@@ -1796,7 +2097,7 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
       progress: true
     }
   });
-  if (!program) return fallbackEducationPlan(role, programId);
+  if (!program) return fallbackEducationPlan(effectiveRole, programId);
   const progress = scopedProfile
     ? program.progress.find((item) => item.profileId === scopedProfile.id)
     : null;
@@ -1832,22 +2133,22 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
 function dashboardCards(role: Role, reminderCount: number, completedMilestones: number, recommendationCount: number) {
   if (role === "tutor") {
     return [
-      { value: "0", label: "Students", target: "roleHub" },
-      { value: "0", label: "Leads", target: "search" },
-      { value: "0", label: "Rating", target: "ratings" },
+      { value: "18", label: "Students", target: "roleHub" },
+      { value: "7", label: "Leads", target: "roleHub" },
+      { value: "4.8", label: "Rating", target: "ratings" },
       { value: String(reminderCount), label: "Reminders", target: "events" }
     ];
   }
   if (role === "parent") {
     return [
-      { value: "0", label: "Surveys", target: "roleHub" },
-      { value: "0%", label: "Progress", target: "sessions" },
+      { value: "3", label: "Surveys", target: "roleHub" },
+      { value: "64%", label: "Progress", target: "sessions" },
       { value: String(recommendationCount), label: "Smart picks", target: "home" },
       { value: String(reminderCount), label: "Reminders", target: "events" }
     ];
   }
   return [
-    { value: "0", label: "Sessions", target: "sessions" },
+    { value: "4", label: "Classes", target: "roleHub" },
     { value: String(completedMilestones), label: "Completed", target: "sessions" },
     { value: String(recommendationCount), label: "Smart picks", target: "home" },
     { value: String(reminderCount), label: "Reminders", target: "events" }

@@ -41,6 +41,7 @@ type AppScreen =
   | "phone"
   | "otp"
   | "createPassword"
+  | "activation"
   | "profile"
   | "editProfile"
   | "signin"
@@ -63,8 +64,33 @@ type AppScreen =
 
 const icon = require("../assets/AppIcons/appstore.png");
 
+const valuePropImages: Record<Role, number[]> = {
+  student: [
+    require("../assets/value-props/find_verified_tutors.png"),
+    require("../assets/value-props/book_trial_classes.png"),
+    require("../assets/value-props/learn_with_smart_picks.png")
+  ],
+  tutor: [
+    require("../assets/value-props/verified_lead.png"),
+    require("../assets/value-props/run_your_teaching_day.png"),
+    require("../assets/value-props/grow_with_trust.png")
+  ],
+  parent: [
+    require("../assets/value-props/track_learning_clearly.png"),
+    require("../assets/value-props/approve_with_confidence.png"),
+    require("../assets/value-props/stay_on_top_of_class.png")
+  ]
+};
+
+const roleCarouselCardBg: Record<Role, string> = {
+  student: "#F2E1E5",
+  parent: "#E4EFF0",
+  tutor: "#EEF0E4"
+};
+
 type StreamKey = "junior" | "senior" | "ug" | "pg";
 type AuthSession = { accessToken: string; refreshToken: string; tokenType: string };
+type ParentLink = { id: string; name: string; relationship: string; status: string };
 type DashboardCard = { value: string; label: string; target: AppScreen };
 type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number; milestoneTitle?: string; required?: boolean };
 type TutorProgramDraft = TutorProgramCreateInput;
@@ -144,55 +170,26 @@ const defaultAssetPathsByType: Record<string, { thumbnail: string; banner: strin
 };
 
 const defaultTutorProgramDraft: TutorProgramDraft = {
-  title: "Class 10 board exam 2 month crash course",
-  description: "A focused two month program with weekly milestones for board exam readiness.",
+  title: "",
+  description: "",
   visibility: "published",
-  feeType: "paid",
-  feeAmount: 2500,
-  milestones: [
-    {
-      title: "Milestone 1: Algebra fundamentals",
-      sequence: 1,
-      resources: [
-        {
-          type: "article",
-          title: "Algebra quick notes",
-          description: "Micro-notes covering identities, equations, and common board patterns.",
-          body: "Cover definitions, formulas, worked examples, and board-style answer steps."
-        },
-        {
-          type: "video",
-          title: "Solving linear equations",
-          description: "Short concept video for equation solving and checking answers.",
-          mediaUrl: "https://example.com/class-10-linear-equations.mp4"
-        },
-        {
-          type: "flashcard",
-          title: "Formula recall cards",
-          description: "Active recall cards for algebra identities and terms.",
-          flashcards: [
-            { question: "What is (a + b)^2?", answer: "a^2 + 2ab + b^2" },
-            { question: "What is (a - b)^2?", answer: "a^2 - 2ab + b^2" },
-            { question: "What is a linear equation?", answer: "An equation where the highest power of the variable is 1." }
-          ]
-        },
-        {
-          type: "quiz",
-          title: "Algebra diagnostic quiz",
-          description: "A short quiz to check readiness before the next milestone.",
-          quizQuestions: [
-            {
-              prompt: "Which identity equals a^2 - b^2?",
-              options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + 2ab + b^2", "2ab"],
-              answerIndex: 0,
-              learnMore: "Difference of squares factors into the sum and difference of the terms."
-            }
-          ]
-        }
-      ]
-    }
-  ]
+  feeType: "free",
+  feeAmount: null,
+  milestones: []
 };
+
+const emptyFlashcards = [
+  { question: "", answer: "" },
+  { question: "", answer: "" },
+  { question: "", answer: "" }
+];
+
+const emptyQuizQuestions = [{
+  prompt: "",
+  options: ["", "", "", ""],
+  answerIndex: 0,
+  learnMore: ""
+}];
 
 export default function Index() {
   const [role, setRole] = useState<Role>("student");
@@ -207,6 +204,10 @@ export default function Index() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [signinPassword, setSigninPassword] = useState("");
+  const [parentActivationCode, setParentActivationCode] = useState("");
+  const [activationRelationship, setActivationRelationship] = useState("Mother");
+  const [activationCode, setActivationCode] = useState("");
+  const [linkedParents, setLinkedParents] = useState<ParentLink[]>([]);
   const [stream, setStream] = useState<StreamKey>("senior");
   const [specialization, setSpecialization] = useState("CBSE Class 10 Mathematics");
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>({
@@ -238,6 +239,7 @@ export default function Index() {
   const [programMenuOpen, setProgramMenuOpen] = useState(false);
   const [tutorProgramDraft, setTutorProgramDraft] = useState<TutorProgramDraft>(defaultTutorProgramDraft);
   const [tutorProgramComposerOpen, setTutorProgramComposerOpen] = useState(false);
+  const [editingTutorProgramId, setEditingTutorProgramId] = useState<string | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [reminderTitle, setReminderTitle] = useState("Math revision reminder");
@@ -256,7 +258,7 @@ export default function Index() {
   const [batchRequests, setBatchRequests] = useState<BatchRequestSummary[]>([]);
   const [tutorSearchLoading, setTutorSearchLoading] = useState(false);
   const [classHubLoading, setClassHubLoading] = useState(false);
-  const [completedTopic, setCompletedTopic] = useState<null | { milestoneId: string; nextActivity?: SelectedActivity; milestoneComplete: boolean }>(null);
+  const [completedTopic, setCompletedTopic] = useState<null | { milestoneId: string; nextActivity?: SelectedActivity; nextMilestoneActivity?: SelectedActivity; milestoneComplete: boolean; programComplete?: boolean }>(null);
   const [completedRecommendations, setCompletedRecommendations] = useState<string[]>([]);
   const [flashIndex, setFlashIndex] = useState(0);
   const [flashAnswer, setFlashAnswer] = useState(false);
@@ -293,7 +295,6 @@ export default function Index() {
   const carouselLimit = Number.isFinite(appConfig.home?.maxActivitiesPerCarousel) ? appConfig.home.maxActivitiesPerCarousel : 5;
   const reminderPreviewLimit = Number.isFinite(appConfig.home?.maxRemindersPreview) ? appConfig.home.maxRemindersPreview : 2;
   const forYouTodayActivities = journeyActivities.filter((activity) => activity.required && activity.status !== "complete").slice(0, carouselLimit);
-  const nextStepActivities = journeyActivities.filter((activity) => !activity.required && activity.status !== "complete").slice(0, carouselLimit);
   const programComplete = homeMilestones.length > 0 && homeMilestones.every((milestone) => (milestone.activities ?? []).length > 0 && (milestone.activities ?? []).every((activity) => activity.status === "complete"));
 
   useEffect(() => {
@@ -309,6 +310,10 @@ export default function Index() {
     const timer = setTimeout(() => setRecommendationsReady(true), 1600);
     return () => clearTimeout(timer);
   }, [screen, role]);
+
+  useEffect(() => {
+    if (screen === "account") void loadParentActivation();
+  }, [screen, authSession?.accessToken, role]);
 
   useEffect(() => {
     if (screen !== "sessions" || programModalSeen || !programs.length) return;
@@ -395,19 +400,38 @@ export default function Index() {
     setProgramModalVisible(true);
   }
 
+  async function loadTutorProgramForEdit(programId: string) {
+    setLoadingAction("loadTutorProgram:" + programId);
+    try {
+      const response = await apiGet<{ data: TutorProgramDraft & { id: string } }>(`/api/v1/education-plan/tutor/programs/${programId}`, authSession?.accessToken);
+      setTutorProgramDraft(response.data);
+      setEditingTutorProgramId(programId);
+      setTutorProgramComposerOpen(true);
+      setApiNotice("");
+    } catch {
+      setApiNotice("Program details could not be loaded. Please check API deployment and login state.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
   async function createTutorProgram() {
+    const editingId = editingTutorProgramId;
     setLoadingAction("createTutorProgram");
     try {
-      const response = await apiPost<{ data: ProgramSummary }>("/api/v1/education-plan/tutor/programs", tutorProgramDraft, authSession?.accessToken);
+      const response = editingId
+        ? await apiPut<{ data: ProgramSummary }>(`/api/v1/education-plan/tutor/programs/${editingId}`, tutorProgramDraft, authSession?.accessToken)
+        : await apiPost<{ data: ProgramSummary }>("/api/v1/education-plan/tutor/programs", tutorProgramDraft, authSession?.accessToken);
       setPrograms((items) => [response.data, ...items.filter((item) => item.id !== response.data.id)]);
       setSelectedProgramId(response.data.id);
       setTutorProgramComposerOpen(false);
+      setEditingTutorProgramId(null);
       setTutorProgramDraft(defaultTutorProgramDraft);
       setProgramRefreshKey((value) => value + 1);
-      setProgramToast("Program created and ready to configure.");
+      setProgramToast(editingId ? "Program updates saved." : "Program created and ready to configure.");
       setApiNotice("");
     } catch {
-      setApiNotice("Program could not be created. Please check API deployment and login state.");
+      setApiNotice(editingId ? "Program could not be updated. Please check API deployment and login state." : "Program could not be created. Please check API deployment and login state.");
     } finally {
       setLoadingAction(null);
     }
@@ -656,6 +680,7 @@ export default function Index() {
         otp: otpValue,
         password,
         role,
+        activationCode: role === "parent" ? parentActivationCode : undefined,
         profile: {
           firstName: profileDraft.firstName.trim(),
           lastName: profileDraft.lastName.trim(),
@@ -855,13 +880,16 @@ export default function Index() {
     }
     openResource(activityToResource(nextActivity, milestone));
   }
-
   function getNextMilestoneActivity(currentMilestoneId?: string): SelectedActivity | undefined {
     const milestones = apiMilestones ?? programMilestones;
     const currentMilestone = milestones.find((milestone) => milestone.id === currentMilestoneId);
-    const nextMilestone = milestones.find((milestone) => milestone.sequence === (currentMilestone?.sequence ?? 0) + 1);
+    const nextMilestone = milestones.find((milestone) => milestone.sequence === (currentMilestone?.sequence ?? 0) + 1 && !milestone.locked);
     const nextActivity = nextMilestone?.activities?.find((activity) => activity.status !== "complete") ?? nextMilestone?.activities?.[0];
     return nextMilestone && nextActivity ? activityToResource(nextActivity, { ...nextMilestone, locked: false }) : undefined;
+  }
+
+  function refreshProgramFromApi() {
+    setProgramRefreshKey((value) => value + 1);
   }
 
   async function markComplete() {
@@ -887,20 +915,55 @@ export default function Index() {
         await apiPost(`/api/v1/resources/${selectedResource.id}/complete`, { role }, authSession?.accessToken).catch(() => undefined);
       }
       setLoadingAction(null);
+      const nextMilestoneActivity = milestoneComplete && selectedResource.milestoneId ? getNextMilestoneActivity(selectedResource.milestoneId) : undefined;
       if (milestoneComplete && selectedResource.milestoneId) {
         setCompletedMilestone((value) => Math.max(value, selectedResource.milestoneSequence ?? value));
-        setCompletedTopic({ milestoneId: selectedResource.milestoneId, nextActivity: getNextMilestoneActivity(selectedResource.milestoneId), milestoneComplete });
+      }
+      if (selectedResource.milestoneId) {
+        setCompletedTopic({
+          milestoneId: selectedResource.milestoneId,
+          nextActivity,
+          nextMilestoneActivity,
+          milestoneComplete,
+          programComplete: milestoneComplete && !nextMilestoneActivity && !nextActivity
+        });
         return;
       }
       setSelectedResource(null);
-      if (nextActivity) {
-        openResource(nextActivity);
-      } else {
-        setScreen("sessions");
-      }
+      setScreen("sessions");
       return;
     }
     setLoadingAction(null);
+  }
+
+  async function loadParentActivation() {
+    if (!authSession || role !== "student") return;
+    try {
+      const response = await apiGet<{ data: { parents: ParentLink[]; codes: Array<{ code: string; relationship: string; status: string }> } }>("/api/v1/parent-activation?role=student", authSession.accessToken);
+      setLinkedParents(response.data.parents ?? []);
+      const latest = response.data.codes?.find((item) => item.status === "active");
+      if (latest) {
+        setActivationCode(latest.code);
+        setActivationRelationship(latest.relationship);
+      }
+    } catch {
+      // Account invite data is optional for local previews.
+    }
+  }
+
+  async function generateActivationCode() {
+    if (!authSession || role !== "student") return;
+    setLoadingAction("generateActivation");
+    try {
+      const response = await apiPost<{ data: { code: string; relationship: string } }>("/api/v1/parent-activation", { relationship: activationRelationship }, authSession.accessToken);
+      setActivationCode(response.data.code);
+      await loadParentActivation();
+      setApiNotice("");
+    } catch {
+      setApiNotice("Activation code could not be generated. Please check API service.");
+    } finally {
+      setLoadingAction(null);
+    }
   }
 
   function renderScreen() {
@@ -944,8 +1007,8 @@ export default function Index() {
         <>
           <TopBar title="Why myTution" left="‹" onLeft={() => setScreen("role")} right={last ? "" : "Skip"} onRight={() => setScreen("phone")} />
           <View style={styles.valueStage}>
-            <View style={[styles.propArt, { backgroundColor: theme.accent }]}>
-              <Text style={[styles.propIcon, { color: theme.text }]}>{prop.icon}</Text>
+            <View style={[styles.propArt, { backgroundColor: theme.surface }]}>
+              <Image source={valuePropImages[role][valueIndex] ?? valuePropImages[role][0]} style={styles.propImage} resizeMode="contain" />
             </View>
             <View style={styles.valueCopy}>
               <Title>{prop.title}</Title>
@@ -1002,7 +1065,25 @@ export default function Index() {
           <FieldLabel>Confirm password</FieldLabel>
           <Input secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} placeholder="Confirm password" />
           <Muted>{passwordValid ? "Password confirmed." : "Passwords must match and be at least 8 characters."}</Muted>
-          <Button disabled={!passwordValid} role={role} label="Continue" onPress={() => setScreen("profile")} />
+          <Button disabled={!passwordValid} role={role} label="Continue" onPress={() => setScreen(role === "parent" ? "activation" : "profile")} />
+        </>
+      );
+    }
+
+    if (screen === "activation") {
+      return (
+        <>
+          <TopBar title="Activation" left="‹" onLeft={() => setScreen("createPassword")} />
+          <Title>Enter activation code</Title>
+          <Muted>Use the 6 digit code shared by the student to link this parent account.</Muted>
+          <Input
+            value={parentActivationCode}
+            onChangeText={(value) => setParentActivationCode(value.replace(/\D/g, "").slice(0, 6))}
+            placeholder="6 digit code"
+            keyboardType="number-pad"
+            maxLength={6}
+          />
+          <Button disabled={parentActivationCode.length !== 6} role={role} label="Continue" onPress={() => setScreen("profile")} />
         </>
       );
     }
@@ -1115,7 +1196,7 @@ export default function Index() {
         <>
           <Header role={role} personaName={`${persona.firstName} ${persona.lastName}`} />
           {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
-          <TrackCard role={role} onPress={() => setScreen(role === "student" ? "search" : "sessions")} />
+          <TrackCard role={role} onPress={() => setScreen(role === "student" ? "search" : role === "tutor" ? "roleHub" : "sessions")} />
 
           {role === "student" ? (
             <>
@@ -1140,18 +1221,24 @@ export default function Index() {
                 </View>
               ) : (
                 <>
-                  <SectionTitle>Recommended for you</SectionTitle>
-                  {roleRecommendations.length ? (
-                    <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.carousel}>
-                      {roleRecommendations.map((item) => (
-                        <RecommendationTile key={item.id} role={role} item={item} onPress={() => openResource(item)} />
-                      ))}
-                    </ScrollView>
+                  {role === "tutor" ? (
+                    <JourneyResourceCarousel title="Recommended for you" role={role} items={forYouTodayActivities.length ? forYouTodayActivities : roleRecommendations.map((item) => ({ ...item, milestoneTitle: "Teaching picks", milestoneSequence: 1, activitySequence: 1, required: true, status: "pending" as const }))} emptyCopy="No required activities pending." onPress={openResource} />
                   ) : (
-                    <View style={styles.emptyInlineCard}>
-                      <Text style={styles.todayTitle}>All caught up</Text>
-                      <Text style={styles.todayMeta}>Completed picks are removed from Home.</Text>
-                    </View>
+                    <>
+                      <SectionTitle>Recommended for you</SectionTitle>
+                      {roleRecommendations.length ? (
+                        <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.carousel}>
+                          {roleRecommendations.map((item) => (
+                            <RecommendationTile key={item.id} role={role} item={item} onPress={() => openResource(item)} />
+                          ))}
+                        </ScrollView>
+                      ) : (
+                        <View style={styles.emptyInlineCard}>
+                          <Text style={styles.todayTitle}>All caught up</Text>
+                          <Text style={styles.todayMeta}>Completed picks are removed from Home.</Text>
+                        </View>
+                      )}
+                    </>
                   )}
                 </>
               )}
@@ -1195,12 +1282,12 @@ export default function Index() {
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} />;
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
-    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} />;
+    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
-    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} />;
+    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
     if (screen === "milestoneDetail" && selectedMilestone) return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} />;
-    if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={resourceDetail ?? selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} completedTopic={completedTopic} nextTopic={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} myMiles={() => { setCompletedTopic(null); setSelectedResource(null); setScreen("sessions"); }} />;
+    if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={resourceDetail ?? selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} completedTopic={completedTopic} continueActivity={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} nextMilestone={() => { const next = completedTopic?.nextMilestoneActivity; setCompletedTopic(null); if (next) openResource(next); }} backToProgram={() => { setCompletedTopic(null); setSelectedResource(null); refreshProgramFromApi(); setScreen("sessions"); }} backToHome={() => { setCompletedTopic(null); setSelectedResource(null); refreshProgramFromApi(); setScreen("home"); }} />;
     if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={resourceDetail ?? selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "home")} />;
     if (screen === "flashPlay" && selectedResource) {
       const cards = resourceDetail?.id === selectedResource.id && resourceDetail.flashcards?.length ? resourceDetail.flashcards : fallbackFlashcards;
@@ -1211,7 +1298,7 @@ export default function Index() {
     }
     if (screen === "quizIntro" && selectedResource) return <QuizIntro role={role} resource={resourceDetail ?? selectedResource} loading={loadingAction === "startQuiz"} start={() => startQuiz(selectedResource)} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
     if (screen === "quizPlay" && selectedResource && quizPayload) return <QuizPlay role={role} payload={quizPayload} index={quizIndex} answers={quizAnswers} setAnswer={(answer) => setQuizAnswers((items) => items.map((item, itemIndex) => itemIndex === quizIndex ? answer : item))} next={() => { if (quizIndex === quizPayload.questions.length - 1) setScreen("quizResult"); else setQuizIndex(quizIndex + 1); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
-    if (screen === "quizResult" && selectedResource && quizPayload) return <QuizResult role={role} payload={quizPayload} answers={quizAnswers} complete={markComplete} loading={loadingAction === "markComplete"} backToTopic={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
+    if (screen === "quizResult" && selectedResource && quizPayload) return <QuizResult role={role} payload={quizPayload} answers={quizAnswers} complete={markComplete} loading={loadingAction === "markComplete"} backToTopic={() => { refreshProgramFromApi(); setScreen("sessions"); }} />;
 
     return null;
   }
@@ -1232,7 +1319,7 @@ export default function Index() {
         <DateTimePicker
           value={picker.value}
           mode={picker.mode}
-          display="default"
+          display="spinner"
           onChange={(event, selectedDate) => {
             const next = selectedDate ?? picker.value;
             if (event.type !== "dismissed") {
@@ -1566,7 +1653,7 @@ function RecommendationTile({ role, item, onPress }: { role: Role; item: Recomme
   const theme = useRoleTheme(role);
   const glyph = item.type === "video" ? "▶" : item.type === "article" ? "₹" : "P";
   return (
-    <Pressable onPress={onPress} style={[styles.recCard, { backgroundColor: theme.card }]}>
+    <Pressable onPress={onPress} style={[styles.recCard, { backgroundColor: roleCarouselCardBg[role] }]}>
       <View style={[styles.thumb, { backgroundColor: theme.surface, overflow: "hidden" }]}>
         <SvgAsset
           pathValue={assetPathFor(item.type, item.assetUrls)}
@@ -1711,7 +1798,7 @@ function JourneyResourceCarousel({ title, role, items, emptyCopy, onPress }: { t
 function JourneyResourceTile({ role, item, onPress }: { role: Role; item: JourneyActivity; onPress: () => void }) {
   const theme = useRoleTheme(role);
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.journeyResourceCard, { backgroundColor: theme.cardSoft }, pressed && styles.pressed]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.journeyResourceCard, { backgroundColor: roleCarouselCardBg[role] }, pressed && styles.pressed]}>
       <View style={[styles.journeyResourceImage, { backgroundColor: theme.surface, overflow: "hidden" }]}>
         <SvgAsset
           pathValue={assetPathFor(item.type, item.assetUrls)}
@@ -2154,7 +2241,7 @@ function VideoResourcePlayer({ resource }: { resource: ResourceDetailPayload | S
   );
 }
 
-function ResourceDetail({ role, resource, complete, loading, back, completedTopic, nextTopic, myMiles }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; complete: () => void; loading?: boolean; back: () => void; completedTopic: null | { nextActivity?: SelectedActivity; milestoneComplete: boolean }; nextTopic: () => void; myMiles: () => void }) {
+function ResourceDetail({ role, resource, complete, loading, back, completedTopic, continueActivity, nextMilestone, backToProgram, backToHome }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; complete: () => void; loading?: boolean; back: () => void; completedTopic: null | { nextActivity?: SelectedActivity; nextMilestoneActivity?: SelectedActivity; milestoneComplete: boolean; programComplete?: boolean }; continueActivity: () => void; nextMilestone: () => void; backToProgram: () => void; backToHome: () => void }) {
   const theme = useRoleTheme(role);
   const cta = resource.type === "article" ? "Mark as read" : resource.type === "video" ? "Mark watched" : "Mark complete";
   const detail = resource as ResourceDetailPayload;
@@ -2181,10 +2268,10 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
             <View style={styles.trayHandle} />
             <View style={styles.trophyCircle}><Text style={styles.trophyIcon}>🏆</Text></View>
             <Text style={styles.topicCompleteTitle}>Topic complete</Text>
-            <Text style={styles.topicCompleteCopy}>Great job finishing this topic. The next topic is now unlocked and ready for you to explore.</Text>
+            <Text style={styles.topicCompleteCopy}>{completedTopic.programComplete ? "You have completed every milestone in this program." : completedTopic.milestoneComplete ? "Great job finishing this milestone. The next unlocked milestone is ready." : "Great job finishing this activity. Continue with the next topic when you are ready."}</Text>
             <View style={styles.topicActionRow}>
-              {completedTopic.nextActivity ? <Button role={role} label="Next topic" onPress={nextTopic} /> : null}
-              <Button role={role} variant="secondary" label="Program" onPress={myMiles} />
+              {completedTopic.programComplete ? <Button role={role} label="Back to Home" onPress={backToHome} /> : completedTopic.nextActivity ? <Button role={role} label="Continue" onPress={continueActivity} /> : completedTopic.nextMilestoneActivity ? <Button role={role} label="Next Milestone" onPress={nextMilestone} /> : null}
+              <Button role={role} variant="secondary" label="Back to Program" onPress={backToProgram} />
             </View>
           </View>
         </View>
@@ -2314,8 +2401,8 @@ function QuizResult({ role, payload, answers, complete, loading, backToTopic }: 
         <View style={styles.reactionRowCentered}><Text style={styles.reactionButton}>👍</Text><Text style={styles.reactionButton}>👎</Text></View>
       </View>
       <View style={styles.resourceBottomCta}>
-        <Button role={role} label="Next activity" onPress={complete} loading={loading} />
-        <Pressable style={({ pressed }) => [styles.backToTopicLink, pressed && styles.pressed]} onPress={backToTopic}><Text style={styles.backToTopicText}>Back to topic</Text></Pressable>
+        <Button role={role} label="Next Milestone" onPress={complete} loading={loading} />
+        <Pressable style={({ pressed }) => [styles.backToTopicLink, pressed && styles.pressed]} onPress={backToTopic}><Text style={styles.backToTopicText}>Back to program</Text></Pressable>
       </View>
     </>
   );
@@ -2394,7 +2481,11 @@ function Sessions({
   tutorProgramComposerOpen,
   setTutorProgramComposerOpen,
   createTutorProgram,
-  createTutorProgramLoading
+  createTutorProgramLoading,
+  editingProgramId,
+  setEditingProgramId,
+  loadTutorProgramForEdit,
+  loadingAction
 }: {
   role: Role;
   programs: ProgramSummary[];
@@ -2414,6 +2505,10 @@ function Sessions({
   setTutorProgramComposerOpen: (value: boolean) => void;
   createTutorProgram: () => void;
   createTutorProgramLoading: boolean;
+  editingProgramId: string | null;
+  setEditingProgramId: (value: string | null) => void;
+  loadTutorProgramForEdit: (programId: string) => void;
+  loadingAction: string | null;
 }) {
   const theme = useRoleTheme(role);
   const selectedProgram = selectedPrograms.find((program) => program.id === selectedProgramId) ?? programs.find((program) => program.id === selectedProgramId) ?? selectedPrograms[0] ?? programs[0];
@@ -2428,17 +2523,14 @@ function Sessions({
         </Pressable>
         {menuOpen ? (
           <View style={styles.programMenu}>
-            <Pressable
-              disabled={role === "student" && selectedPrograms.length >= 3}
-              style={({ pressed }) => [
-                styles.programMenuItem,
-                role === "student" && selectedPrograms.length >= 3 ? styles.programMenuItemDisabled : null,
-                pressed && !(role === "student" && selectedPrograms.length >= 3) && styles.pressed
-              ]}
-              onPress={openProgramPicker}
-            >
-              <Text style={[styles.programMenuText, role === "student" && selectedPrograms.length >= 3 ? styles.programMenuTextDisabled : null]}>Add a program</Text>
-            </Pressable>
+            {role !== "student" ? (
+              <Pressable
+                style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]}
+                onPress={openProgramPicker}
+              >
+                <Text style={styles.programMenuText}>Add a program</Text>
+              </Pressable>
+            ) : null}
             <Pressable style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]} onPress={archiveProgram}>
               <Text style={styles.programMenuText}>Archive a program</Text>
             </Pressable>
@@ -2469,6 +2561,10 @@ function Sessions({
           setOpen={setTutorProgramComposerOpen}
           createProgram={createTutorProgram}
           loading={createTutorProgramLoading}
+          editingProgramId={editingProgramId}
+          setEditingProgramId={setEditingProgramId}
+          loadProgramForEdit={loadTutorProgramForEdit}
+          loadingAction={loadingAction}
         />
       ) : null}
       <View style={styles.milesTimeline}>
@@ -2550,7 +2646,11 @@ function TutorProgramAuthoring({
   open,
   setOpen,
   createProgram,
-  loading
+  loading,
+  editingProgramId,
+  setEditingProgramId,
+  loadProgramForEdit,
+  loadingAction
 }: {
   role: Role;
   programs: ProgramSummary[];
@@ -2561,6 +2661,10 @@ function TutorProgramAuthoring({
   setOpen: (value: boolean) => void;
   createProgram: () => void;
   loading: boolean;
+  editingProgramId: string | null;
+  setEditingProgramId: (value: string | null) => void;
+  loadProgramForEdit: (programId: string) => void;
+  loadingAction: string | null;
 }) {
   const theme = useRoleTheme(role);
   const updateDraft = (patch: Partial<TutorProgramDraft>) => setDraft((current) => ({ ...current, ...patch }));
@@ -2573,8 +2677,8 @@ function TutorProgramAuthoring({
     type,
     title: type === "video" ? "New concept video" : type === "flashcard" ? "New flashcards" : type === "quiz" ? "New quiz" : "New article",
     description: "Describe what students will learn in this activity.",
-    ...(type === "flashcard" ? { flashcards: defaultTutorProgramDraft.milestones?.[0]?.resources[2]?.flashcards ?? [] } : {}),
-    ...(type === "quiz" ? { quizQuestions: defaultTutorProgramDraft.milestones?.[0]?.resources[3]?.quizQuestions ?? [] } : {})
+    ...(type === "flashcard" ? { flashcards: emptyFlashcards } : {}),
+    ...(type === "quiz" ? { quizQuestions: emptyQuizQuestions } : {})
   });
   const updateMilestone = (milestoneIndex: number, patch: Partial<NonNullable<TutorProgramDraft["milestones"]>[number]>) => {
     setDraft((current) => ({
@@ -2590,13 +2694,20 @@ function TutorProgramAuthoring({
         {
           title: `Milestone ${milestones.length + 1}`,
           sequence: milestones.length + 1,
-          resources: [defaultActivity("article")]
+          resources: []
         }
       ]
     }));
   };
   const addActivity = (milestoneIndex: number) => updateMilestone(milestoneIndex, {
     resources: [...milestones[milestoneIndex].resources, defaultActivity("article")]
+  });
+  const removeMilestone = (milestoneIndex: number) => setDraft((current) => ({
+    ...current,
+    milestones: milestones.filter((_, index) => index !== milestoneIndex).map((milestone, index) => ({ ...milestone, sequence: index + 1 }))
+  }));
+  const removeActivity = (milestoneIndex: number, resourceIndex: number) => updateMilestone(milestoneIndex, {
+    resources: milestones[milestoneIndex].resources.filter((_, index) => index !== resourceIndex)
   });
   const updateResource = (milestoneIndex: number, resourceIndex: number, patch: Partial<TutorProgramResourceInput>) => {
     setDraft((current) => ({
@@ -2615,7 +2726,7 @@ function TutorProgramAuthoring({
           ...milestone,
           resources: milestone.resources.map((resource, innerIndex) => {
             if (innerIndex !== resourceIndex) return resource;
-            const cards = resource.flashcards?.length ? resource.flashcards : defaultTutorProgramDraft.milestones?.[0]?.resources[2]?.flashcards ?? [];
+            const cards = resource.flashcards?.length ? resource.flashcards : emptyFlashcards;
             return { ...resource, flashcards: cards.map((card, cardInnerIndex) => cardInnerIndex === cardIndex ? { ...card, ...patch } : card) };
           })
         };
@@ -2631,7 +2742,7 @@ function TutorProgramAuthoring({
           ...milestone,
           resources: milestone.resources.map((resource, innerIndex) => {
             if (innerIndex !== resourceIndex) return resource;
-            const question = resource.quizQuestions?.[0] ?? defaultTutorProgramDraft.milestones?.[0]?.resources[3]?.quizQuestions?.[0];
+            const question = resource.quizQuestions?.[0] ?? emptyQuizQuestions[0];
             return { ...resource, quizQuestions: question ? [{ ...question, ...patch }] : [] };
           })
         };
@@ -2651,15 +2762,31 @@ function TutorProgramAuthoring({
         <View style={styles.flex}>
           <Text style={styles.tutorProgramEyebrow}>Educator programs</Text>
           <Text style={styles.tutorProgramTitle}>{selectedProgram?.title ?? "Create your first program"}</Text>
-          <Text style={styles.tutorProgramCopy}>{programs.length ? `${programs.length} program${programs.length === 1 ? "" : "s"} configured from your tutor profile.` : "Add a program and configure milestones with your own education content."}</Text>
+          <Text style={styles.tutorProgramCopy}>{programs.length ? "Select a configured program to edit, or start a blank one." : "Add a program and configure milestones with your own education content."}</Text>
         </View>
-        <Pressable style={({ pressed }) => [styles.smallOutlineButton, pressed && styles.pressed]} onPress={() => setOpen(!open)}>
-          <Text style={[styles.smallOutlineButtonText, { color: theme.text }]}>{open ? "Hide" : "Add"}</Text>
-        </Pressable>
       </View>
+      {programs.length ? (
+        <View style={[styles.selectedProgramPanel, { backgroundColor: theme.card }]}>
+          <FieldLabel>Configured programs</FieldLabel>
+          <DropdownField
+            value={selectedProgram?.title ?? "Select program"}
+            options={programs.map((program) => program.title)}
+            onSelect={(title) => {
+              const program = programs.find((item) => item.title === title);
+              if (program) loadProgramForEdit(program.id);
+            }}
+          />
+          <View style={styles.row}>
+            <Button role={role} variant="secondary" label="Edit selected" loading={loadingAction === "loadTutorProgram:" + selectedProgram?.id} onPress={() => selectedProgram && loadProgramForEdit(selectedProgram.id)} />
+            <Button role={role} label="Add new" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
+          </View>
+        </View>
+      ) : (
+        <Button role={role} label="Add a program" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
+      )}
       {open ? (
         <View style={[styles.tutorComposerCard, { backgroundColor: theme.cardAlt }]}>
-          <Text style={styles.tutorComposerTitle}>Add a program</Text>
+          <Text style={styles.tutorComposerTitle}>{editingProgramId ? "Edit program" : "Add a program"}</Text>
           <FieldLabel>Program title</FieldLabel>
           <Input value={draft.title} onChangeText={(title) => updateDraft({ title })} />
           <FieldLabel>Description</FieldLabel>
@@ -2678,7 +2805,7 @@ function TutorProgramAuthoring({
             <View key={`${milestone.sequence}-${milestoneIndex}`} style={styles.tutorMilestoneEditor}>
               <View style={styles.rowBetween}>
                 <Text style={styles.tutorResourceTitle}>Milestone {milestoneIndex + 1}</Text>
-                <Text style={styles.tutorResourcePill}>Seq {milestone.sequence}</Text>
+                <Pressable onPress={() => removeMilestone(milestoneIndex)}><Text style={styles.tutorResourcePill}>Delete</Text></Pressable>
               </View>
               <FieldLabel>Milestone title</FieldLabel>
               <Input value={milestone.title} onChangeText={(title) => updateMilestone(milestoneIndex, { title })} />
@@ -2688,7 +2815,7 @@ function TutorProgramAuthoring({
             <View key={`${resource.type}-${index}`} style={styles.tutorResourceEditor}>
               <View style={styles.rowBetween}>
                 <Text style={styles.tutorResourceTitle}>Activity {index + 1}</Text>
-                <Text style={styles.tutorResourcePill}>{capitalize(resource.type)}</Text>
+                <Pressable onPress={() => removeActivity(milestoneIndex, index)}><Text style={styles.tutorResourcePill}>Delete</Text></Pressable>
               </View>
               <FieldLabel>Activity type</FieldLabel>
               <DropdownField value={capitalize(resource.type)} options={resourceTypeOptions.map(capitalize)} onSelect={(value) => updateResource(milestoneIndex, index, { type: value.toLowerCase() as ResourceType })} />
@@ -2710,7 +2837,7 @@ function TutorProgramAuthoring({
               ) : null}
               {resource.type === "flashcard" ? (
                 <>
-                  {(resource.flashcards?.length ? resource.flashcards : defaultTutorProgramDraft.milestones?.[0]?.resources[2]?.flashcards ?? []).slice(0, 3).map((card, cardIndex) => (
+                  {(resource.flashcards?.length ? resource.flashcards : emptyFlashcards).slice(0, 3).map((card, cardIndex) => (
                     <View key={cardIndex} style={styles.flashcardEditorRow}>
                       <FieldLabel>Flashcard {cardIndex + 1}</FieldLabel>
                       <Input value={card.question} onChangeText={(question) => updateFlashcard(milestoneIndex, index, cardIndex, { question })} placeholder="Question" />
@@ -2735,7 +2862,7 @@ function TutorProgramAuthoring({
             </View>
           ))}
           <Button role={role} variant="secondary" label="Add milestone" onPress={addMilestone} />
-          <Button role={role} label="Create program" onPress={createProgram} disabled={!canCreate} loading={loading} />
+          <Button role={role} label={editingProgramId ? "Save updates" : "Create program"} onPress={createProgram} disabled={!canCreate} loading={loading} />
         </View>
       ) : null}
     </View>
@@ -2829,7 +2956,10 @@ function TutorDiscovery({
   back: () => void;
 }) {
   const any = "Any";
+  const theme = useRoleTheme(role);
   const [selectedTutor, setSelectedTutor] = useState<TutorSearchResult | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterTab, setFilterTab] = useState<"core" | "logistics" | "profile">("core");
   const [subject, setSubject] = useState(any);
   const [location, setLocation] = useState(any);
   const [grade, setGrade] = useState(any);
@@ -2840,10 +2970,27 @@ function TutorDiscovery({
   const [experience, setExperience] = useState(any);
   const [rating, setRating] = useState(any);
   const cleaned = (value: string) => value === any ? undefined : value;
+  const filters = {
+    subject: cleaned(subject),
+    location: cleaned(location),
+    grade: cleaned(grade),
+    board: cleaned(board),
+    mode: cleaned(mode),
+    language: cleaned(language),
+    gender: cleaned(gender),
+    experience: cleaned(experience),
+    rating: cleaned(rating)
+  };
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const applyFilters = () => {
+    if (!activeFilterCount) return;
+    setFilterOpen(false);
+    search(filters);
+  };
   if (selectedTutor) {
     return (
       <>
-        <TopBar title="Tutor profile" left="‹" onLeft={() => setSelectedTutor(null)} />
+        <TopBar title={selectedTutor.name} left="‹" onLeft={() => setSelectedTutor(null)} />
         <View style={styles.tutorCard}>
           <View style={styles.tutorHeaderRow}>
             <Avatar role="tutor" label={selectedTutor.initials} />
@@ -2862,11 +3009,11 @@ function TutorDiscovery({
           <View key={program.id} style={styles.batchMiniCard}>
             <View style={styles.rowBetween}>
               <Text style={styles.batchTitle}>{program.title}</Text>
-              <Text style={styles.tutorResourcePill}>{program.feeType === "paid" ? `₹${program.feeAmount ?? 0}` : "Free"}</Text>
+              <Text style={styles.tutorResourcePill}>{program.feeType === "paid" ? "₹" + (program.feeAmount ?? 0) : "Free"}</Text>
             </View>
             <Text style={styles.batchMeta}>{program.description}</Text>
             <Text style={styles.batchMeta}>{program.milestoneCount} milestones • {program.activityCount} activities</Text>
-            <Button role={role} label="Add to program" loading={requestLoading === "addTutorProgram:" + program.id} onPress={() => addTutorProgram(program.id)} />
+            <Button role={role} label={program.feeType === "paid" ? "Purchase program" : "Add free program"} loading={requestLoading === "addTutorProgram:" + program.id} onPress={() => addTutorProgram(program.id)} />
           </View>
         )) : <View style={styles.emptyInlineCard}><Text style={styles.todayTitle}>No programs yet</Text><Text style={styles.todayMeta}>This tutor has not published any program offerings.</Text></View>}
         <SectionTitle>Batches</SectionTitle>
@@ -2885,50 +3032,66 @@ function TutorDiscovery({
       </>
     );
   }
-  return (
-    <>
-      <TopBar title="Tutor discovery" left="‹" onLeft={back} />
-      <View style={styles.searchPanel}>
+  const renderFilterFields = () => {
+    if (filterTab === "core") {
+      return <>
         <FilterDropdown label="Subject" value={subject} options={[any, ...options.subjects]} onSelect={setSubject} />
         <FilterDropdown label="Class / grade" value={grade} options={[any, ...options.grades]} onSelect={setGrade} />
-        <FilterDropdown label="Board" value={board} options={[any, ...options.boards]} onSelect={setBoard} />
+        <FilterDropdown label="Board optional" value={board} options={[any, ...options.boards]} onSelect={setBoard} />
+      </>;
+    }
+    if (filterTab === "logistics") {
+      return <>
         <FilterDropdown label="Location" value={location} options={[any, ...options.locations]} onSelect={setLocation} />
         <FilterDropdown label="Mode" value={mode} options={[any, ...options.modes]} onSelect={setMode} />
-        <FilterDropdown label="Language" value={language} options={[any, ...options.languages]} onSelect={setLanguage} />
         <FilterDropdown label="Gender" value={gender} options={[any, ...options.genders]} onSelect={setGender} />
-        <FilterDropdown label="Experience" value={experience} options={[any, ...options.experience]} onSelect={setExperience} />
-        <FilterDropdown label="Rating" value={rating} options={[any, ...options.ratings]} onSelect={setRating} />
-        <Button role={role} label="Search tutors" loading={loading} onPress={() => search({
-          subject: cleaned(subject),
-          location: cleaned(location),
-          grade: cleaned(grade),
-          board: cleaned(board),
-          mode: cleaned(mode),
-          language: cleaned(language),
-          gender: cleaned(gender),
-          experience: cleaned(experience),
-          rating: cleaned(rating)
-        })} />
-      </View>
+        <FilterDropdown label="Language" value={language} options={[any, ...options.languages]} onSelect={setLanguage} />
+      </>;
+    }
+    return <>
+      <FilterDropdown label="Experience" value={experience} options={[any, ...options.experience]} onSelect={setExperience} />
+      <FilterDropdown label="Rating" value={rating} options={[any, ...options.ratings]} onSelect={setRating} />
+    </>;
+  };
+  return (
+    <>
+      <TopBar title="Find tutor" left="‹" onLeft={back} />
+      <Button role={role} label={activeFilterCount ? "Find a tutor (" + activeFilterCount + ")" : "Find a tutor"} onPress={() => setFilterOpen(true)} />
       {loading ? <ActivityIndicator /> : null}
-      {tutors.map((tutor) => (
-        <Pressable key={tutor.id} style={({ pressed }) => [styles.tutorCard, pressed && styles.pressed]} onPress={() => setSelectedTutor(tutor)}>
-          <View style={styles.tutorHeaderRow}>
-            <Avatar role="tutor" label={tutor.initials} />
-            <View style={styles.flex}>
-              <Text style={styles.tutorName}>{tutor.name}</Text>
-              <Text style={styles.tutorHeadline}>{tutor.headline}</Text>
+      <View style={styles.tutorCardGrid}>
+        {tutors.map((tutor) => (
+          <Pressable key={tutor.id} style={({ pressed }) => [styles.tutorGridCard, pressed && styles.pressed]} onPress={() => setSelectedTutor(tutor)}>
+            <View style={styles.rowBetween}>
+              <Avatar role="tutor" label={tutor.initials} />
+              <View style={styles.ratingBadge}><Text style={styles.ratingText}>★ {tutor.rating}</Text></View>
             </View>
-            <View style={styles.ratingBadge}><Text style={styles.ratingText}>★ {tutor.rating}</Text></View>
-          </View>
-          <Text style={styles.tutorMeta}>{tutor.subjects.join(", ")} • {tutor.boards.join(", ")} • {tutor.location}</Text>
-          <Text style={styles.tutorMeta}>{tutor.experienceYears} yrs exp • ₹{tutor.hourlyRate}/hr • {tutor.mode.join(" / ")}</Text>
-          <Text style={styles.tutorBio}>{tutor.bio}</Text>
-          <Text style={styles.tutorProgramSectionTitle}>{tutor.programs?.length ?? 0} programs • {tutor.batches.length} batches</Text>
-          <Text style={styles.tutorMeta}>Tap to view offerings</Text>
-        </Pressable>
-      ))}
+            <Text style={styles.tutorGridName}>{tutor.name}</Text>
+            <Text style={styles.tutorGridMeta}>{tutor.subjects.slice(0, 2).join(", ")}</Text>
+            <Text style={styles.tutorGridMeta}>{tutor.location}</Text>
+            <Text style={styles.tutorGridFooter}>{tutor.programs?.length ?? 0} programs • {tutor.batches.length} batches</Text>
+          </Pressable>
+        ))}
+      </View>
       {!loading && !tutors.length ? <Muted>No tutors found. Try another subject or location.</Muted> : null}
+      <Modal visible={filterOpen} transparent animationType="slide">
+        <BlurView intensity={92} tint="dark" style={styles.filterModalBackdrop}>
+          <View style={styles.filterModalCard}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.filterModalTitle}>Find a tutor</Text>
+              <Pressable onPress={() => setFilterOpen(false)}><Text style={styles.programModalCloseText}>×</Text></Pressable>
+            </View>
+            <View style={styles.filterTabs}>
+              {(["core", "logistics", "profile"] as const).map((tab) => (
+                <Pressable key={tab} style={[styles.filterTab, filterTab === tab && { backgroundColor: theme.text }]} onPress={() => setFilterTab(tab)}>
+                  <Text style={[styles.filterTabText, filterTab === tab && { color: "#FFFFFF" }]}>{capitalize(tab)}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.filterFieldStack}>{renderFilterFields()}</View>
+            <Button role={role} label="Apply filters" disabled={!activeFilterCount} onPress={applyFilters} />
+          </View>
+        </BlurView>
+      </Modal>
     </>
   );
 }
@@ -2988,7 +3151,7 @@ function ClassTile({ role, item }: { role: Role; item: BatchClass }) {
 
 function BatchRequestCard({ role, request, approveRequest, requestAction, actionLoading }: { role: Role; request: BatchRequestSummary; approveRequest: (id: string) => void; requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void; actionLoading: string | null }) {
   return (
-    <Card role={role}>
+    <View style={styles.batchRequestCard}>
       <CardTitle>{request.student.name}</CardTitle>
       <Muted>{request.batch.title} • {request.batch.schedule}</Muted>
       <Muted>Status: {capitalize(request.status)}{request.tutorResponse ? " • " + request.tutorResponse : ""}</Muted>
@@ -3000,7 +3163,7 @@ function BatchRequestCard({ role, request, approveRequest, requestAction, action
           <Button role={role} variant="secondary" label="Suggest another" loading={actionLoading === "suggestRequest:" + request.id} onPress={() => requestAction(request.id, "suggest", request.batch.batchId)} />
         </View>
       ) : null}
-    </Card>
+    </View>
   );
 }
 
@@ -3479,7 +3642,12 @@ function Account({
   requests,
   approveRequest,
   requestAction,
-  actionLoading
+  actionLoading,
+  generateActivationCode,
+  activationCode,
+  activationRelationship,
+  setActivationRelationship,
+  parents
 }: {
   role: Role;
   persona: typeof personas[Role];
@@ -3490,6 +3658,11 @@ function Account({
   approveRequest: (id: string) => void;
   requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void;
   actionLoading: string | null;
+  generateActivationCode: () => void;
+  activationCode: string;
+  activationRelationship: string;
+  setActivationRelationship: (value: string) => void;
+  parents: ParentLink[];
 }) {
   const theme = useRoleTheme(role);
   return (
@@ -3517,6 +3690,23 @@ function Account({
         <>
           <SectionTitle>Batch Requests</SectionTitle>
           {requests.length ? requests.map((request) => <BatchRequestCard key={request.id} role={role} request={request} approveRequest={approveRequest} requestAction={requestAction} actionLoading={actionLoading} />) : <Card role={role}><CardTitle>No batch requests</CardTitle><Muted>Student admission requests will appear here.</Muted></Card>}
+        </>
+      ) : null}
+      {role === "student" ? (
+        <>
+          <SectionTitle>Parent access</SectionTitle>
+          <View style={styles.accountInviteCard}>
+            <FieldLabel>Relationship</FieldLabel>
+            <DropdownField value={activationRelationship} options={["Mother", "Father", "Guardian", "Grandparent"]} onSelect={setActivationRelationship} />
+            {activationCode ? <Text style={styles.activationCodeText}>{activationCode}</Text> : <Muted>Generate an activation code to invite a parent.</Muted>}
+            <Button role={role} label={activationCode ? "Regenerate code" : "Generate activation code"} loading={actionLoading === "generateActivation"} onPress={generateActivationCode} />
+          </View>
+          {parents.length ? parents.map((parent) => (
+            <View key={parent.id} style={styles.parentRow}>
+              <Text style={styles.parentRowName}>{parent.name}</Text>
+              <Text style={styles.parentRowMeta}>{parent.relationship} • Added</Text>
+            </View>
+          )) : null}
         </>
       ) : null}
       <Button role={role} variant="secondary" label="Sign out" onPress={signOut} />
@@ -3715,21 +3905,21 @@ const styles = StyleSheet.create({
   appSplashShell: { alignItems: "center", backgroundColor: "#FFFFFF", flex: 1, gap: 16, justifyContent: "center", paddingHorizontal: 24, paddingTop: 34, paddingBottom: 18 },
   appSplashLogo: { borderRadius: 28, height: 150, width: 150 },
   shell: { flex: 1 },
-  content: { flexGrow: 1, gap: 14, padding: 20, paddingTop: 58 },
-  homeContent: { gap: 16, paddingHorizontal: 16 },
+  content: { flexGrow: 1, gap: 12, padding: 20, paddingTop: 56 },
+  homeContent: { gap: 14, paddingHorizontal: 18 },
   valueContent: { justifyContent: "space-between" },
   contentWithNav: { paddingBottom: 124 },
   flex: { flex: 1 },
   bottomCta: { flex: 1, justifyContent: "flex-end", minHeight: 260 },
   signinActions: { gap: 14, marginTop: 18 },
-  pressed: { opacity: 0.82, transform: [{ scale: 0.98 }] },
+  pressed: { opacity: 0.9, transform: [{ scale: 0.985 }] },
   header: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
-  headerIcon: { backgroundColor: "rgba(255,255,255,0.78)", borderRadius: 15, fontSize: 18, fontWeight: "900", height: 39, lineHeight: 39, overflow: "hidden", textAlign: "center", width: 39 },
+  headerIcon: { backgroundColor: "rgba(255,255,255,0.86)", borderColor: "rgba(215,227,240,0.9)", borderRadius: 13, borderWidth: 1, fontSize: 17, fontWeight: "800", height: 38, lineHeight: 38, overflow: "hidden", textAlign: "center", width: 38 },
   topbar: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
-  topButton: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.72)", borderRadius: 13, height: 40, justifyContent: "center", width: 40 },
+  topButton: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.88)", borderColor: "rgba(215,227,240,0.92)", borderRadius: 13, borderWidth: 1, height: 40, justifyContent: "center", width: 40 },
   topButtonSpacer: { height: 40, width: 40 },
-  topButtonText: { color: "#202A35", fontSize: 16, fontWeight: "900" },
-  topTitle: { color: "#202A35", fontSize: 16, fontWeight: "900" },
+  topButtonText: { color: "#202A35", fontSize: 17, fontWeight: "800" },
+  topTitle: { color: "#202A35", fontSize: 16, fontWeight: "800", letterSpacing: 0.1 },
   milesHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", minHeight: 42, position: "relative" },
   milesHeaderSpacer: { height: 39, width: 39 },
   milesHeaderTitle: { color: "#202A35", fontSize: 18, fontWeight: "900", left: 58, position: "absolute", right: 58, textAlign: "center" },
@@ -3740,24 +3930,25 @@ const styles = StyleSheet.create({
   programMenuTextDisabled: { color: "#8B95A1" },
   hero: { backgroundColor: "rgba(255,255,255,0.74)", borderRadius: 28, gap: 10, padding: 18, shadowColor: "#0F172A", shadowOpacity: 0.12, shadowRadius: 18, shadowOffset: { width: 0, height: 12 } },
   splash: { alignSelf: "center", height: 210, width: 210 },
-  title: { color: "#202A35", fontSize: 21, fontWeight: "900", lineHeight: 26 },
-  cardTitle: { color: "#202A35", fontSize: 16, fontWeight: "900" },
-  sectionTitle: { color: "#202A35", fontSize: 20, fontWeight: "900", marginTop: 4 },
-  muted: { color: "#536A86", fontSize: 14, lineHeight: 20 },
-  card: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.92)", borderColor: "rgba(214,225,235,0.88)", borderRadius: 22, borderWidth: 1, flexDirection: "row", gap: 12, padding: 16, shadowColor: "#0F172A", shadowOpacity: 0.10, shadowRadius: 16, shadowOffset: { width: 0, height: 10 } },
+  title: { color: "#202A35", fontSize: 21, fontWeight: "800", lineHeight: 27 },
+  cardTitle: { color: "#202A35", fontSize: 16, fontWeight: "800", lineHeight: 21 },
+  sectionTitle: { color: "#202A35", fontSize: 20, fontWeight: "800", letterSpacing: 0.1, marginTop: 6 },
+  muted: { color: "#5C6F89", fontSize: 14, lineHeight: 20 },
+  card: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "rgba(214,225,235,0.9)", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, padding: 15, shadowColor: "#22304A", shadowOpacity: 0.055, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 2 },
   check: { color: "#111827", fontSize: 16, fontWeight: "900" },
   valueStage: { flex: 1, gap: 22, justifyContent: "center" },
   valueCopy: { gap: 8 },
-  propArt: { alignItems: "center", borderRadius: 28, flex: 0.58, justifyContent: "center", minHeight: 230 },
+  propArt: { alignItems: "center", alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.76)", borderColor: "rgba(215,227,240,0.9)", borderRadius: 20, borderWidth: 1, flex: 0.62, justifyContent: "center", minHeight: 300, overflow: "hidden", padding: 18 },
+  propImage: { height: "100%", maxHeight: 330, width: "100%" },
   propIcon: { fontSize: 62, fontWeight: "900" },
-  button: { alignItems: "stretch", borderRadius: 16, borderWidth: 1, justifyContent: "center", minHeight: 48, overflow: "hidden" },
-  buttonGradient: { alignItems: "center", flex: 1, justifyContent: "center", minHeight: 48, paddingHorizontal: 14 },
-  secondaryButton: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.94)", paddingHorizontal: 14 },
-  buttonText: { fontWeight: "900" },
+  button: { alignItems: "stretch", borderRadius: 14, borderWidth: 1, justifyContent: "center", minHeight: 48, overflow: "hidden", shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.06, shadowRadius: 12, elevation: 2 },
+  buttonGradient: { alignItems: "center", flex: 1, justifyContent: "center", minHeight: 48, paddingHorizontal: 16 },
+  secondaryButton: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.97)", paddingHorizontal: 16, shadowOpacity: 0.025 },
+  buttonText: { fontSize: 14, fontWeight: "800", letterSpacing: 0.1 },
   apiNotice: { backgroundColor: "rgba(255,255,255,0.82)", borderColor: "#D8E4EE", borderRadius: 14, borderWidth: 1, color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17, padding: 10 },
   checkbox: { color: "#111827", flex: 1, fontWeight: "700", lineHeight: 20 },
-  fieldLabel: { color: "#253243", fontSize: 12, fontWeight: "900" },
-  input: { alignSelf: "stretch", backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 16, borderWidth: 1, color: "#111827", minHeight: 50, minWidth: 0, paddingHorizontal: 14, width: "100%" },
+  fieldLabel: { color: "#2F3B4C", fontSize: 12, fontWeight: "800", letterSpacing: 0.1 },
+  input: { alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#C9D6E4", borderRadius: 13, borderWidth: 1, color: "#111827", fontSize: 14, minHeight: 48, minWidth: 0, paddingHorizontal: 14, width: "100%" },
   compactInput: { minWidth: 0 },
   otpShell: { position: "relative" },
   otpRow: { flexDirection: "row", gap: 8 },
@@ -3799,36 +3990,37 @@ const styles = StyleSheet.create({
   fieldColumn: { flex: 1, gap: 7, minWidth: 0 },
   textArea: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 16, borderWidth: 1, color: "#111827", minHeight: 78, padding: 14, textAlignVertical: "top" },
   dropdownWrap: { gap: 8 },
-  dropdownField: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 10, justifyContent: "space-between", minHeight: 50, paddingHorizontal: 14 },
+  dropdownField: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#C9D6E4", borderRadius: 13, borderWidth: 1, flexDirection: "row", gap: 10, justifyContent: "space-between", minHeight: 48, paddingHorizontal: 14 },
   dropdownText: { color: "#111827", flex: 1, fontSize: 14, fontWeight: "600" },
   dropdownCaret: { color: "#111827", fontSize: 18, fontWeight: "900" },
-  dropdownList: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, overflow: "hidden" },
+  dropdownList: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 14, borderWidth: 1, overflow: "hidden" },
   dropdownOption: { borderBottomColor: "#EEF3F7", borderBottomWidth: 1, minHeight: 44, justifyContent: "center", paddingHorizontal: 14 },
   dropdownOptionSelected: { backgroundColor: "#F2FAFC" },
   dropdownOptionText: { color: "#111827", fontSize: 14, fontWeight: "700" },
   trackCard: {
     alignItems: "center",
-    borderRadius: 22,
+    borderRadius: 18,
     borderWidth: 1,
     flexDirection: "row",
     gap: 14,
-    minHeight: 98,
-    padding: 18,
+    minHeight: 96,
+    padding: 17,
     shadowColor: "#3D8790",
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.12,
-    shadowRadius: 24
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    elevation: 2
   },
   trackTitle: { color: "#202A35", fontSize: 16, fontWeight: "900", lineHeight: 21 },
   trackCopy: { color: "#536A86", fontSize: 14, fontWeight: "600", lineHeight: 21, marginTop: 2 },
   trackButton: { borderRadius: 18, minHeight: 48, overflow: "hidden" },
   trackButtonGradient: { alignItems: "center", justifyContent: "center", minHeight: 48, paddingHorizontal: 19 },
   trackButtonText: { fontSize: 14, fontWeight: "900" },
-  smartPickCard: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.9)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, flexDirection: "row", gap: 12, minHeight: 86, padding: 16 },
-  carousel: { gap: 12, paddingBottom: 8 },
-  programJourneyCard: { backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 14, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
+  smartPickCard: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, minHeight: 82, padding: 15 },
+  carousel: { gap: 12, paddingBottom: 10 },
+  programJourneyCard: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 17, borderWidth: 1, gap: 14, padding: 16, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.055, shadowRadius: 14, elevation: 2 },
   programJourneyTop: { alignItems: "center", flexDirection: "row", gap: 12 },
-  programJourneyTitle: { color: "#202A35", fontSize: 18, fontWeight: "900", lineHeight: 23 },
+  programJourneyTitle: { color: "#202A35", fontSize: 18, fontWeight: "800", lineHeight: 23 },
   programJourneyCopy: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19, marginTop: 2 },
   programJourneyAction: { fontSize: 13, fontWeight: "900" },
   programTracker: { flexDirection: "row", gap: 8, paddingVertical: 4 },
@@ -3841,7 +4033,7 @@ const styles = StyleSheet.create({
   programCompletedIcon: { backgroundColor: "#DCFCE7", borderRadius: 999, color: "#16A34A", fontSize: 26, fontWeight: "900", height: 50, lineHeight: 50, overflow: "hidden", textAlign: "center", width: 50 },
   programCompletedTitle: { color: "#111827", fontSize: 20, fontWeight: "900", lineHeight: 25 },
   programCompletedCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
-  journeyResourceCard: { backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: 22, borderWidth: 1, gap: 8, minHeight: 210, padding: 14, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.07, shadowRadius: 16, width: 214 },
+  journeyResourceCard: { borderColor: "#E2E8F0", borderRadius: 16, borderWidth: 1, gap: 8, minHeight: 204, padding: 13, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.045, shadowRadius: 12, elevation: 1, width: 214 },
   journeyResourceImage: { alignItems: "center", borderRadius: 16, height: 78, justifyContent: "center" },
   journeyResourceGlyph: { fontSize: 32, fontWeight: "900" },
   journeyResourceTopic: { color: "#64748B", fontSize: 12, fontWeight: "800", lineHeight: 16 },
@@ -3849,26 +4041,28 @@ const styles = StyleSheet.create({
   journeyResourceType: { color: "#536A86", fontSize: 12, fontWeight: "800", lineHeight: 16, marginTop: "auto" },
   recCard: {
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
+    borderColor: "#E2E8F0",
+    borderRadius: 17,
+    borderWidth: 1,
     flexDirection: "row",
     gap: 12,
-    minHeight: 116,
-    padding: 14,
-    shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
+    minHeight: 112,
+    padding: 13,
+    shadowColor: "#22304A",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    elevation: 2,
     width: 264
   },
   recBody: { flex: 1, gap: 4 },
   recBadge: { alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 },
   recBadgeText: { fontSize: 10, fontWeight: "900" },
-  recTitle: { color: "#202A35", fontSize: 15, fontWeight: "900", lineHeight: 19 },
+  recTitle: { color: "#202A35", fontSize: 15, fontWeight: "800", lineHeight: 20 },
   recMeta: { color: "#536A86", fontSize: 14, fontWeight: "600", lineHeight: 18 },
   thumb: { alignItems: "center", borderRadius: 16, height: 44, justifyContent: "center", width: 44 },
   thumbText: { fontSize: 16, fontWeight: "900" },
-  emptyInlineCard: { backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, padding: 16 },
+  emptyInlineCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, padding: 15 },
   todayCard: {
     alignItems: "center",
     backgroundColor: "rgba(255,255,255,0.94)",
@@ -3965,11 +4159,11 @@ const styles = StyleSheet.create({
   activityBadgeText: { fontSize: 13, fontWeight: "900" },
   optionalBadge: { backgroundColor: "#F2F2F2", borderRadius: 999, paddingHorizontal: 15, paddingVertical: 8 },
   optionalBadgeText: { color: "#111827", fontSize: 13, fontWeight: "900" },
-  activityRow: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DFE4EA", borderRadius: 18, borderWidth: 1, flexDirection: "row", gap: 14, minHeight: 96, padding: 12, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.04, shadowRadius: 14 },
+  activityRow: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DFE4EA", borderRadius: 15, borderWidth: 1, flexDirection: "row", gap: 13, minHeight: 94, padding: 12, shadowColor: "#22304A", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.035, shadowRadius: 10, elevation: 1 },
   activityRowComplete: { borderColor: "#BFE7C8" },
   activityIconBox: { alignItems: "center", borderRadius: 10, height: 72, justifyContent: "center", width: 72 },
   activityIcon: { color: "#111827", fontSize: 30, fontWeight: "900" },
-  activityTitle: { color: "#111827", fontSize: 19, fontWeight: "900", lineHeight: 24 },
+  activityTitle: { color: "#111827", fontSize: 18, fontWeight: "800", lineHeight: 24 },
   activityType: { color: "#111827", fontSize: 16, fontWeight: "500", lineHeight: 22, marginTop: 2 },
   activityCompleteTick: { alignItems: "center", backgroundColor: "#35B34A", borderRadius: 999, height: 28, justifyContent: "center", width: 28 },
   activityCompleteTickText: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" },
@@ -4004,12 +4198,12 @@ const styles = StyleSheet.create({
   mileNode: { alignItems: "center", borderColor: "#FFFFFF", borderRadius: 999, borderWidth: 3, height: 40, justifyContent: "center", marginTop: 26, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.10, shadowRadius: 12, width: 40, zIndex: 2 },
   mileNodeLocked: { backgroundColor: "#F1ECF8", borderColor: "#E1D9EC" },
   mileNodeText: { fontSize: 15, fontWeight: "900" },
-  mileCard: { alignItems: "center", alignSelf: "flex-start", backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#E4DDED", borderRadius: 20, borderWidth: 1, flex: 1, gap: 10, marginBottom: 24, minHeight: 112, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.10, shadowRadius: 18 },
-  mileCardActive: { minHeight: 142, shadowOpacity: 0.16 },
+  mileCard: { alignItems: "center", alignSelf: "flex-start", backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#E4DDED", borderRadius: 17, borderWidth: 1, flex: 1, gap: 10, marginBottom: 24, minHeight: 112, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.06, shadowRadius: 14, elevation: 2 },
+  mileCardActive: { minHeight: 142, shadowOpacity: 0.09 },
   mileCardLocked: { backgroundColor: "rgba(221,211,233,0.72)", borderColor: "rgba(221,211,233,0.72)", shadowOpacity: 0.02 },
   mileChip: { alignSelf: "center", borderRadius: 8, marginTop: -28, paddingHorizontal: 13, paddingVertical: 5 },
   mileChipText: { fontSize: 12, fontWeight: "900" },
-  mileCardTitle: { color: "#202A35", fontSize: 18, fontWeight: "900", lineHeight: 23, textAlign: "center" },
+  mileCardTitle: { color: "#202A35", fontSize: 18, fontWeight: "800", lineHeight: 23, textAlign: "center" },
   mileCardTitleLocked: { color: "#6F687C" },
   mileProgressTrack: { backgroundColor: "#E5E7EB", borderRadius: 999, height: 4, overflow: "hidden", width: "78%" },
   mileProgressFill: { borderRadius: 999, height: 4 },
@@ -4021,18 +4215,19 @@ const styles = StyleSheet.create({
   mileCtaText: { fontSize: 14, fontWeight: "900" },
   row: { flexDirection: "row", gap: 10 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-  metric: { backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.07, shadowRadius: 16, width: "47%" },
+  metric: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.045, shadowRadius: 12, elevation: 1, width: "47%" },
   metricValue: { color: "#111827", fontSize: 24, fontWeight: "900" },
   reminderCard: {
     backgroundColor: "rgba(255,255,255,0.94)",
     borderColor: "#D8E0E8",
-    borderRadius: 22,
+    borderRadius: 17,
     borderWidth: 1,
-    padding: 16,
-    shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18
+    padding: 15,
+    shadowColor: "#22304A",
+    shadowOffset: { width: 0, height: 7 },
+    shadowOpacity: 0.055,
+    shadowRadius: 14,
+    elevation: 2
   },
   reminderLabel: {
     color: "#253243",
@@ -4199,23 +4394,24 @@ const styles = StyleSheet.create({
   },
   viewAllCard: {
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.94)",
+    backgroundColor: "rgba(255,255,255,0.97)",
     borderColor: "#DDE7EF",
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     justifyContent: "center",
-    minHeight: 49,
-    shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.05,
-    shadowRadius: 14
+    minHeight: 48,
+    shadowColor: "#22304A",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.035,
+    shadowRadius: 10,
+    elevation: 1
   },
   viewAllText: {
     fontSize: 14,
     fontWeight: "900"
   },
-  modalBackdrop: { alignItems: "center", backgroundColor: "rgba(15,23,42,0.58)", flex: 1, justifyContent: "center", padding: 20 },
-  programModalCard: { backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#DDE7EF", borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 318, overflow: "hidden", padding: 18, position: "relative", shadowColor: "#0F172A", shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.18, shadowRadius: 28, width: "100%" },
+  modalBackdrop: { alignItems: "center", backgroundColor: "rgba(15,23,42,0.64)", flex: 1, justifyContent: "center", padding: 20 },
+  programModalCard: { backgroundColor: "rgba(255,255,255,0.99)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 14, minHeight: 318, overflow: "hidden", padding: 18, position: "relative", shadowColor: "#0F172A", shadowOffset: { width: 0, height: 18 }, shadowOpacity: 0.16, shadowRadius: 26, elevation: 6, width: "100%" },
   programModalClose: { alignItems: "center", backgroundColor: "#F3F6F9", borderRadius: 999, height: 34, justifyContent: "center", position: "absolute", right: 14, top: 14, width: 34, zIndex: 2 },
   programModalCloseText: { color: "#202A35", fontSize: 24, fontWeight: "700", lineHeight: 28 },
   programModalTitle: { color: "#202A35", fontSize: 21, fontWeight: "900", lineHeight: 27, textAlign: "center" },
@@ -4236,16 +4432,17 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   accountProfileCard: {
-    backgroundColor: "rgba(255,255,255,0.78)",
+    backgroundColor: "rgba(255,255,255,0.96)",
     borderColor: "#D8E8EF",
-    borderRadius: 20,
+    borderRadius: 17,
     borderWidth: 1,
-    gap: 18,
+    gap: 16,
     padding: 16,
-    shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.08,
-    shadowRadius: 22
+    shadowColor: "#22304A",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.055,
+    shadowRadius: 14,
+    elevation: 2
   },
   accountIdentityRow: {
     alignItems: "center",
@@ -4299,37 +4496,37 @@ const styles = StyleSheet.create({
   articleHero: { backgroundColor: "#D1D5DB", borderRadius: 0, height: 270, marginHorizontal: -20 },
   reactionRow: { flexDirection: "row", gap: 18, justifyContent: "flex-end", marginTop: 12 },
   reactionButton: { backgroundColor: "#F3F4F6", borderColor: "#D1D5DB", borderRadius: 999, borderWidth: 1, fontSize: 19, height: 44, lineHeight: 42, overflow: "hidden", textAlign: "center", width: 58 },
-  resourceTitle: { color: "#111827", fontSize: 29, fontWeight: "900", lineHeight: 36 },
-  resourceSubtitle: { color: "#111827", fontSize: 18, fontWeight: "500", lineHeight: 27 },
+  resourceTitle: { color: "#111827", fontSize: 28, fontWeight: "800", lineHeight: 35 },
+  resourceSubtitle: { color: "#3F4B5F", fontSize: 17, fontWeight: "500", lineHeight: 26 },
   assetMetaText: { color: "#6B7280", fontSize: 13, fontWeight: "900", letterSpacing: 0, marginTop: 12, textTransform: "uppercase" },
   articleBody: { color: "#374151", fontSize: 15, lineHeight: 24, marginTop: 18 },
   resourceBottomCta: { marginTop: "auto", paddingTop: 24 },
-  flashIntroHero: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E9D5FF", borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 330, padding: 24, shadowColor: "#7C3AED", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.10, shadowRadius: 22 },
+  flashIntroHero: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E9D5FF", borderRadius: 18, borderWidth: 1, gap: 14, minHeight: 330, padding: 22, shadowColor: "#7C3AED", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.055, shadowRadius: 14, elevation: 2 },
   flashIntroLanding: { alignItems: "center", flex: 1, justifyContent: "center", gap: 18, paddingVertical: 34 },
-  flashIntroBanner: { alignItems: "center", borderRadius: 28, height: 210, justifyContent: "center", overflow: "hidden", width: "100%" },
+  flashIntroBanner: { alignItems: "center", borderRadius: 18, height: 210, justifyContent: "center", overflow: "hidden", width: "100%" },
   flashIntroImage: { alignItems: "center", borderRadius: 999, height: 190, justifyContent: "center", width: 190 },
   flashIntroIcon: { color: "#3B0764", fontSize: 82, fontWeight: "900" },
-  flashIntroTitle: { color: "#111827", fontSize: 28, fontWeight: "900", lineHeight: 34, textAlign: "center" },
+  flashIntroTitle: { color: "#111827", fontSize: 27, fontWeight: "800", lineHeight: 34, textAlign: "center" },
   flashIntroCopy: { color: "#374151", fontSize: 16, fontWeight: "600", lineHeight: 24, textAlign: "center" },
   flashIntroMeta: { color: "#6B7280", fontSize: 14, fontWeight: "800", textAlign: "center" },
   flashProgressTrack: { backgroundColor: "#E5E7EB", borderRadius: 999, height: 4, overflow: "hidden" },
   flashProgressFill: { backgroundColor: "#C026D3", borderRadius: 999, height: 4 },
   player: { alignItems: "center", borderRadius: 28, height: 210, justifyContent: "center" },
   playerIcon: { fontSize: 58, fontWeight: "900" },
-  flashcard: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E9D5FF", borderRadius: 22, borderWidth: 1, justifyContent: "space-between", minHeight: 420, padding: 28, shadowColor: "#7C3AED", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.10, shadowRadius: 20 },
+  flashcard: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E9D5FF", borderRadius: 18, borderWidth: 1, justifyContent: "space-between", minHeight: 420, padding: 26, shadowColor: "#7C3AED", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.06, shadowRadius: 14, elevation: 2 },
   flashcardAnswer: { backgroundColor: "#F1E4FF", borderColor: "#C026D3" },
   flashCount: { color: "#C026D3", fontSize: 17, fontWeight: "900" },
   flipHint: { color: "#C026D3", fontSize: 16, fontWeight: "800" },
   flashText: { color: "#111827", fontSize: 20, fontWeight: "800", lineHeight: 30, textAlign: "center" },
-  quizLandingHero: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 24, borderWidth: 1, gap: 13, marginTop: 24, minHeight: 360, padding: 24, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.08, shadowRadius: 20 },
+  quizLandingHero: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 18, borderWidth: 1, gap: 13, marginTop: 22, minHeight: 360, padding: 22, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.055, shadowRadius: 14, elevation: 2 },
   quizHeroVisual: { alignItems: "center", borderRadius: 22, height: 170, justifyContent: "center", marginBottom: 6, overflow: "hidden", width: "100%" },
   quizHeroBadge: { alignSelf: "flex-start", backgroundColor: "#EFE7FF", borderRadius: 999, color: "#3B0764", fontSize: 14, fontWeight: "900", paddingHorizontal: 14, paddingVertical: 8 },
-  quizHeroTitle: { color: "#111827", fontSize: 30, fontWeight: "900", lineHeight: 36, marginTop: "auto" },
+  quizHeroTitle: { color: "#111827", fontSize: 28, fontWeight: "800", lineHeight: 35, marginTop: "auto" },
   quizHeroCopy: { color: "#374151", fontSize: 16, fontWeight: "600", lineHeight: 25 },
   quizCount: { color: "#4C1D95", fontSize: 14, fontWeight: "900", marginTop: 20 },
   quizPrompt: { color: "#111827", fontSize: 19, fontWeight: "800", lineHeight: 27, marginTop: 8 },
   quizOptions: { gap: 11, marginTop: 20 },
-  quizOption: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE3EA", borderRadius: 10, borderWidth: 1.5, flexDirection: "row", gap: 12, justifyContent: "space-between", minHeight: 50, paddingHorizontal: 14, paddingVertical: 12 },
+  quizOption: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE3EA", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 12, justifyContent: "space-between", minHeight: 50, paddingHorizontal: 14, paddingVertical: 12 },
   quizOptionText: { color: "#111827", flex: 1, fontSize: 15, fontWeight: "700", lineHeight: 21 },
   quizCorrect: { color: "#35B34A", fontSize: 18, fontWeight: "900" },
   quizWrong: { color: "#D53F3F", fontSize: 18, fontWeight: "900" },
@@ -4343,30 +4540,48 @@ const styles = StyleSheet.create({
   reactionRowCentered: { flexDirection: "row", gap: 16, justifyContent: "center" },
   backToTopicLink: { alignItems: "center", minHeight: 44, justifyContent: "center" },
   backToTopicText: { color: "#3B0764", fontSize: 15, fontWeight: "900", textDecorationLine: "underline" },
-  searchPanel: { backgroundColor: "rgba(255,255,255,0.92)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 12, padding: 14, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
-  tutorCard: { backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 12, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
+  searchPanel: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, gap: 12, padding: 14, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
+  tutorCard: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 17, borderWidth: 1, gap: 11, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
+  tutorCardGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  tutorGridCard: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 17, borderWidth: 1, gap: 8, minHeight: 170, padding: 13, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, width: "48%" },
+  tutorGridName: { color: "#202A35", fontSize: 15, fontWeight: "900", lineHeight: 20 },
+  tutorGridMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 16 },
+  tutorGridFooter: { color: "#202A35", fontSize: 11, fontWeight: "900", lineHeight: 15, marginTop: "auto" },
+  filterModalBackdrop: { backgroundColor: "rgba(15,23,42,0.58)", flex: 1, justifyContent: "flex-end", padding: 14 },
+  filterModalCard: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 14, maxHeight: "88%", padding: 16 },
+  filterModalTitle: { color: "#202A35", fontSize: 20, fontWeight: "900", lineHeight: 26 },
+  filterTabs: { backgroundColor: "#F3F6FA", borderRadius: 14, flexDirection: "row", gap: 6, padding: 5 },
+  filterTab: { alignItems: "center", borderRadius: 10, flex: 1, minHeight: 38, justifyContent: "center" },
+  filterTabText: { color: "#536A86", fontSize: 12, fontWeight: "900" },
+  filterFieldStack: { gap: 10 },
   tutorHeaderRow: { alignItems: "center", flexDirection: "row", gap: 12 },
-  tutorName: { color: "#111827", fontSize: 19, fontWeight: "900", lineHeight: 24 },
+  tutorName: { color: "#111827", fontSize: 19, fontWeight: "800", lineHeight: 24 },
   tutorHeadline: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 18 },
   ratingBadge: { backgroundColor: "#ECFEFF", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   ratingText: { color: "#075985", fontSize: 12, fontWeight: "900" },
   tutorMeta: { color: "#465A74", fontSize: 13, fontWeight: "700", lineHeight: 19 },
   tutorBio: { color: "#111827", fontSize: 14, fontWeight: "500", lineHeight: 21 },
-  batchMiniCard: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 16, borderWidth: 1, gap: 8, padding: 12 },
+  batchMiniCard: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 14, borderWidth: 1, gap: 8, padding: 12 },
   batchTitle: { color: "#111827", fontSize: 15, fontWeight: "900", lineHeight: 20 },
   batchMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17 },
   requestActionGrid: { gap: 8, marginTop: 10 },
-  batchAlertCard: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, padding: 14, paddingRight: 44, position: "relative", shadowColor: "#0F172A", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.06, shadowRadius: 16 },
+  batchRequestCard: { alignItems: "stretch", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12 },
+  accountInviteCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15 },
+  activationCodeText: { color: "#202A35", fontSize: 30, fontWeight: "900", letterSpacing: 6, textAlign: "center" },
+  parentRow: { backgroundColor: "rgba(255,255,255,0.92)", borderColor: "#DDE7EF", borderRadius: 14, borderWidth: 1, padding: 13 },
+  parentRowName: { color: "#202A35", fontSize: 15, fontWeight: "900" },
+  parentRowMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", marginTop: 2 },
+  batchAlertCard: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, gap: 8, padding: 14, paddingRight: 44, position: "relative", shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.045, shadowRadius: 12, elevation: 1 },
   alertClose: { alignItems: "center", backgroundColor: "#F8FAFC", borderRadius: 999, height: 30, justifyContent: "center", position: "absolute", right: 10, top: 10, width: 30, zIndex: 2 },
   alertCloseText: { color: "#111827", fontSize: 18, fontWeight: "900", lineHeight: 20 },
-  classTile: { backgroundColor: "rgba(255,255,255,0.95)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 7, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
+  classTile: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 17, borderWidth: 1, gap: 7, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
   classTitle: { color: "#111827", fontSize: 18, fontWeight: "900", lineHeight: 23 },
   classMeta: { color: "#465A74", fontSize: 13, fontWeight: "700", lineHeight: 19 },
   classLink: { color: "#035C67", fontSize: 13, fontWeight: "900", lineHeight: 19 },
   classLocked: { color: "#8B95A1", fontSize: 12, fontWeight: "800", lineHeight: 18 },
-  nav: { alignItems: "center", backgroundColor: "#242424", borderRadius: 34, bottom: 20, flexDirection: "row", justifyContent: "space-between", left: 16, minHeight: 66, paddingHorizontal: 14, paddingVertical: 10, position: "absolute", right: 16, shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 20, shadowOffset: { width: 0, height: 12 } },
+  nav: { backgroundColor: "#EDEBEB", alignItems: "center", borderColor: "rgba(255,255,255,0.08)", borderRadius: 30, borderWidth: 1, bottom: 18, flexDirection: "row", justifyContent: "space-between", left: 16, minHeight: 64, paddingHorizontal: 12, paddingVertical: 8, position: "absolute", right: 16, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 8 },
   navItem: { alignItems: "center", flex: 1, gap: 3, minWidth: 0 },
   navIcon: { fontSize: 24, fontWeight: "900", height: 25, lineHeight: 25, textAlign: "center", width: 25 },
   navSvgIcon: { height: 24, width: 24 },
-  navText: { fontSize: 9, fontWeight: "900", lineHeight: 12, textAlign: "center" }
+  navText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.1, lineHeight: 12, textAlign: "center" }
 });

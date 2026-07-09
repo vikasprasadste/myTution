@@ -74,6 +74,7 @@ model User {
   communityThreads CommunityThread[] @relation("CommunityThreadOwner")
   communityComments CommunityComment[] @relation("CommunityCommentOwner")
   communityReactions CommunityReaction[] @relation("CommunityReactionUser")
+  parentActivationCodes ParentActivationCode[] @relation("StudentActivationCodes")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 }
@@ -134,10 +135,51 @@ model Profile {
   studentBatchEnrollments BatchEnrollment[] @relation("StudentBatchEnrollments")
   communityThreads CommunityThread[] @relation("CommunityThreadProfile")
   communityComments CommunityComment[] @relation("CommunityCommentProfile")
+  studentParentLinks ParentStudentLink[] @relation("StudentParentLinks")
+  parentStudentLinks ParentStudentLink[] @relation("ParentStudentLinks")
+  issuedParentActivationCodes ParentActivationCode[] @relation("StudentProfileActivationCodes")
+  redeemedParentActivationCodes ParentActivationCode[] @relation("ParentProfileActivationCodes")
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
   @@index([userId, role])
+}
+
+model ParentActivationCode {
+  id              String    @id @default(cuid())
+  code            String    @unique
+  studentUserId   String
+  studentProfileId String
+  parentProfileId String?
+  relationship    String
+  status          String    @default("active")
+  expiresAt       DateTime?
+  acceptedAt      DateTime?
+  sourceTag       String    @default("app")
+  studentUser     User      @relation("StudentActivationCodes", fields: [studentUserId], references: [id], onDelete: Cascade)
+  studentProfile  Profile   @relation("StudentProfileActivationCodes", fields: [studentProfileId], references: [id], onDelete: Cascade)
+  parentProfile   Profile?  @relation("ParentProfileActivationCodes", fields: [parentProfileId], references: [id], onDelete: SetNull)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([studentProfileId, status])
+  @@index([code, status])
+}
+
+model ParentStudentLink {
+  id              String   @id @default(cuid())
+  studentProfileId String
+  parentProfileId  String
+  relationship     String
+  status           String   @default("active")
+  sourceTag        String   @default("app")
+  studentProfile   Profile  @relation("StudentParentLinks", fields: [studentProfileId], references: [id], onDelete: Cascade)
+  parentProfile    Profile  @relation("ParentStudentLinks", fields: [parentProfileId], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([studentProfileId, parentProfileId])
+  @@index([parentProfileId, status])
 }
 
 model CommunityThread {

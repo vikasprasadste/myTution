@@ -34,14 +34,21 @@ export function ThemedButton({ label, role, onPress, disabled, variant = "primar
 
 const styles = StyleSheet.create({
   button: {
-    minHeight: 52,
-    borderRadius: 18,
+    minHeight: 48,
+    borderRadius: 14,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 18
+    paddingHorizontal: 16,
+    shadowColor: "#22304A",
+    shadowOffset: { width: 0, height: 7 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 2
   },
   label: {
-    fontWeight: "800"
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 0.1
   }
 });
