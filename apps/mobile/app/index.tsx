@@ -3750,10 +3750,11 @@ function BottomNav({ role, screen, setScreen }: { role: Role; screen: AppScreen;
       {items.map(({ id, label, activeIcon: ActiveIcon, inactiveIcon: InactiveIcon }) => {
         const selected = screen === id;
         const Icon = selected ? ActiveIcon : InactiveIcon;
+        const itemColor = selected ? theme.accentStrong : "#111827";
         return (
         <Pressable key={id} style={styles.navItem} onPress={() => setScreen(id)}>
-          <Icon width={24} height={24} style={styles.navSvgIcon} />
-          <Text style={[styles.navText, { color: selected ? "#FFFFFF" : theme.accentStrong }]}>{label}</Text>
+          <Icon width={24} height={24} color={itemColor} fill={itemColor} style={styles.navSvgIcon} />
+          <Text style={[styles.navText, { color: itemColor }]}>{label}</Text>
         </Pressable>
         );
       })}

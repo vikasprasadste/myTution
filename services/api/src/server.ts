@@ -15,6 +15,13 @@ const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
 const assetsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../assets");
 const mockOtp = "123456";
 const mobileClientId = "mytution_mobile_app";
+
+function isMissingParentLinkTable(error: unknown) {
+  const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined;
+  const table = typeof error === "object" && error !== null && "meta" in error ? (error as { meta?: { table?: string } }).meta?.table : undefined;
+  return code === "P2021" && (table === "public.ParentActivationCode" || table === "public.ParentStudentLink");
+}
+
 const medicalProgramCatalog = [
   { id: "medical-neet-full-12", role: "student", title: "12 month NEET full course", description: "Full syllabus plan with monthly Biology, Chemistry, and Physics milestones", milestones: 12 },
   { id: "medical-neet-crash-90", role: "student", title: "NEET 90 day crash course", description: "High-intensity revision plan for high-yield chapters and mock practice", milestones: 6 },
@@ -282,13 +289,20 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
 
   const profileInput = req.body.profile ?? {};
   const activationCode = String(req.body.activationCode ?? "").replace(/\D/g, "").slice(0, 6);
-  const activation = role === "parent" ? await prisma.parentActivationCode.findFirst({
-    where: {
-      code: activationCode,
-      status: "active",
-      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }]
+  let activation = null;
+  if (role === "parent") {
+    try {
+      activation = await prisma.parentActivationCode.findFirst({
+        where: {
+          code: activationCode,
+          status: "active",
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }]
+        }
+      });
+    } catch (error) {
+      if (!isMissingParentLinkTable(error)) throw error;
     }
-  }) : null;
+  }
   if (role === "parent" && !activation) {
     res.status(400).json({ error: "Something went wrong" });
     return;
@@ -471,6 +485,13 @@ async function uniqueActivationCode() {
 
 app.get("/api/v1/parent-activation", async (req, res) => {
   const role = readRole(req.query.role);
+  try {
+    await ensureParentStudentFixture();
+  } catch (error) {
+    if (!isMissingParentLinkTable(error)) throw error;
+    res.json({ data: role === "student" ? { codes: [], parents: [] } : { children: [] } });
+    return;
+  }
   const userId = await requireUserId(req, res);
   if (!userId) return;
   const profile = await findProfile(role, userId);
@@ -506,6 +527,13 @@ app.get("/api/v1/parent-activation", async (req, res) => {
 app.post("/api/v1/parent-activation", async (req, res) => {
   const userId = await requireUserId(req, res);
   if (!userId) return;
+  try {
+    await ensureParentStudentFixture();
+  } catch (error) {
+    if (!isMissingParentLinkTable(error)) throw error;
+    res.status(503).json({ error: "Parent activation is not ready. Please apply the latest DB migration." });
+    return;
+  }
   const student = await findProfile("student", userId);
   if (!student) {
     res.status(404).json({ error: "Student profile not found" });
@@ -2396,6 +2424,122 @@ async function ensureSharedTutorFixture() {
     });
     await ensureMockBatchEnrollments(createdBatch.id, batch.fillCount);
   }
+}
+
+async function ensureParentStudentFixture() {
+  const studentPhones = ["+783890127", "+91783890127", "+917838920127"];
+  const parentPhone = "+917838920130";
+  const studentHash = await hashPassword("Student@123");
+  const parentHash = await hashPassword("Parent@123");
+  const foundStudent = await prisma.user.findFirst({ where: { phone: { in: studentPhones } } });
+  const studentUser = foundStudent ? await prisma.user.update({
+    where: { id: foundStudent.id },
+    data: { passwordHash: studentHash, sourceTag: "mock" }
+  }) : await prisma.user.create({
+    data: { phone: studentPhones[0], passwordHash: studentHash, sourceTag: "mock" }
+  });
+  const parentUser = await prisma.user.upsert({
+    where: { phone: parentPhone },
+    update: { passwordHash: parentHash, sourceTag: "mock" },
+    create: { phone: parentPhone, passwordHash: parentHash, sourceTag: "mock" }
+  });
+
+  const existingStudentProfile = await prisma.profile.findFirst({ where: { userId: studentUser.id, role: "student" } });
+  const studentProfile = existingStudentProfile ? await prisma.profile.update({
+    where: { id: existingStudentProfile.id },
+    data: {
+      firstName: existingStudentProfile.firstName || "Apoorv",
+      lastName: existingStudentProfile.lastName || "Gulati",
+      city: existingStudentProfile.city || "Delhi",
+      communicationAddress: existingStudentProfile.communicationAddress || "South Delhi",
+      stream: existingStudentProfile.stream || "senior",
+      specialization: existingStudentProfile.specialization || "CBSE Class 10 Mathematics",
+      sourceTag: "mock"
+    }
+  }) : await prisma.profile.create({
+    data: {
+      userId: studentUser.id,
+      role: "student",
+      firstName: "Apoorv",
+      lastName: "Gulati",
+      dob: new Date("2010-06-24T00:00:00.000Z"),
+      city: "Delhi",
+      communicationAddress: "South Delhi",
+      alternatePhone: "9999999999",
+      stream: "senior",
+      specialization: "CBSE Class 10 Mathematics",
+      sourceTag: "mock"
+    }
+  });
+
+  const existingParentProfile = await prisma.profile.findFirst({ where: { userId: parentUser.id, role: "parent" } });
+  const parentProfile = existingParentProfile ? await prisma.profile.update({
+    where: { id: existingParentProfile.id },
+    data: {
+      firstName: existingParentProfile.firstName || "Sarmishtha",
+      lastName: existingParentProfile.lastName || "Gulati",
+      city: existingParentProfile.city || "Delhi",
+      communicationAddress: existingParentProfile.communicationAddress || "South Delhi",
+      sourceTag: "mock"
+    }
+  }) : await prisma.profile.create({
+    data: {
+      userId: parentUser.id,
+      role: "parent",
+      firstName: "Sarmishtha",
+      lastName: "Gulati",
+      dob: new Date("1984-01-12T00:00:00.000Z"),
+      city: "Delhi",
+      communicationAddress: "South Delhi",
+      alternatePhone: "9999999999",
+      sourceTag: "mock"
+    }
+  });
+
+  for (const profile of [studentProfile, parentProfile]) {
+    await prisma.userManagement.upsert({
+      where: { userId_role: { userId: profile.userId, role: profile.role } },
+      update: {
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        dob: profile.dob,
+        city: profile.city,
+        communicationAddress: profile.communicationAddress,
+        alternatePhone: profile.alternatePhone,
+        avatarUrl: profile.avatarUrl,
+        stream: profile.stream,
+        specialization: profile.specialization,
+        sourceTag: "mock"
+      },
+      create: {
+        userId: profile.userId,
+        role: profile.role,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        dob: profile.dob,
+        city: profile.city,
+        communicationAddress: profile.communicationAddress,
+        alternatePhone: profile.alternatePhone,
+        avatarUrl: profile.avatarUrl,
+        stream: profile.stream,
+        specialization: profile.specialization,
+        sourceTag: "mock"
+      }
+    });
+  }
+
+  await prisma.parentStudentLink.upsert({
+    where: { studentProfileId_parentProfileId: { studentProfileId: studentProfile.id, parentProfileId: parentProfile.id } },
+    update: { relationship: "Mother", status: "active", sourceTag: "mock" },
+    create: { studentProfileId: studentProfile.id, parentProfileId: parentProfile.id, relationship: "Mother", status: "active", sourceTag: "mock" }
+  });
+
+  const code = "013001";
+  await prisma.parentActivationCode.upsert({
+    where: { code },
+    update: { studentUserId: studentUser.id, studentProfileId: studentProfile.id, parentProfileId: parentProfile.id, relationship: "Mother", status: "accepted", acceptedAt: new Date(), sourceTag: "mock" },
+    create: { code, studentUserId: studentUser.id, studentProfileId: studentProfile.id, parentProfileId: parentProfile.id, relationship: "Mother", status: "accepted", acceptedAt: new Date(), sourceTag: "mock" }
+  });
 }
 
 async function ensureSharedTutorProgram(profileId: string, input: { title: string; description: string; feeType: "free" | "paid"; feeAmount: number | null }) {

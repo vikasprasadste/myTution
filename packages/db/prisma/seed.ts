@@ -11,6 +11,8 @@ async function main() {
   await prisma.communityReaction.deleteMany();
   await prisma.communityComment.deleteMany();
   await prisma.communityThread.deleteMany();
+  await prisma.parentActivationCode.deleteMany();
+  await prisma.parentStudentLink.deleteMany();
   await prisma.activityProgress.deleteMany();
   await prisma.milestoneActivity.deleteMany();
   await prisma.reminder.deleteMany();
@@ -100,6 +102,88 @@ async function main() {
       specialization: profile.specialization,
       sourceTag
     }))
+  });
+
+  const testStudentUser = await prisma.user.create({
+    data: {
+      phone: "+783890127",
+      passwordHash: await hashPassword("Student@123"),
+      sourceTag,
+      profiles: {
+        create: {
+          role: Role.student,
+          firstName: "Apoorv",
+          lastName: "Gulati",
+          dob: new Date("2010-06-24T00:00:00.000Z"),
+          city: "Delhi",
+          communicationAddress: "South Delhi, near Green Park",
+          alternatePhone: "9999999999",
+          stream: "senior",
+          specialization: "CBSE Class 10 Mathematics",
+          sourceTag
+        }
+      }
+    },
+    include: { profiles: true }
+  });
+  const testParentUser = await prisma.user.create({
+    data: {
+      phone: "+917838920130",
+      passwordHash: await hashPassword("Parent@123"),
+      sourceTag,
+      profiles: {
+        create: {
+          role: Role.parent,
+          firstName: "Sarmishtha",
+          lastName: "Gulati",
+          dob: new Date("1984-01-12T00:00:00.000Z"),
+          city: "Delhi",
+          communicationAddress: "South Delhi, near Green Park",
+          alternatePhone: "9999999999",
+          sourceTag
+        }
+      }
+    },
+    include: { profiles: true }
+  });
+  const [testStudentProfile] = testStudentUser.profiles;
+  const [testParentProfile] = testParentUser.profiles;
+  await prisma.userManagement.createMany({
+    data: [testStudentProfile, testParentProfile].map((profile) => ({
+      userId: profile.userId,
+      role: profile.role,
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      dob: profile.dob,
+      city: profile.city,
+      communicationAddress: profile.communicationAddress,
+      alternatePhone: profile.alternatePhone,
+      avatarUrl: profile.avatarUrl,
+      stream: profile.stream,
+      specialization: profile.specialization,
+      sourceTag
+    }))
+  });
+  await prisma.parentStudentLink.create({
+    data: {
+      studentProfileId: testStudentProfile.id,
+      parentProfileId: testParentProfile.id,
+      relationship: "Mother",
+      status: "active",
+      sourceTag
+    }
+  });
+  await prisma.parentActivationCode.create({
+    data: {
+      code: "013001",
+      studentUserId: testStudentUser.id,
+      studentProfileId: testStudentProfile.id,
+      parentProfileId: testParentProfile.id,
+      relationship: "Mother",
+      status: "accepted",
+      acceptedAt: new Date(),
+      sourceTag
+    }
   });
 
   const communityStudentProfile = user.profiles.find((profile) => profile.role === Role.student);
