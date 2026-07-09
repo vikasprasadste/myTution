@@ -106,7 +106,7 @@ async function main() {
 
   const testStudentUser = await prisma.user.create({
     data: {
-      phone: "+783890127",
+      phone: "+917838920127",
       passwordHash: await hashPassword("Student@123"),
       sourceTag,
       profiles: {

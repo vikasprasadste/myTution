@@ -92,6 +92,14 @@ app.use(express.json());
 app.use(morgan("dev"));
 app.use("/api/v1/ams/files", express.static(assetsRoot));
 
+app.get("/", (_req, res) => {
+  res.json({ ok: true, service: "myTution API" });
+});
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
 function toAssetUrl(assetPath?: string | null) {
   if (!assetPath) return null;
   return `/api/v1/ams/files/${assetPath.replace(/^services\/api\/assets\//, "")}`;
@@ -2427,16 +2435,22 @@ async function ensureSharedTutorFixture() {
 }
 
 async function ensureParentStudentFixture() {
-  const studentPhones = ["+783890127", "+91783890127", "+917838920127"];
+  const studentPhones = ["+917838920127", "+783890127", "+91783890127"];
   const parentPhone = "+917838920130";
   const studentHash = await hashPassword("Student@123");
   const parentHash = await hashPassword("Parent@123");
   const foundStudent = await prisma.user.findFirst({ where: { phone: { in: studentPhones } } });
+  const canonicalStudentPhone = studentPhones[0];
+  const canonicalStudentOwner = await prisma.user.findUnique({ where: { phone: canonicalStudentPhone } });
   const studentUser = foundStudent ? await prisma.user.update({
     where: { id: foundStudent.id },
-    data: { passwordHash: studentHash, sourceTag: "mock" }
+    data: {
+      phone: !canonicalStudentOwner || canonicalStudentOwner.id === foundStudent.id ? canonicalStudentPhone : foundStudent.phone,
+      passwordHash: studentHash,
+      sourceTag: "mock"
+    }
   }) : await prisma.user.create({
-    data: { phone: studentPhones[0], passwordHash: studentHash, sourceTag: "mock" }
+    data: { phone: canonicalStudentPhone, passwordHash: studentHash, sourceTag: "mock" }
   });
   const parentUser = await prisma.user.upsert({
     where: { phone: parentPhone },
@@ -2764,4 +2778,14 @@ function capitalize(value: string) {
 
 app.listen(port, () => {
   console.log(`myTution API running on http://localhost:${port}`);
+  void ensureSharedTutorFixture().catch((error) => {
+    console.warn("Shared tutor fixture skipped", error);
+  });
+  void ensureParentStudentFixture().catch((error) => {
+    if (isMissingParentLinkTable(error)) {
+      console.warn("Parent/student fixture skipped until parent activation migration is applied");
+      return;
+    }
+    console.warn("Parent/student fixture skipped", error);
+  });
 });
