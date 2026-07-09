@@ -1151,6 +1151,15 @@ app.get("/api/v1/education-plan/current", async (req, res) => {
 
 app.get("/api/v1/education-plan/programs", async (req, res) => {
   const role = readRole(req.query.role);
+  if (role === "parent") {
+    try {
+      await ensureParentStudentFixture();
+    } catch (error) {
+      if (!isMissingParentLinkTable(error)) throw error;
+      res.json({ data: [], selectedPrograms: [], maxSelectedPrograms: 3 });
+      return;
+    }
+  }
   if (role === "student") {
     const userId = await readUserId(req);
     const profile = await findProfile(role, userId);
@@ -2105,6 +2114,12 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
   let scopedProfile: any = userId ? await findProfile(role, userId) : null;
   let effectiveRole = role;
   if (role === "parent" && scopedProfile) {
+    try {
+      await ensureParentStudentFixture();
+    } catch (error) {
+      if (!isMissingParentLinkTable(error)) throw error;
+      return fallbackEducationPlan("student", programId);
+    }
     const link = await prisma.parentStudentLink.findFirst({
       where: { parentProfileId: scopedProfile.id, status: "active" },
       include: { studentProfile: true },

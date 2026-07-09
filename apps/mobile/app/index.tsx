@@ -1198,7 +1198,7 @@ export default function Index() {
           {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
           <TrackCard role={role} onPress={() => setScreen(role === "student" ? "search" : role === "tutor" ? "roleHub" : "sessions")} />
 
-          {role === "student" ? (
+          {role === "student" || role === "parent" ? (
             <>
               {programComplete ? <ProgramCompletedCard role={role} onPress={() => setScreen("sessions")} /> : <ProgramJourneyCard role={role} milestones={homeMilestones} completedMilestone={completedMilestone} onPress={() => setScreen("sessions")} />}
               {!recommendationsReady ? (
@@ -2261,7 +2261,7 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
       <Text style={styles.assetMetaText}>{resourceMetaLine(resource)}</Text>
       {resource.type === "video" ? <VideoResourcePlayer resource={resource} /> : null}
       <Text style={styles.articleBody}>{resourceArticleText(resource)}</Text>
-      <View style={styles.resourceBottomCta}><Button role={role} label={cta} onPress={complete} loading={loading} /></View>
+      {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label={cta} onPress={complete} loading={loading} /></View> : null}
       {completedTopic ? (
         <View style={styles.topicTrayBackdrop}>
           <View style={styles.topicTray}>
@@ -2302,7 +2302,7 @@ function FlashIntro({ role, resource, start, back }: { role: Role; resource: Res
         <Text style={styles.flashIntroCopy}>{description}</Text>
         <Text style={styles.flashIntroMeta}>{cards.length} cards • Tap each card to reveal the answer</Text>
       </View>
-      <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View>
+      {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View> : null}
     </>
   );
 }
@@ -2343,7 +2343,7 @@ function QuizIntro({ role, resource, loading, start, back }: { role: Role; resou
         <Text style={styles.quizHeroTitle}>{resource.title}</Text>
         <Text style={styles.quizHeroCopy}>{resource.description}</Text>
       </View>
-      <View style={styles.resourceBottomCta}><Button role={role} label="Start" onPress={start} loading={loading} /></View>
+      {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start" onPress={start} loading={loading} /></View> : null}
     </>
   );
 }
@@ -2427,27 +2427,29 @@ function MilestoneDetail({ role, milestone, openActivity, back }: { role: Role; 
         <Text style={styles.activitySectionTitle}>Getting started</Text>
         <View style={[styles.activityBadge, { backgroundColor: theme.accent }]}><Text style={[styles.activityBadgeText, { color: theme.text }]}>Required</Text></View>
       </View>
-      {required.map((activity) => <ActivityRow key={activity.id} activity={activity} onPress={() => openActivity(activity.id)} />)}
+      {required.map((activity) => <ActivityRow key={activity.id} activity={activity} disabled={role === "parent"} onPress={() => openActivity(activity.id)} />)}
       {supporting.length ? (
         <>
           <View style={styles.activitySectionHeader}>
             <Text style={styles.activitySectionTitle}>Supporting activities</Text>
             <View style={styles.optionalBadge}><Text style={styles.optionalBadgeText}>Optional</Text></View>
           </View>
-          {supporting.map((activity) => <ActivityRow key={activity.id} activity={activity} onPress={() => openActivity(activity.id)} />)}
+          {supporting.map((activity) => <ActivityRow key={activity.id} activity={activity} disabled={role === "parent"} onPress={() => openActivity(activity.id)} />)}
         </>
       ) : null}
-      <View style={styles.bottomCtaInline}>
-        <Button role={role} label={completed > 0 ? "Continue" : "Let's get started"} onPress={() => openActivity(nextActivity?.id)} disabled={!nextActivity} />
-      </View>
+      {role !== "parent" ? (
+        <View style={styles.bottomCtaInline}>
+          <Button role={role} label={completed > 0 ? "Continue" : "Let's get started"} onPress={() => openActivity(nextActivity?.id)} disabled={!nextActivity} />
+        </View>
+      ) : null}
     </>
   );
 }
 
-function ActivityRow({ activity, onPress }: { activity: NonNullable<ProgramMilestone["activities"]>[number]; onPress: () => void }) {
+function ActivityRow({ activity, onPress, disabled }: { activity: NonNullable<ProgramMilestone["activities"]>[number]; onPress: () => void; disabled?: boolean }) {
   const palette = activity.type === "video" ? ["#FBE7FA", "▷"] : activity.type === "flashcard" ? ["#EAD8FF", "▤"] : activity.type === "quiz" ? ["#FFE8D8", "?"] : ["#E5F6FD", "▣"];
   return (
-    <Pressable style={({ pressed }) => [styles.activityRow, activity.status === "complete" && styles.activityRowComplete, pressed && styles.pressed]} onPress={onPress}>
+    <Pressable disabled={disabled} style={({ pressed }) => [styles.activityRow, activity.status === "complete" && styles.activityRowComplete, disabled && styles.activityRowDisabled, pressed && !disabled && styles.pressed]} onPress={onPress}>
       <View style={[styles.activityIconBox, { backgroundColor: palette[0], overflow: "hidden" }]}>
         <SvgAsset
           pathValue={assetPathFor(activity.type, activity.assetUrls)}
@@ -2518,12 +2520,14 @@ function Sessions({
       <View style={styles.milesHeader}>
         <View style={styles.milesHeaderSpacer} />
         <Text style={styles.milesHeaderTitle}>{role === "tutor" ? "Program" : "My Miles"}</Text>
-        <Pressable style={styles.headerIconButton} onPress={() => setMenuOpen(!menuOpen)}>
-          <Text style={[styles.headerIconButtonText, { color: theme.accentStrong }]}>⋮</Text>
-        </Pressable>
-        {menuOpen ? (
+        {role !== "parent" ? (
+          <Pressable style={styles.headerIconButton} onPress={() => setMenuOpen(!menuOpen)}>
+            <Text style={[styles.headerIconButtonText, { color: theme.accentStrong }]}>⋮</Text>
+          </Pressable>
+        ) : <View style={styles.milesHeaderSpacer} />}
+        {menuOpen && role !== "parent" ? (
           <View style={styles.programMenu}>
-            {role !== "student" ? (
+            {role === "tutor" ? (
               <Pressable
                 style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]}
                 onPress={openProgramPicker}
@@ -2537,7 +2541,7 @@ function Sessions({
           </View>
         ) : null}
       </View>
-      {role === "student" && selectedPrograms.length > 0 ? (
+      {(role === "student" || role === "parent") && selectedPrograms.length > 0 ? (
         <View style={[styles.selectedProgramPanel, { backgroundColor: theme.card }]}>
           <FieldLabel>Selected programs</FieldLabel>
           <DropdownField
@@ -2580,7 +2584,7 @@ function Sessions({
           const totalActivities = milestone.activities?.length ?? 4;
           const progress = complete ? 1 : totalActivities ? completedActivities / totalActivities : 0;
           const hasStarted = completedActivities > 0;
-          const ctaLabel = locked ? "Coming soon" : complete ? "Review" : hasStarted ? "Continue" : "Start";
+          const ctaLabel = locked ? "Coming soon" : role === "parent" ? "View progress" : complete ? "Review" : hasStarted ? "Continue" : "Start";
           const chipLabel = !complete && hasStarted ? "Keep learning" : null;
 
           return (
@@ -4161,6 +4165,7 @@ const styles = StyleSheet.create({
   optionalBadge: { backgroundColor: "#F2F2F2", borderRadius: 999, paddingHorizontal: 15, paddingVertical: 8 },
   optionalBadgeText: { color: "#111827", fontSize: 13, fontWeight: "900" },
   activityRow: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DFE4EA", borderRadius: 15, borderWidth: 1, flexDirection: "row", gap: 13, minHeight: 94, padding: 12, shadowColor: "#22304A", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.035, shadowRadius: 10, elevation: 1 },
+  activityRowDisabled: { opacity: 0.82 },
   activityRowComplete: { borderColor: "#BFE7C8" },
   activityIconBox: { alignItems: "center", borderRadius: 10, height: 72, justifyContent: "center", width: 72 },
   activityIcon: { color: "#111827", fontSize: 30, fontWeight: "900" },
