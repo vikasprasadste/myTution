@@ -584,8 +584,14 @@ app.get("/api/v1/community/threads", async (req, res) => {
   const userId = await readUserId(req);
   const status = stringOrNull(req.query.status);
   const search = stringOrNull(req.query.search)?.toLowerCase();
+  const childProfileIds = role === "parent" ? await getParentChildProfileIds(userId) : [];
+  if (role === "parent" && childProfileIds.length === 0) {
+    res.json({ data: [] });
+    return;
+  }
   const where: Record<string, unknown> = {
-    role,
+    role: role === "parent" ? "student" : role,
+    ...(role === "parent" ? { ownerProfileId: { in: childProfileIds } } : {}),
     ...(status && status !== "all" ? { status } : {}),
     ...(search ? {
       OR: [
@@ -607,6 +613,10 @@ app.get("/api/v1/community/threads", async (req, res) => {
 
 app.post("/api/v1/community/threads", async (req, res) => {
   const role = readRole(req.body.role);
+  if (role === "parent") {
+    res.status(403).json({ error: "Parents can view community threads only" });
+    return;
+  }
   const userId = await requireUserId(req, res);
   if (!userId) return;
   const profile = await findProfile(role, userId);
@@ -636,6 +646,7 @@ app.post("/api/v1/community/threads", async (req, res) => {
 
 app.get("/api/v1/community/threads/:id", async (req, res) => {
   const userId = await readUserId(req);
+  const role = req.query.role ? readRole(req.query.role) : null;
   const thread = await prisma.communityThread.findUnique({
     where: { id: req.params.id },
     include: communityThreadDetailInclude(userId)
@@ -643,6 +654,13 @@ app.get("/api/v1/community/threads/:id", async (req, res) => {
   if (!thread) {
     res.status(404).json({ error: "Thread not found" });
     return;
+  }
+  if (role === "parent") {
+    const childProfileIds = await getParentChildProfileIds(userId);
+    if (!thread.ownerProfileId || !childProfileIds.includes(thread.ownerProfileId)) {
+      res.status(404).json({ error: "Thread not found" });
+      return;
+    }
   }
   res.json({ data: toCommunityThread(thread, userId, true) });
 });
@@ -674,6 +692,10 @@ app.patch("/api/v1/community/threads/:id", async (req, res) => {
 
 app.post("/api/v1/community/threads/:id/comments", async (req, res) => {
   const role = readRole(req.body.role ?? req.query.role);
+  if (role === "parent") {
+    res.status(403).json({ error: "Parents can view community threads only" });
+    return;
+  }
   const userId = await requireUserId(req, res);
   if (!userId) return;
   const thread = await prisma.communityThread.findUnique({ where: { id: req.params.id } });
@@ -703,6 +725,11 @@ app.post("/api/v1/community/threads/:id/comments", async (req, res) => {
 });
 
 app.put("/api/v1/community/reactions", async (req, res) => {
+  const role = req.body.role || req.query.role ? readRole(req.body.role ?? req.query.role) : null;
+  if (role === "parent") {
+    res.status(403).json({ error: "Parents can view community reactions only" });
+    return;
+  }
   const userId = await requireUserId(req, res);
   if (!userId) return;
   const type = readCommunityReactionType(req.body.type);
@@ -1821,6 +1848,23 @@ function communityCommentInclude(_userId?: string | null) {
     ownerUser: { include: { profiles: { take: 1, orderBy: { createdAt: "asc" as const } } } },
     reactions: true
   };
+}
+
+async function getParentChildProfileIds(userId?: string | null) {
+  if (!userId) return [];
+  const parent = await findProfile("parent", userId);
+  if (!parent) return [];
+  try {
+    await ensureParentStudentFixture();
+    const links = await prisma.parentStudentLink.findMany({
+      where: { parentProfileId: parent.id, status: "active" },
+      select: { studentProfileId: true }
+    });
+    return links.map((link) => link.studentProfileId);
+  } catch (error) {
+    if (isMissingParentLinkTable(error)) return [];
+    throw error;
+  }
 }
 
 function reactionCounts(reactions: Array<{ type: CommunityReactionType | string }>) {

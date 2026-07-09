@@ -317,6 +317,12 @@ export default function Index() {
 
   useEffect(() => {
     if (screen !== "sessions" || programModalSeen || !programs.length) return;
+    if (role === "parent") {
+      setDraftProgramId(selectedProgramId ?? selectedPrograms[0]?.id ?? programs[0]?.id ?? null);
+      setProgramModalSeen(true);
+      setProgramModalVisible(false);
+      return;
+    }
     if (role === "student" && selectedPrograms.length > 0) return;
     setDraftProgramId(selectedProgramId ?? programs[0]?.id ?? null);
     setProgramMenuOpen(false);
@@ -3377,7 +3383,8 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
   const [apiDoubts, setApiDoubts] = useState<DoubtItem[] | null>(null);
   const [doubtLoading, setDoubtLoading] = useState(false);
   const [doubtNotice, setDoubtNotice] = useState("");
-  const allDoubts = apiDoubts ?? doubtItems;
+  const readOnly = role === "parent";
+  const allDoubts = apiDoubts ?? (readOnly ? [] : doubtItems);
   const filteredDoubts = allDoubts.filter((item) => {
     const statusMatch = filter === "all" || item.status === filter;
     const text = `${item.title} ${item.body} ${item.author}`.toLowerCase();
@@ -3391,11 +3398,11 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
     try {
       const response = await apiGet<{ data: CommunityThread[] }>(`/api/v1/community/threads?role=${role}`, accessToken);
       const apiItems = response.data.map(communityThreadToDoubt);
-      setApiDoubts(apiItems.length ? apiItems : null);
+      setApiDoubts(apiItems.length || readOnly ? apiItems : null);
       setDoubtNotice("");
     } catch {
-      setDoubtNotice("Using local doubts until community API is available.");
-      setApiDoubts(null);
+      setDoubtNotice(readOnly ? "Child community threads could not be loaded from API." : "Using local doubts until community API is available.");
+      setApiDoubts(readOnly ? [] : null);
     } finally {
       setDoubtLoading(false);
     }
@@ -3404,7 +3411,7 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
   async function openDoubt(item: DoubtItem) {
     setSelectedDoubt(item);
     try {
-      const response = await apiGet<{ data: CommunityThread }>(`/api/v1/community/threads/${item.id}`, accessToken);
+      const response = await apiGet<{ data: CommunityThread }>(`/api/v1/community/threads/${item.id}?role=${role}`, accessToken);
       setSelectedDoubt(communityThreadToDoubt(response.data));
       setDoubtNotice("");
     } catch {
@@ -3413,6 +3420,7 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
   }
 
   async function submitDoubt() {
+    if (readOnly) return;
     const body = newDoubt.trim();
     if (!body) return;
     const title = body.length > 64 ? `${body.slice(0, 61)}...` : body;
@@ -3437,6 +3445,7 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
   }
 
   async function submitReply() {
+    if (readOnly) return;
     if (!selectedDoubt || !replyText.trim()) return;
     try {
       await apiPost<{ data: CommunityComment }>(`/api/v1/community/threads/${selectedDoubt.id}/comments`, {
@@ -3455,7 +3464,7 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
     refreshDoubts();
   }, [role, accessToken]);
 
-  if (asking) {
+  if (asking && !readOnly) {
     return (
       <View style={styles.doubtScreen}>
         <DoubtHeader title="Create Doubt" subtitle="Board forum • Physics" back={() => setAsking(false)} />
@@ -3533,13 +3542,15 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
             </View>
           )}
         </View>
-        <View style={styles.replyBar}>
-          <Text style={[styles.replyAttach, { color: theme.text }]}>▧</Text>
-          <TextInput value={replyText} onChangeText={setReplyText} placeholder="Type your helpful reply..." placeholderTextColor="#8D7BA0" style={styles.replyInput} />
-          <Pressable style={({ pressed }) => [styles.replySend, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={submitReply}>
-            <Text style={styles.replySendText}>›</Text>
-          </Pressable>
-        </View>
+        {!readOnly ? (
+          <View style={styles.replyBar}>
+            <Text style={[styles.replyAttach, { color: theme.text }]}>▧</Text>
+            <TextInput value={replyText} onChangeText={setReplyText} placeholder="Type your helpful reply..." placeholderTextColor="#8D7BA0" style={styles.replyInput} />
+            <Pressable style={({ pressed }) => [styles.replySend, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={submitReply}>
+              <Text style={styles.replySendText}>›</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
     );
   }
@@ -3574,12 +3585,14 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
       <View style={styles.doubtFeed}>
         {pinned.length ? <Text style={styles.doubtSectionLabel}>PINNED FAQ</Text> : null}
         {pinned.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => openDoubt(item)} />)}
-        <Text style={styles.doubtSectionLabel}>PEER DISCUSSIONS</Text>
-        {peerDoubts.length ? peerDoubts.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => openDoubt(item)} />) : <Muted>No matching doubts found.</Muted>}
+        <Text style={styles.doubtSectionLabel}>{readOnly ? "CHILD THREADS" : "PEER DISCUSSIONS"}</Text>
+        {peerDoubts.length ? peerDoubts.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => openDoubt(item)} />) : <Muted>{readOnly ? "No child community threads found." : "No matching doubts found."}</Muted>}
       </View>
-      <Pressable style={({ pressed }) => [styles.askFab, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={() => setAsking(true)}>
-        <Text style={styles.askFabText}>+ Ask a Doubt</Text>
-      </Pressable>
+      {!readOnly ? (
+        <Pressable style={({ pressed }) => [styles.askFab, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={() => setAsking(true)}>
+          <Text style={styles.askFabText}>+ Ask a Doubt</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
