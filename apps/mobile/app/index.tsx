@@ -122,6 +122,7 @@ type QuizPayload = { resourceId: string; title: string; description: string; que
 type SignInMode = "fresh" | "returning";
 type TutorFilterOptions = { subjects: string[]; locations: string[]; grades: string[]; boards: string[]; modes: string[]; languages: string[]; genders: string[]; experience: string[]; ratings: string[] };
 type TutorSupplyState = { profile: IdentityProfile; programs: ProgramSummary[]; batches: TutorBatchSummary[]; analytics?: TutorSupplyAnalytics };
+type MarketplaceTarget = { tutorProfileId: string; kind: "tutor" | "program" | "batch"; itemId?: string };
 type TutorBatchDraft = {
   id?: string | null;
   programId: string;
@@ -325,7 +326,7 @@ export default function Index() {
   const [selectedResource, setSelectedResource] = useState<SelectedActivity | null>(null);
   const [resourceDetail, setResourceDetail] = useState<ResourceDetailPayload | null>(null);
   const [tutorResults, setTutorResults] = useState<TutorSearchResult[]>([]);
-  const [targetTutorProfileId, setTargetTutorProfileId] = useState<string | null>(null);
+  const [marketplaceTarget, setMarketplaceTarget] = useState<MarketplaceTarget | null>(null);
   const [tutorFilterOptions, setTutorFilterOptions] = useState<TutorFilterOptions>({ subjects: [], locations: [], grades: [], boards: [], modes: [], languages: [], genders: [], experience: [], ratings: [] });
   const [batchClasses, setBatchClasses] = useState<BatchClass[]>([]);
   const [batchRequests, setBatchRequests] = useState<BatchRequestSummary[]>([]);
@@ -1450,8 +1451,8 @@ export default function Index() {
           {role === "student" && marketplaceRecommendations ? (
             <MarketplaceHomeSection
               data={marketplaceRecommendations}
-              onOpen={(tutorProfileId) => {
-                setTargetTutorProfileId(tutorProfileId);
+              onOpen={(target) => {
+                setMarketplaceTarget(target);
                 setScreen("search");
               }}
             />
@@ -1536,7 +1537,7 @@ export default function Index() {
       );
     }
 
-    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} targetTutorProfileId={targetTutorProfileId} clearTargetTutor={() => setTargetTutorProfileId(null)} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestLoading={loadingAction} search={refreshTutorSearch} back={() => { setTargetTutorProfileId(null); setScreen("home"); }} />;
+    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} marketplaceTarget={marketplaceTarget} clearTargetTutor={() => setMarketplaceTarget(null)} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestLoading={loadingAction} search={refreshTutorSearch} back={() => { setMarketplaceTarget(null); setScreen("home"); }} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} refreshSupply={refreshTutorSupply} />;
@@ -1911,11 +1912,13 @@ function TrackCard({ role, onPress }: { role: Role; onPress: () => void }) {
   );
 }
 
-function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendationResponse; onOpen: (tutorProfileId: string) => void }) {
+function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendationResponse; onOpen: (target: MarketplaceTarget) => void }) {
   const items = [
     ...data.tutors.slice(0, 3).map((tutor) => ({
       id: "tutor-" + tutor.id,
       tutorProfileId: tutor.tutorProfileId,
+      kind: "tutor" as const,
+      itemId: tutor.tutorProfileId,
       eyebrow: "Tutor match",
       title: tutor.name,
       meta: `${tutor.subjects.slice(0, 2).join(", ") || "Tutor"} • ${tutor.rating.toFixed(1)} ★`,
@@ -1925,6 +1928,8 @@ function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendat
     ...data.programs.slice(0, 3).map((program) => ({
       id: "program-" + program.id,
       tutorProfileId: program.tutor.tutorProfileId,
+      kind: "program" as const,
+      itemId: program.id,
       eyebrow: program.feeType === "paid" ? `Program • ₹${program.feeAmount ?? 0}` : "Free program",
       title: program.title,
       meta: `${program.milestoneCount} milestones • ${program.tutor.name}`,
@@ -1934,6 +1939,8 @@ function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendat
     ...data.batches.slice(0, 2).map((batch) => ({
       id: "batch-" + batch.id,
       tutorProfileId: batch.tutor.tutorProfileId,
+      kind: "batch" as const,
+      itemId: batch.id,
       eyebrow: batch.availabilityStatus === "filling_fast" ? "Filling fast" : "Batch open",
       title: batch.title,
       meta: `${batch.schedule} • ${batch.tutor.name}`,
@@ -1947,7 +1954,7 @@ function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendat
       <SectionTitle>Recommended tutors and programs</SectionTitle>
       <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.carousel}>
         {items.map((item) => (
-          <Pressable key={item.id} style={({ pressed }) => [styles.marketplaceCard, pressed && styles.pressed]} onPress={() => onOpen(item.tutorProfileId)}>
+          <Pressable key={item.id} style={({ pressed }) => [styles.marketplaceCard, pressed && styles.pressed]} onPress={() => onOpen({ tutorProfileId: item.tutorProfileId, kind: item.kind, itemId: item.itemId })}>
             <View style={styles.marketplaceAvatar}>
               <Text style={styles.marketplaceAvatarText}>{item.initials}</Text>
             </View>
@@ -3304,7 +3311,7 @@ function ProgramPickerModal({
 function TutorDiscovery({
   role,
   tutors,
-  targetTutorProfileId,
+  marketplaceTarget,
   clearTargetTutor,
   options,
   loading,
@@ -3316,7 +3323,7 @@ function TutorDiscovery({
 }: {
   role: Role;
   tutors: TutorSearchResult[];
-  targetTutorProfileId?: string | null;
+  marketplaceTarget?: MarketplaceTarget | null;
   clearTargetTutor: () => void;
   options: TutorFilterOptions;
   loading: boolean;
@@ -3341,10 +3348,10 @@ function TutorDiscovery({
   const [experience, setExperience] = useState(any);
   const [rating, setRating] = useState(any);
   useEffect(() => {
-    if (!targetTutorProfileId || selectedTutor?.tutorProfileId === targetTutorProfileId) return;
-    const matched = tutors.find((tutor) => tutor.tutorProfileId === targetTutorProfileId || tutor.id === targetTutorProfileId);
+    if (!marketplaceTarget?.tutorProfileId || selectedTutor?.tutorProfileId === marketplaceTarget.tutorProfileId) return;
+    const matched = tutors.find((tutor) => tutor.tutorProfileId === marketplaceTarget.tutorProfileId || tutor.id === marketplaceTarget.tutorProfileId);
     if (matched) setSelectedTutor(matched);
-  }, [targetTutorProfileId, tutors, selectedTutor?.tutorProfileId]);
+  }, [marketplaceTarget?.tutorProfileId, tutors, selectedTutor?.tutorProfileId]);
   useEffect(() => {
     if (!selectedTutor) return;
     const updated = tutors.find((tutor) => tutor.tutorProfileId === selectedTutor.tutorProfileId || tutor.id === selectedTutor.id);
@@ -3387,7 +3394,8 @@ function TutorDiscovery({
         </View>
         <SectionTitle>Program offerings</SectionTitle>
         {selectedTutor.programs?.length ? selectedTutor.programs.map((program) => (
-          <View key={program.id} style={styles.batchMiniCard}>
+          <View key={program.id} style={[styles.batchMiniCard, marketplaceTarget?.kind === "program" && marketplaceTarget.itemId === program.id && styles.marketplaceFocusedCard]}>
+            {marketplaceTarget?.kind === "program" && marketplaceTarget.itemId === program.id ? <Text style={styles.marketplaceFocusLabel}>Recommended for you</Text> : null}
             <View style={styles.rowBetween}>
               <Text style={styles.batchTitle}>{program.title}</Text>
               <Text style={styles.tutorResourcePill}>{program.feeType === "paid" ? "₹" + (program.feeAmount ?? 0) : "Free"}</Text>
@@ -3404,8 +3412,10 @@ function TutorDiscovery({
           const unavailable = batch.availabilityStatus === "booked";
           const terminalStatus = batch.studentRequestStatus === "rejected" ? "Request denied" : batch.studentRequestStatus === "deferred" ? "Deferred" : batch.studentRequestStatus === "suggested" ? "Suggestion sent" : null;
           const label = enrolled ? "Enrolled" : pending ? "Request pending" : terminalStatus ?? (unavailable ? "Batch full" : "Request batch");
+          const focused = marketplaceTarget?.kind === "batch" && marketplaceTarget.itemId === batch.id;
           return (
-            <View key={batch.id} style={styles.batchMiniCard}>
+            <View key={batch.id} style={[styles.batchMiniCard, focused && styles.marketplaceFocusedCard]}>
+              {focused ? <Text style={styles.marketplaceFocusLabel}>Recommended batch</Text> : null}
               <View style={styles.rowBetween}>
                 <Text style={styles.batchTitle}>{batch.title}</Text>
                 <Text style={styles.tutorResourcePill}>{batch.availabilityStatus === "booked" ? "Booked" : batch.availabilityStatus === "filling_fast" ? "Filling fast" : "Available"}</Text>
@@ -5118,6 +5128,8 @@ const styles = StyleSheet.create({
   tutorMeta: { color: "#465A74", fontSize: 13, fontWeight: "700", lineHeight: 19 },
   tutorBio: { color: "#111827", fontSize: 14, fontWeight: "500", lineHeight: 21 },
   batchMiniCard: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 14, borderWidth: 1, gap: 8, padding: 12 },
+  marketplaceFocusedCard: { borderColor: "#B889F2", borderWidth: 2, shadowColor: "#7C3AED", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.08, shadowRadius: 14 },
+  marketplaceFocusLabel: { alignSelf: "flex-start", backgroundColor: "#F3E8FF", borderRadius: 999, color: "#6B21A8", fontSize: 11, fontWeight: "900", overflow: "hidden", paddingHorizontal: 9, paddingVertical: 4 },
   batchTitle: { color: "#111827", fontSize: 15, fontWeight: "900", lineHeight: 20 },
   batchMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17 },
   requestActionGrid: { gap: 8, marginTop: 10 },
