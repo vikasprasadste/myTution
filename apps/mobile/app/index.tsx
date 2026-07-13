@@ -325,6 +325,7 @@ export default function Index() {
   const [selectedResource, setSelectedResource] = useState<SelectedActivity | null>(null);
   const [resourceDetail, setResourceDetail] = useState<ResourceDetailPayload | null>(null);
   const [tutorResults, setTutorResults] = useState<TutorSearchResult[]>([]);
+  const [targetTutorProfileId, setTargetTutorProfileId] = useState<string | null>(null);
   const [tutorFilterOptions, setTutorFilterOptions] = useState<TutorFilterOptions>({ subjects: [], locations: [], grades: [], boards: [], modes: [], languages: [], genders: [], experience: [], ratings: [] });
   const [batchClasses, setBatchClasses] = useState<BatchClass[]>([]);
   const [batchRequests, setBatchRequests] = useState<BatchRequestSummary[]>([]);
@@ -605,6 +606,10 @@ export default function Index() {
         setApiPersona(token ? personaFromIdentity(identity.data?.activeProfile, identity.data?.user.phone) ?? bootstrap.persona : null);
         setApiRecommendations(recs.data);
         setMarketplaceRecommendations(marketplace.data);
+        if (marketplace.data?.tutors?.length) {
+          setTutorResults((items) => items.length ? items : marketplace.data?.tutors ?? []);
+          setTutorFilterOptions((items) => items.subjects.length ? items : buildTutorFilterOptions(marketplace.data?.tutors ?? []));
+        }
         setReminders(eventData.data);
         setDashboardCards(dashboard.data.cards);
         setPrograms(programList.data);
@@ -1435,7 +1440,13 @@ export default function Index() {
           <TrackCard role={role} onPress={() => setScreen(role === "student" ? "search" : role === "tutor" ? "roleHub" : "sessions")} />
 
           {role === "student" && marketplaceRecommendations ? (
-            <MarketplaceHomeSection data={marketplaceRecommendations} onOpen={() => setScreen("search")} />
+            <MarketplaceHomeSection
+              data={marketplaceRecommendations}
+              onOpen={(tutorProfileId) => {
+                setTargetTutorProfileId(tutorProfileId);
+                setScreen("search");
+              }}
+            />
           ) : null}
 
           {role === "student" || role === "parent" ? (
@@ -1517,7 +1528,7 @@ export default function Index() {
       );
     }
 
-    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestLoading={loadingAction} search={refreshTutorSearch} back={() => setScreen("home")} />;
+    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} targetTutorProfileId={targetTutorProfileId} clearTargetTutor={() => setTargetTutorProfileId(null)} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestLoading={loadingAction} search={refreshTutorSearch} back={() => { setTargetTutorProfileId(null); setScreen("home"); }} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} refreshSupply={refreshTutorSupply} />;
@@ -1892,10 +1903,11 @@ function TrackCard({ role, onPress }: { role: Role; onPress: () => void }) {
   );
 }
 
-function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendationResponse; onOpen: () => void }) {
+function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendationResponse; onOpen: (tutorProfileId: string) => void }) {
   const items = [
     ...data.tutors.slice(0, 3).map((tutor) => ({
       id: "tutor-" + tutor.id,
+      tutorProfileId: tutor.tutorProfileId,
       eyebrow: "Tutor match",
       title: tutor.name,
       meta: `${tutor.subjects.slice(0, 2).join(", ") || "Tutor"} • ${tutor.rating.toFixed(1)} ★`,
@@ -1904,6 +1916,7 @@ function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendat
     })),
     ...data.programs.slice(0, 3).map((program) => ({
       id: "program-" + program.id,
+      tutorProfileId: program.tutor.tutorProfileId,
       eyebrow: program.feeType === "paid" ? `Program • ₹${program.feeAmount ?? 0}` : "Free program",
       title: program.title,
       meta: `${program.milestoneCount} milestones • ${program.tutor.name}`,
@@ -1912,6 +1925,7 @@ function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendat
     })),
     ...data.batches.slice(0, 2).map((batch) => ({
       id: "batch-" + batch.id,
+      tutorProfileId: batch.tutor.tutorProfileId,
       eyebrow: batch.availabilityStatus === "filling_fast" ? "Filling fast" : "Batch open",
       title: batch.title,
       meta: `${batch.schedule} • ${batch.tutor.name}`,
@@ -1925,7 +1939,7 @@ function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendat
       <SectionTitle>Recommended tutors and programs</SectionTitle>
       <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.carousel}>
         {items.map((item) => (
-          <Pressable key={item.id} style={({ pressed }) => [styles.marketplaceCard, pressed && styles.pressed]} onPress={onOpen}>
+          <Pressable key={item.id} style={({ pressed }) => [styles.marketplaceCard, pressed && styles.pressed]} onPress={() => onOpen(item.tutorProfileId)}>
             <View style={styles.marketplaceAvatar}>
               <Text style={styles.marketplaceAvatarText}>{item.initials}</Text>
             </View>
@@ -3282,6 +3296,8 @@ function ProgramPickerModal({
 function TutorDiscovery({
   role,
   tutors,
+  targetTutorProfileId,
+  clearTargetTutor,
   options,
   loading,
   requestBatch,
@@ -3292,6 +3308,8 @@ function TutorDiscovery({
 }: {
   role: Role;
   tutors: TutorSearchResult[];
+  targetTutorProfileId?: string | null;
+  clearTargetTutor: () => void;
   options: TutorFilterOptions;
   loading: boolean;
   requestBatch: (batchId: string) => void;
@@ -3314,6 +3332,11 @@ function TutorDiscovery({
   const [gender, setGender] = useState(any);
   const [experience, setExperience] = useState(any);
   const [rating, setRating] = useState(any);
+  useEffect(() => {
+    if (!targetTutorProfileId || selectedTutor?.tutorProfileId === targetTutorProfileId) return;
+    const matched = tutors.find((tutor) => tutor.tutorProfileId === targetTutorProfileId || tutor.id === targetTutorProfileId);
+    if (matched) setSelectedTutor(matched);
+  }, [targetTutorProfileId, tutors, selectedTutor?.tutorProfileId]);
   const cleaned = (value: string) => value === any ? undefined : value;
   const filters = {
     subject: cleaned(subject),
@@ -3335,7 +3358,7 @@ function TutorDiscovery({
   if (selectedTutor) {
     return (
       <>
-        <TopBar title={selectedTutor.name} left="‹" onLeft={() => setSelectedTutor(null)} />
+        <TopBar title={selectedTutor.name} left="‹" onLeft={() => { clearTargetTutor(); setSelectedTutor(null); }} />
         <View style={styles.tutorCard}>
           <View style={styles.tutorHeaderRow}>
             <Avatar role="tutor" label={selectedTutor.initials} />
