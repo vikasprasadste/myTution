@@ -886,6 +886,20 @@ export default function Index() {
     }
   }
 
+  async function acceptSuggestedBatch(requestId: string) {
+    setLoadingAction("acceptSuggestion:" + requestId);
+    try {
+      await apiPost("/api/v1/usermanagement/batch-requests/" + requestId + "/accept-suggestion", {}, authSession?.accessToken);
+      setApiNotice("Suggested batch accepted. Tutor approval is pending.");
+      await refreshStudentBatchRequests();
+      await refreshClasses();
+    } catch {
+      setApiNotice("Suggested batch could not be accepted. Please check API deployment and login state.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
   function restartPrototype() {
     setRole("student");
     setPhoneNumber("");
@@ -1541,7 +1555,7 @@ export default function Index() {
             </Pressable>
           ) : null}
 
-          {role === "student" ? <StudentBatchRequestAlerts role={role} requests={batchRequests} openTutorSearch={() => setScreen("search")} dismiss={(id) => actOnBatchRequest(id, "dismiss")} actionLoading={loadingAction} /> : null}
+          {role === "student" ? <StudentBatchRequestAlerts role={role} requests={batchRequests} openTutorSearch={() => setScreen("search")} acceptSuggestion={acceptSuggestedBatch} dismiss={(id) => actOnBatchRequest(id, "dismiss")} actionLoading={loadingAction} /> : null}
 
           <SectionTitle>Dashboard</SectionTitle>
           <DashboardGrid role={role} cards={dashboardCards} setScreen={setScreen} />
@@ -3774,7 +3788,7 @@ function BatchRequestCard({ role, request, approveRequest, requestAction, action
   );
 }
 
-function StudentBatchRequestAlerts({ role, requests, openTutorSearch, dismiss, actionLoading }: { role: Role; requests: BatchRequestSummary[]; openTutorSearch: () => void; dismiss: (id: string) => void; actionLoading: string | null }) {
+function StudentBatchRequestAlerts({ role, requests, openTutorSearch, acceptSuggestion, dismiss, actionLoading }: { role: Role; requests: BatchRequestSummary[]; openTutorSearch: () => void; acceptSuggestion: (id: string) => void; dismiss: (id: string) => void; actionLoading: string | null }) {
   const visible = requests.filter((request) => ["rejected", "deferred", "suggested"].includes(request.status));
   if (!visible.length) return null;
   return (
@@ -3786,7 +3800,12 @@ function StudentBatchRequestAlerts({ role, requests, openTutorSearch, dismiss, a
           <Text style={styles.batchTitle}>{request.batch.title}</Text>
           <Text style={styles.batchMeta}>{capitalize(request.status)} by {request.tutor.name}</Text>
           <Text style={styles.batchMeta}>{request.tutorResponse ?? "Please choose your next action."}</Text>
-          {request.status === "suggested" ? <Button role={role} label="View tutor batches" onPress={openTutorSearch} /> : null}
+          {request.status === "suggested" ? (
+            <View style={styles.requestActionGrid}>
+              <Button role={role} label="Accept suggested batch" loading={actionLoading === "acceptSuggestion:" + request.id} onPress={() => acceptSuggestion(request.id)} />
+              <Button role={role} variant="secondary" label="View tutor batches" onPress={openTutorSearch} />
+            </View>
+          ) : null}
         </View>
       ))}
     </>

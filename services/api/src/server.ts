@@ -1671,6 +1671,44 @@ app.post("/api/v1/usermanagement/batch-requests/:id/suggest", async (req, res) =
   res.json({ data: suggested });
 });
 
+app.post("/api/v1/usermanagement/batch-requests/:id/accept-suggestion", async (req, res) => {
+  const userId = await readUserId(req);
+  const student = await findProfile("student", userId);
+  if (!student) {
+    res.status(404).json({ error: "Student profile not found" });
+    return;
+  }
+  const request = await prisma.batchRequest.findUnique({
+    where: { id: req.params.id },
+    include: { batch: { include: { tutorProfile: true } } }
+  });
+  if (!request || request.studentProfileId !== student.id || request.status !== "suggested" || !request.suggestedBatchId) {
+    res.status(404).json({ error: "Suggested request not found" });
+    return;
+  }
+  const suggestedBatch = await prisma.tutorBatch.findFirst({
+    where: { id: request.suggestedBatchId, tutorProfileId: request.batch.tutorProfileId, status: { not: "archived" } },
+    include: { tutorProfile: { include: { profile: true } }, requests: true, enrollments: true }
+  });
+  if (!suggestedBatch) {
+    res.status(404).json({ error: "Suggested batch is no longer available" });
+    return;
+  }
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.batchRequest.update({
+      where: { id: request.id },
+      data: { status: "dismissed", tutorResponse: "Student accepted suggested batch." }
+    });
+    return tx.batchRequest.upsert({
+      where: { batchId_studentProfileId: { batchId: suggestedBatch.id, studentProfileId: student.id } },
+      update: { status: "pending", message: "I accept the suggested batch.", sourceTag: "app" },
+      create: { batchId: suggestedBatch.id, studentProfileId: student.id, message: "I accept the suggested batch.", sourceTag: "app" },
+      include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true }
+    });
+  });
+  res.status(201).json({ data: toBatchRequestSummary(result) });
+});
+
 app.post("/api/v1/usermanagement/batch-requests/:id/dismiss", async (req, res) => {
   const userId = await readUserId(req);
   const student = await findProfile("student", userId);
