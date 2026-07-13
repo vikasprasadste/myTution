@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, MarketplaceRecommendationResponse, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics, UserListItem, UserProfileDetails } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, MarketplaceRecommendationResponse, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -663,13 +663,21 @@ export default function Index() {
   async function refreshTutorSearch(filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string; language?: string; gender?: string; experience?: string; rating?: string } = {}) {
     setTutorSearchLoading(true);
     try {
-      const listResponse = await apiGet<{ data: UserListItem[] }>("/api/v1/usermanagement/users?Role=Tutor", authSession?.accessToken);
-      const profiles = await Promise.all(
-        listResponse.data.map((item) => apiGet<{ data: UserProfileDetails }>(`/api/v1/usermanagement/getUserProfile?userId=${encodeURIComponent(item.id)}&Role=Tutor`, authSession?.accessToken))
-      );
-      const tutors = profiles.map((item) => userProfileToTutorResult(item.data));
+      const params = new URLSearchParams();
+      if (filters.subject) params.set("subject", filters.subject);
+      if (filters.grade) params.set("grade", filters.grade);
+      if (filters.board) params.set("board", filters.board);
+      if (filters.mode) params.set("mode", filters.mode);
+      if (filters.location) params.set("location", filters.location);
+      if (filters.language) params.set("language", filters.language);
+      if (filters.gender) params.set("gender", filters.gender);
+      if (filters.experience) params.set("minExperience", filters.experience.replace(/\D/g, ""));
+      if (filters.rating) params.set("minRating", filters.rating.replace(/[^\d.]/g, ""));
+      const query = params.toString();
+      const response = await apiGet<{ data: TutorSearchResult[] }>(`/api/v1/usermanagement/tutors${query ? "?" + query : ""}`, authSession?.accessToken);
+      const tutors = response.data;
       setTutorFilterOptions(buildTutorFilterOptions(tutors));
-      setTutorResults(filterTutorResults(tutors, filters));
+      setTutorResults(tutors);
       setApiNotice("");
     } catch {
       setTutorResults([]);
@@ -4364,31 +4372,6 @@ function combineReminderDateTime(date: string, time: string) {
   return `${date} ${time}`;
 }
 
-function userProfileToTutorResult(profile: UserProfileDetails): TutorSearchResult {
-  return {
-    id: profile.profileId,
-    tutorProfileId: profile.profileId,
-    profileId: profile.profileId,
-    name: profile.name,
-    initials: profile.initials,
-    headline: profile.headline ?? "Tutor",
-    subjects: profile.subjects ?? dedupe(profile.tutionDetails.map((item) => item.subject)),
-    boards: profile.boards ?? dedupe(profile.tutionDetails.map((item) => item.board)),
-    grades: profile.grades ?? dedupe(profile.tutionDetails.map((item) => item.grade)),
-    languages: profile.languages ?? dedupe(profile.tutionDetails.flatMap((item) => item.language)),
-    mode: profile.mode ?? dedupe(profile.tutionDetails.map((item) => item.mode)),
-    experienceYears: profile.experienceYears ?? Math.max(0, ...profile.tutionDetails.map((item) => item.experienceYears)),
-    rating: profile.rating ?? Math.max(0, ...profile.tutionDetails.map((item) => item.rating)),
-    hourlyRate: profile.hourlyRate ?? profile.tutionDetails[0]?.hourlyRate ?? 0,
-    gender: profile.gender ?? profile.tutionDetails[0]?.gender ?? "",
-    location: profile.location ?? profile.tutionDetails[0]?.location ?? profile.city ?? "",
-    bio: profile.bio ?? "",
-    batches: profile.batches ?? [],
-    programs: profile.programs ?? [],
-    tutionDetails: profile.tutionDetails
-  };
-}
-
 function buildTutorFilterOptions(tutors: TutorSearchResult[]): TutorFilterOptions {
   const details = tutors.flatMap((tutor) => tutor.tutionDetails ?? []);
   return {
@@ -4402,25 +4385,6 @@ function buildTutorFilterOptions(tutors: TutorSearchResult[]): TutorFilterOption
     experience: dedupe(details.map((item) => `${item.experienceYears}+ years`), (a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10)),
     ratings: dedupe(details.map((item) => `${item.rating.toFixed(1)}+`), (a, b) => Number.parseFloat(a) - Number.parseFloat(b))
   };
-}
-
-function filterTutorResults(tutors: TutorSearchResult[], filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string; language?: string; gender?: string; experience?: string; rating?: string }) {
-  return tutors.filter((tutor) => {
-    const details = tutor.tutionDetails?.length ? tutor.tutionDetails : [];
-    if (!details.length) return true;
-    return details.some((item) => {
-      if (filters.subject && item.subject !== filters.subject) return false;
-      if (filters.location && item.location !== filters.location) return false;
-      if (filters.grade && item.grade !== filters.grade) return false;
-      if (filters.board && item.board !== filters.board) return false;
-      if (filters.mode && item.mode !== filters.mode) return false;
-      if (filters.language && !item.language.includes(filters.language)) return false;
-      if (filters.gender && item.gender !== filters.gender) return false;
-      if (filters.experience && item.experienceYears < Number.parseInt(filters.experience, 10)) return false;
-      if (filters.rating && item.rating < Number.parseFloat(filters.rating)) return false;
-      return true;
-    });
-  });
 }
 
 function dedupe(values: string[], sorter?: (a: string, b: string) => number) {
