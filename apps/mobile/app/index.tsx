@@ -863,6 +863,8 @@ export default function Index() {
       await apiPost("/api/v1/usermanagement/batch-requests/" + requestId + "/approve", {}, authSession?.accessToken);
       setApiNotice("Student enrolled in batch.");
       await refreshBatchRequests();
+      await refreshTutorSupply();
+      await refreshClasses();
     } catch {
       setApiNotice("Approval failed. Please check API deployment and login state.");
     } finally {

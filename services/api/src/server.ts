@@ -1586,7 +1586,7 @@ app.post("/api/v1/usermanagement/batch-requests/:id/approve", async (req, res) =
     res.status(404).json({ error: "Request not found" });
     return;
   }
-  const result = await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const approved = await tx.batchRequest.update({ where: { id: request.id }, data: { status: "approved" } });
     const enrollment = await tx.batchEnrollment.upsert({
       where: { batchId_studentProfileId: { batchId: request.batchId, studentProfileId: request.studentProfileId } },
@@ -1605,7 +1605,16 @@ app.post("/api/v1/usermanagement/batch-requests/:id/approve", async (req, res) =
     });
     return { approved, enrollment };
   });
-  res.json({ data: result });
+  const updatedRequest = await prisma.batchRequest.findUnique({
+    where: { id: request.id },
+    include: { batch: { include: { tutorProfile: { include: { profile: true } }, enrollments: { include: { studentProfile: true } }, requests: true } }, studentProfile: true }
+  });
+  res.json({
+    data: {
+      request: updatedRequest ? toBatchRequestSummary(updatedRequest) : null,
+      class: updatedRequest ? toTutorBatchClass(updatedRequest.batch) : null
+    }
+  });
 });
 
 app.post("/api/v1/usermanagement/batch-requests/:id/reject", async (req, res) => {
