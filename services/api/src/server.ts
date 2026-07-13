@@ -737,7 +737,7 @@ app.get("/api/v1/tutor/supply", async (req, res) => {
     data: {
       profile: toIdentityProfile({ ...profile, tutorProfile, studentParentLinks: [], parentStudentLinks: [] }),
       programs: programs.map(tutorProgramSummary),
-      batches: tutorProfile?.batches.map(toBatchSummary) ?? [],
+      batches: tutorProfile?.batches.map((batch) => toBatchSummary(batch)) ?? [],
       analytics
     }
   });
@@ -887,7 +887,7 @@ app.get("/api/v1/tutor/batches", async (req, res) => {
     orderBy: { startsAt: "asc" },
     include: { requests: true, enrollments: true, program: true }
   });
-  res.json({ data: batches.map(toBatchSummary) });
+  res.json({ data: batches.map((batch) => toBatchSummary(batch)) });
 });
 
 app.post("/api/v1/tutor/batches", async (req, res) => {
@@ -1434,6 +1434,11 @@ app.put("/api/v1/usermanagement/profile", async (req, res) => {
 
 app.get("/api/v1/usermanagement/tutors", async (req, res) => {
   await ensureSharedTutorFixture();
+  const userId = await readUserId(req);
+  const studentProfile = await findProfile("student", userId);
+  const selectedProgramIds = studentProfile
+    ? new Set((await prisma.studentProgramSelection.findMany({ where: { profileId: studentProfile.id, status: "active" }, select: { programId: true } })).map((item) => item.programId))
+    : new Set<string>();
   const batchWhere: Record<string, unknown> = {};
   if (req.query.subject) batchWhere.subject = textContains(req.query.subject);
   if (req.query.grade) batchWhere.grade = textContains(req.query.grade);
@@ -1469,7 +1474,7 @@ app.get("/api/v1/usermanagement/tutors", async (req, res) => {
     orderBy: [{ rating: "desc" }, { experienceYears: "desc" }],
     take: 40
   });
-  res.json({ data: tutors.map(toTutorSearchResult) });
+  res.json({ data: tutors.map((tutor) => toTutorSearchResult(tutor, { studentProfileId: studentProfile?.id, selectedProgramIds })) });
 });
 
 app.get("/api/v1/marketplace/recommendations", async (req, res) => {
@@ -1482,6 +1487,9 @@ app.get("/api/v1/marketplace/recommendations", async (req, res) => {
   await ensureSharedTutorFixture();
   const userId = await readUserId(req);
   const studentProfile = await findProfile("student", userId);
+  const selectedProgramIds = studentProfile
+    ? new Set((await prisma.studentProgramSelection.findMany({ where: { profileId: studentProfile.id, status: "active" }, select: { programId: true } })).map((item) => item.programId))
+    : new Set<string>();
   const tutors = await prisma.tutorProfile.findMany({
     where: { profileStatus: "active" },
     include: {
@@ -1504,12 +1512,12 @@ app.get("/api/v1/marketplace/recommendations", async (req, res) => {
   const ranked = tutors
     .map((tutor) => ({ tutor, score: marketplaceFitScore(tutor, studentProfile), reasons: marketplaceFitReasons(tutor, studentProfile) }))
     .sort((a, b) => b.score - a.score || b.tutor.rating - a.tutor.rating || b.tutor.experienceYears - a.tutor.experienceYears);
-  const tutorResults = ranked.slice(0, 8).map((item) => toTutorSearchResult(item.tutor));
+  const tutorResults = ranked.slice(0, 8).map((item) => toTutorSearchResult(item.tutor, { studentProfileId: studentProfile?.id, selectedProgramIds }));
   const programs = ranked
-    .flatMap((item) => (item.tutor.profile.authoredPrograms ?? []).map((program: any) => toMarketplaceProgram(program, item.tutor, item.score, item.reasons)))
+    .flatMap((item) => (item.tutor.profile.authoredPrograms ?? []).map((program: any) => toMarketplaceProgram(program, item.tutor, item.score, item.reasons, selectedProgramIds)))
     .slice(0, 8);
   const batches = ranked
-    .flatMap((item) => (item.tutor.batches ?? []).map((batch: any) => toMarketplaceBatch(batch, item.tutor, item.score, item.reasons)))
+    .flatMap((item) => (item.tutor.batches ?? []).map((batch: any) => toMarketplaceBatch(batch, item.tutor, item.score, item.reasons, studentProfile?.id)))
     .filter((batch) => batch.availabilityStatus !== "archived" && batch.availabilityStatus !== "booked")
     .slice(0, 8);
   res.json({ data: { tutors: tutorResults, programs, batches } });
@@ -2760,7 +2768,7 @@ function classReadyLink(batch: { startsAt: Date; onlineLink?: string | null }) {
   return diffMs <= 5 * 60 * 1000 && diffMs >= -2 * 60 * 60 * 1000 ? batch.onlineLink : null;
 }
 
-function toTutorSearchResult(tutor: any) {
+function toTutorSearchResult(tutor: any, context: { studentProfileId?: string | null; selectedProgramIds?: Set<string> } = {}) {
   return {
     id: tutor.id,
     tutorProfileId: tutor.id,
@@ -2779,8 +2787,8 @@ function toTutorSearchResult(tutor: any) {
     gender: tutor.gender,
     location: tutor.location,
     bio: tutor.bio,
-    batches: tutor.batches.map(toBatchSummary),
-    programs: (tutor.profile.authoredPrograms ?? []).map(toTutorProgramSummary),
+    batches: tutor.batches.map((batch: any) => toBatchSummary(batch, context.studentProfileId)),
+    programs: (tutor.profile.authoredPrograms ?? []).map((program: any) => toTutorProgramSummary(program, context.selectedProgramIds)),
     tutionDetails: tutor.batches.map((batch: any) => toTutionDetail(batch, tutor))
   };
 }
@@ -2837,8 +2845,8 @@ function marketplaceFitReasons(tutor: any, studentProfile?: any | null) {
   return reasons.slice(0, 3);
 }
 
-function toMarketplaceProgram(program: any, tutor: any, fitScore: number, fitReasons: string[]): MarketplaceProgramRecommendation {
-  const summary = toTutorProgramSummary(program);
+function toMarketplaceProgram(program: any, tutor: any, fitScore: number, fitReasons: string[], selectedProgramIds?: Set<string>): MarketplaceProgramRecommendation {
+  const summary = toTutorProgramSummary(program, selectedProgramIds);
   return {
     ...summary,
     tutor: marketplaceTutorBrief(tutor),
@@ -2847,8 +2855,8 @@ function toMarketplaceProgram(program: any, tutor: any, fitScore: number, fitRea
   };
 }
 
-function toMarketplaceBatch(batch: any, tutor: any, fitScore: number, fitReasons: string[]): MarketplaceBatchRecommendation {
-  const summary = toBatchSummary(batch);
+function toMarketplaceBatch(batch: any, tutor: any, fitScore: number, fitReasons: string[], studentProfileId?: string | null): MarketplaceBatchRecommendation {
+  const summary = toBatchSummary(batch, studentProfileId);
   return {
     id: summary.id,
     title: summary.title,
@@ -2897,13 +2905,13 @@ function toUserProfileDetails(profile: any) {
     gender: tutorProfile.gender,
     location: tutorProfile.location,
     bio: tutorProfile.bio,
-    batches: tutorProfile.batches.map(toBatchSummary),
+    batches: tutorProfile.batches.map((batch: any) => toBatchSummary(batch)),
     programs: (profile.authoredPrograms ?? []).map(toTutorProgramSummary),
     tutionDetails: tutorProfile.batches.map((batch: any) => toTutionDetail(batch, tutorProfile))
   };
 }
 
-function toTutorProgramSummary(program: any) {
+function toTutorProgramSummary(program: any, selectedProgramIds?: Set<string>) {
   const milestones = program.milestones ?? [];
   return {
     id: program.id,
@@ -2914,7 +2922,8 @@ function toTutorProgramSummary(program: any) {
     feeType: program.feeType,
     feeAmount: program.feeAmount,
     milestoneCount: milestones.length,
-    activityCount: milestones.reduce((count: number, milestone: any) => count + (milestone.activities?.length ?? 0), 0)
+    activityCount: milestones.reduce((count: number, milestone: any) => count + (milestone.activities?.length ?? 0), 0),
+    selected: selectedProgramIds?.has(program.id) ?? undefined
   };
 }
 
@@ -2938,8 +2947,10 @@ function toTutionDetail(batch: any, tutor: any) {
   };
 }
 
-function toBatchSummary(batch: any) {
+function toBatchSummary(batch: any, studentProfileId?: string | null) {
   const enrolledCount = batch.enrollments?.length ?? 0;
+  const studentRequest = studentProfileId ? batch.requests?.find((request: any) => request.studentProfileId === studentProfileId) : null;
+  const studentEnrollment = studentProfileId ? batch.enrollments?.find((enrollment: any) => enrollment.studentProfileId === studentProfileId) : null;
   const fillPercent = batch.capacity ? Math.min(100, Math.round((enrolledCount / batch.capacity) * 100)) : 0;
   const availabilityStatus = batch.status === "booked" || batch.status === "archived"
     ? batch.status
@@ -2964,7 +2975,9 @@ function toBatchSummary(batch: any) {
     requestCount: batch.requests?.length ?? 0,
     fillPercent,
     availabilityStatus,
-    onlineVideoLink: classReadyLink(batch)
+    onlineVideoLink: classReadyLink(batch),
+    studentRequestStatus: studentRequest?.status ?? null,
+    studentEnrollmentStatus: studentEnrollment?.status ?? null
   };
 }
 

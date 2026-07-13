@@ -692,7 +692,7 @@ export default function Index() {
     try {
       await apiPost("/api/v1/usermanagement/batch-requests", { batchId, message: "I would like to join this batch." }, authSession?.accessToken);
       setApiNotice("Batch request sent to tutor.");
-      await refreshTutorSearch({ subject: "Mathematics" });
+      await refreshTutorSearch();
     } catch {
       setApiNotice("Batch request failed. Please check API deployment and login state.");
     } finally {
@@ -3345,6 +3345,11 @@ function TutorDiscovery({
     const matched = tutors.find((tutor) => tutor.tutorProfileId === targetTutorProfileId || tutor.id === targetTutorProfileId);
     if (matched) setSelectedTutor(matched);
   }, [targetTutorProfileId, tutors, selectedTutor?.tutorProfileId]);
+  useEffect(() => {
+    if (!selectedTutor) return;
+    const updated = tutors.find((tutor) => tutor.tutorProfileId === selectedTutor.tutorProfileId || tutor.id === selectedTutor.id);
+    if (updated && updated !== selectedTutor) setSelectedTutor(updated);
+  }, [selectedTutor, tutors]);
   const cleaned = (value: string) => value === any ? undefined : value;
   const filters = {
     subject: cleaned(subject),
@@ -3389,22 +3394,29 @@ function TutorDiscovery({
             </View>
             <Text style={styles.batchMeta}>{program.description}</Text>
             <Text style={styles.batchMeta}>{program.milestoneCount} milestones • {program.activityCount} activities</Text>
-            <Button role={role} label={program.feeType === "paid" ? "Purchase program" : "Add free program"} loading={requestLoading === "addTutorProgram:" + program.id} onPress={() => addTutorProgram(program.id)} />
+            <Button role={role} label={program.selected ? "Added to Program" : program.feeType === "paid" ? "Purchase program" : "Add free program"} disabled={!!program.selected} loading={requestLoading === "addTutorProgram:" + program.id} onPress={() => addTutorProgram(program.id)} />
           </View>
         )) : <View style={styles.emptyInlineCard}><Text style={styles.todayTitle}>No programs yet</Text><Text style={styles.todayMeta}>This tutor has not published any program offerings.</Text></View>}
         <SectionTitle>Batches</SectionTitle>
-        {selectedTutor.batches.map((batch) => (
-          <View key={batch.id} style={styles.batchMiniCard}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.batchTitle}>{batch.title}</Text>
-              <Text style={styles.tutorResourcePill}>{batch.availabilityStatus === "booked" ? "Booked" : batch.availabilityStatus === "filling_fast" ? "Filling fast" : "Available"}</Text>
+        {selectedTutor.batches.map((batch) => {
+          const enrolled = batch.studentEnrollmentStatus === "active";
+          const pending = batch.studentRequestStatus === "pending";
+          const unavailable = batch.availabilityStatus === "booked";
+          const terminalStatus = batch.studentRequestStatus === "rejected" ? "Request denied" : batch.studentRequestStatus === "deferred" ? "Deferred" : batch.studentRequestStatus === "suggested" ? "Suggestion sent" : null;
+          const label = enrolled ? "Enrolled" : pending ? "Request pending" : terminalStatus ?? (unavailable ? "Batch full" : "Request batch");
+          return (
+            <View key={batch.id} style={styles.batchMiniCard}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.batchTitle}>{batch.title}</Text>
+                <Text style={styles.tutorResourcePill}>{batch.availabilityStatus === "booked" ? "Booked" : batch.availabilityStatus === "filling_fast" ? "Filling fast" : "Available"}</Text>
+              </View>
+              <Text style={styles.batchMeta}>{batch.course} • {batch.schedule}</Text>
+              <Text style={styles.batchMeta}>{batch.mode}{batch.classroomLocation ? " • " + batch.classroomLocation : ""}</Text>
+              <Text style={styles.batchMeta}>{batch.enrolledCount}/{batch.capacity} seats filled • {batch.fillPercent ?? 0}%</Text>
+              <Button role={role} label={label} disabled={enrolled || pending || unavailable} loading={requestLoading === "requestBatch:" + batch.id} onPress={() => requestBatch(batch.id)} />
             </View>
-            <Text style={styles.batchMeta}>{batch.course} • {batch.schedule}</Text>
-            <Text style={styles.batchMeta}>{batch.mode}{batch.classroomLocation ? " • " + batch.classroomLocation : ""}</Text>
-            <Text style={styles.batchMeta}>{batch.enrolledCount}/{batch.capacity} seats filled • {batch.fillPercent ?? 0}%</Text>
-            <Button role={role} label="Request batch" loading={requestLoading === "requestBatch:" + batch.id} onPress={() => requestBatch(batch.id)} />
-          </View>
-        ))}
+          );
+        })}
       </>
     );
   }

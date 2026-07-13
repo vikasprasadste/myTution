@@ -168,6 +168,7 @@ export interface TutorProgramSummary {
   feeAmount: number | null;
   milestoneCount: number;
   activityCount: number;
+  selected?: boolean;
 }
 
 export interface TutorProgramResourceInput {
@@ -242,6 +243,8 @@ export interface TutorBatchSummary {
   fillPercent?: number;
   availabilityStatus?: "booked" | "filling_fast" | "available" | string;
   onlineVideoLink: string | null;
+  studentRequestStatus?: string | null;
+  studentEnrollmentStatus?: string | null;
 }
 
 export interface TutorSupplyAnalytics {
