@@ -244,6 +244,14 @@ Acceptance criteria:
 - Student sees enrolled batch/classes.
 - Tutor sees batch roster.
 
+Status:
+
+- In progress.
+- Completed so far: student can accept a tutor-suggested alternate batch; original suggested request is dismissed and a pending request is created for the alternate batch.
+- Completed so far: tutor approval returns refreshed request/class data, creates enrollment, and refreshes tutor supply/class state in the app.
+- No Neon migration was needed for these slices. Current implementation uses `BatchRequest`, `BatchEnrollment`, `Reminder`, and tutor batch tables.
+- Remaining: richer student enrollment state timeline, suggested batch detail display, cancellation/withdrawal handling, paid order/payment intent, tutor roster drill-down, and notification surfaces.
+
 ### Phase 6: Program Progress & Learning Activity Tracking
 
 Goal: Track student learning truthfully per enrolled/selected program.
