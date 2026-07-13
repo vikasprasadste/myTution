@@ -73,7 +73,7 @@ Returns the resource plus:
 
 ## Phase 3 Slice 2: Private Repo-Backed Asset URLs
 
-Status: Implemented locally, not yet committed.
+Status: Pushed to `main`.
 
 This slice keeps repo-backed storage for MVP, but routes authenticated asset access through AMS instead of exposing raw repo/static paths from resource detail APIs.
 
@@ -105,6 +105,88 @@ GET /api/v1/ams/files/:path
 
 Authenticated resource detail responses now return private AMS URLs for `assetUrls.thumbnail`, `assetUrls.banner`, `assetUrls.vtt`, and `assetUrls.metadata`.
 
+## Phase 3 Slice 3: Tutor Resource Library APIs
+
+Status: Implemented locally, not yet committed.
+
+This slice introduces standalone tutor-owned content APIs. Program creation can still create embedded resources, but tutors now also have a content library boundary that future mobile/admin UI can use directly.
+
+### List Tutor Resources
+
+```http
+GET /api/v1/tutor/resources
+Authorization: Bearer <tutorAccessToken>
+```
+
+Returns tutor-owned resources with:
+
+- asset URLs and metadata
+- flashcard count
+- quiz question count
+- usage count
+- published usage count
+
+### Create Tutor Resource
+
+```http
+POST /api/v1/tutor/resources
+Authorization: Bearer <tutorAccessToken>
+Content-Type: application/json
+```
+
+Supports:
+
+- `article`
+- `video`
+- `flashcard`
+- `quiz`
+
+Accepted metadata fields:
+
+- `title`
+- `description`
+- `body`
+- `mediaUrl`
+- `thumbnailPath`
+- `bannerPath`
+- `vttPath`
+- `metadataPath`
+- `assetSlug`
+- `assetProvider`
+- `accessLevel`
+- `assetVersion`
+- `storageType`
+- `flashcards`
+- `quizQuestions`
+
+### Update Tutor Resource
+
+```http
+PUT /api/v1/tutor/resources/:id
+Authorization: Bearer <tutorAccessToken>
+Content-Type: application/json
+```
+
+Rules:
+
+- resource must belong to tutor
+- resource cannot be updated once used by a published program
+- flashcards are replaced atomically for flashcard resources
+
+### Delete Tutor Resource
+
+```http
+DELETE /api/v1/tutor/resources/:id
+Authorization: Bearer <tutorAccessToken>
+```
+
+Rules:
+
+- resource must belong to tutor
+- resource cannot be deleted if used by a published program
+- resource cannot be deleted while attached to any draft milestone
+- flashcards are deleted with the resource when safe
+
 ### Quiz Payload
 
 ```http
@@ -125,10 +207,14 @@ Quiz content now uses the same entitlement check as resource detail.
 7. Open a resource detail response and confirm `assetUrls.banner` uses `/api/v1/ams/assets/:id/file/banner`.
 8. Paste that private URL without a valid `accessToken` and confirm it is rejected.
 9. Paste it with a valid access token and confirm the file loads.
+10. Login as tutor and create one resource of each type through `/api/v1/tutor/resources`.
+11. Update an unpublished tutor resource and confirm the response reflects the change.
+12. Try updating a resource used by a published program and confirm `409`.
+13. Try deleting a resource attached to a milestone and confirm `409`.
 
 ## Next Phase 3 Slices
 
-1. Tutor upload/create APIs for article, video metadata, thumbnail, banner, VTT, flashcard JSON, and quiz JSON.
+1. Mobile tutor resource library screen and picker in program builder.
 2. Storage adapter interface for repo now and S3/R2 later.
 3. Content versioning before program publish.
 4. Content reaction analytics scoped to entitled students.

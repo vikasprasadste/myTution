@@ -290,6 +290,15 @@ function normalizeTutorResourceInput(resource: unknown): TutorProgramResourceInp
     description,
     body: String(input.body ?? "").trim(),
     mediaUrl: String(input.mediaUrl ?? "").trim(),
+    assetSlug: String(input.assetSlug ?? "").trim(),
+    assetProvider: String(input.assetProvider ?? "repo").trim(),
+    accessLevel: String(input.accessLevel ?? "program").trim(),
+    assetVersion: String(input.assetVersion ?? "v1").trim(),
+    storageType: String(input.storageType ?? "db").trim(),
+    thumbnailPath: String(input.thumbnailPath ?? "").trim(),
+    bannerPath: String(input.bannerPath ?? "").trim(),
+    vttPath: String(input.vttPath ?? "").trim(),
+    metadataPath: String(input.metadataPath ?? "").trim(),
     flashcards: Array.isArray(input.flashcards)
       ? input.flashcards.map((card) => ({ question: String(card.question ?? "").trim(), answer: String(card.answer ?? "").trim() })).filter((card) => card.question && card.answer)
       : undefined,
@@ -303,6 +312,80 @@ function defaultTutorFlashcards(title: string) {
     { question: `What should students recall first for ${title}?`, answer: "Recall the main terms, units, and exam keywords connected to this topic." },
     { question: `How should students revise ${title}?`, answer: "Use active recall, solve one example, and write a short summary in their own words." }
   ];
+}
+
+function tutorResourceData(input: TutorProgramResourceInput, tutorId: string) {
+  const mediaUrl = input.mediaUrl || "";
+  return {
+    creatorProfileId: tutorId,
+    type: input.type,
+    title: input.title,
+    description: input.description,
+    body: input.body || input.description,
+    assetSlug: input.assetSlug || null,
+    assetProvider: input.assetProvider || "repo",
+    accessLevel: input.accessLevel || "program",
+    assetVersion: input.assetVersion || "v1",
+    storageType: input.storageType || "db",
+    thumbnailPath: input.thumbnailPath || null,
+    bannerPath: input.bannerPath || null,
+    vttPath: input.vttPath || null,
+    metadataPath: input.metadataPath || null,
+    sourceUrl: mediaUrl || null,
+    contentJson: input.type === "quiz" ? {
+      questions: (input.quizQuestions ?? []).map((question, questionIndex) => ({
+        id: `q${questionIndex + 1}`,
+        prompt: question.prompt,
+        options: question.options,
+        answerIndex: question.answerIndex,
+        learnMore: question.learnMore ?? "Review the linked notes and try the concept again."
+      }))
+    } : mediaUrl ? { mediaUrl } : {},
+    sourceTag: "app"
+  };
+}
+
+async function writeResourceFlashcards(tx: any, resourceId: string, input: TutorProgramResourceInput) {
+  if (input.type !== "flashcard") return;
+  const cards = (input.flashcards?.length ? input.flashcards : defaultTutorFlashcards(input.title)).map((card, cardIndex) => ({
+    resourceId,
+    sequence: cardIndex + 1,
+    question: card.question,
+    answer: card.answer,
+    sourceTag: "app"
+  }));
+  await tx.flashcard.createMany({ data: cards });
+}
+
+function toTutorResourceSummary(resource: any) {
+  const questions = Array.isArray(resource.contentJson?.questions) ? resource.contentJson.questions : [];
+  const usageCount = resource.milestoneActivities?.length ?? 0;
+  const publishedUsageCount = resource.milestoneActivities?.filter((activity: any) => activity.milestone?.program?.status === "published").length ?? 0;
+  return {
+    id: resource.id,
+    type: resource.type,
+    title: resource.title,
+    description: resource.description,
+    body: resource.body,
+    sourceUrl: resource.sourceUrl,
+    assetUrls: assetUrlsFor(resource, { private: true }),
+    assetMetadata: assetMetadataFor(resource, { entitled: true, readonly: publishedUsageCount > 0 }),
+    flashcardCount: resource.flashcards?.length ?? 0,
+    quizQuestionCount: questions.length,
+    usageCount,
+    publishedUsageCount,
+    createdAt: resource.createdAt.toISOString()
+  };
+}
+
+async function resourcePublishedUsageCount(resourceId: string) {
+  return prisma.milestoneActivity.count({
+    where: { resourceId, milestone: { program: { status: "published" } } }
+  });
+}
+
+async function resourceUsageCount(resourceId: string) {
+  return prisma.milestoneActivity.count({ where: { resourceId } });
 }
 
 app.get("/health", async (_req, res) => {
@@ -669,6 +752,126 @@ app.get("/api/v1/tutor/supply/analytics", async (req, res) => {
     return;
   }
   res.json({ data: await buildTutorSupplyAnalytics(profile.id, tutorProfile.id) });
+});
+
+app.get("/api/v1/tutor/resources", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const resources = await prisma.resource.findMany({
+    where: { creatorProfileId: profile.id },
+    orderBy: { createdAt: "desc" },
+    include: {
+      flashcards: { orderBy: { sequence: "asc" } },
+      milestoneActivities: { include: { milestone: { include: { program: true } } } }
+    }
+  });
+  res.json({ data: resources.map(toTutorResourceSummary) });
+});
+
+app.post("/api/v1/tutor/resources", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const input = normalizeTutorResourceInput(req.body);
+  if (!input) {
+    res.status(400).json({ error: "Valid resource type, title, and description are required" });
+    return;
+  }
+  const resource = await prisma.$transaction(async (tx) => {
+    const created = await tx.resource.create({
+      data: tutorResourceData(input, profile.id)
+    });
+    await writeResourceFlashcards(tx, created.id, input);
+    return tx.resource.findUnique({
+      where: { id: created.id },
+      include: {
+        flashcards: { orderBy: { sequence: "asc" } },
+        milestoneActivities: { include: { milestone: { include: { program: true } } } }
+      }
+    });
+  });
+  await logAudit({
+    userId: profile.userId,
+    profileId: profile.id,
+    role: "tutor",
+    action: "tutor.resource.create",
+    entityType: "Resource",
+    entityId: resource?.id
+  });
+  res.status(201).json({ data: toTutorResourceSummary(resource) });
+});
+
+app.put("/api/v1/tutor/resources/:id", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const existing = await prisma.resource.findFirst({ where: { id: req.params.id, creatorProfileId: profile.id } });
+  if (!existing) {
+    res.status(404).json({ error: "Resource not found" });
+    return;
+  }
+  if (await resourcePublishedUsageCount(existing.id)) {
+    res.status(409).json({ error: "Published program content is view-only. Create a new resource version instead." });
+    return;
+  }
+  const input = normalizeTutorResourceInput(req.body);
+  if (!input) {
+    res.status(400).json({ error: "Valid resource type, title, and description are required" });
+    return;
+  }
+  const resource = await prisma.$transaction(async (tx) => {
+    await tx.flashcard.deleteMany({ where: { resourceId: existing.id } });
+    const updated = await tx.resource.update({
+      where: { id: existing.id },
+      data: tutorResourceData(input, profile.id)
+    });
+    await writeResourceFlashcards(tx, updated.id, input);
+    return tx.resource.findUnique({
+      where: { id: updated.id },
+      include: {
+        flashcards: { orderBy: { sequence: "asc" } },
+        milestoneActivities: { include: { milestone: { include: { program: true } } } }
+      }
+    });
+  });
+  await logAudit({
+    userId: profile.userId,
+    profileId: profile.id,
+    role: "tutor",
+    action: "tutor.resource.update",
+    entityType: "Resource",
+    entityId: existing.id
+  });
+  res.json({ data: toTutorResourceSummary(resource) });
+});
+
+app.delete("/api/v1/tutor/resources/:id", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const existing = await prisma.resource.findFirst({ where: { id: req.params.id, creatorProfileId: profile.id } });
+  if (!existing) {
+    res.status(404).json({ error: "Resource not found" });
+    return;
+  }
+  if (await resourcePublishedUsageCount(existing.id)) {
+    res.status(409).json({ error: "Published program content cannot be deleted" });
+    return;
+  }
+  if (await resourceUsageCount(existing.id)) {
+    res.status(409).json({ error: "Detach this resource from draft program milestones before deleting it" });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.flashcard.deleteMany({ where: { resourceId: existing.id } });
+    await tx.resource.delete({ where: { id: existing.id } });
+  });
+  await logAudit({
+    userId: profile.userId,
+    profileId: profile.id,
+    role: "tutor",
+    action: "tutor.resource.delete",
+    entityType: "Resource",
+    entityId: existing.id
+  });
+  res.status(204).send();
 });
 
 app.get("/api/v1/tutor/batches", async (req, res) => {
@@ -1762,36 +1965,9 @@ async function writeTutorProgramTree(tx: any, programId: string, tutorId: string
     });
     for (const [index, resourceInput] of milestoneInput.resources.entries()) {
       const resource = await tx.resource.create({
-        data: {
-          creatorProfileId: tutorId,
-          type: resourceInput.type,
-          title: resourceInput.title,
-          description: resourceInput.description,
-          body: resourceInput.body || resourceInput.description,
-          sourceUrl: resourceInput.mediaUrl || null,
-          storageType: "db",
-          contentJson: resourceInput.type === "quiz" ? {
-            questions: (resourceInput.quizQuestions ?? []).map((question, questionIndex) => ({
-              id: programId + "-m" + milestoneInput.sequence + "-q" + (questionIndex + 1),
-              prompt: question.prompt,
-              options: question.options,
-              answerIndex: question.answerIndex,
-              learnMore: question.learnMore ?? "Review the linked notes and try the concept again."
-            }))
-          } : undefined,
-          sourceTag: "app"
-        }
+        data: tutorResourceData(resourceInput, tutorId)
       });
-      if (resourceInput.type === "flashcard") {
-        const cards = (resourceInput.flashcards?.length ? resourceInput.flashcards : defaultTutorFlashcards(resourceInput.title)).map((card, cardIndex) => ({
-          resourceId: resource.id,
-          sequence: cardIndex + 1,
-          question: card.question,
-          answer: card.answer,
-          sourceTag: "app"
-        }));
-        await tx.flashcard.createMany({ data: cards });
-      }
+      await writeResourceFlashcards(tx, resource.id, resourceInput);
       await tx.milestoneActivity.create({
         data: {
           milestoneId: milestone.id,

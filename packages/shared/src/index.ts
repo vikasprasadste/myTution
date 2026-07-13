@@ -176,8 +176,33 @@ export interface TutorProgramResourceInput {
   description: string;
   body?: string;
   mediaUrl?: string;
+  assetSlug?: string;
+  assetProvider?: string;
+  accessLevel?: string;
+  assetVersion?: string;
+  storageType?: string;
+  thumbnailPath?: string;
+  bannerPath?: string;
+  vttPath?: string;
+  metadataPath?: string;
   flashcards?: Array<{ question: string; answer: string }>;
   quizQuestions?: Array<{ prompt: string; options: string[]; answerIndex: number; learnMore?: string }>;
+}
+
+export interface TutorResourceSummary {
+  id: string;
+  type: ResourceType;
+  title: string;
+  description: string;
+  body?: string | null;
+  sourceUrl?: string | null;
+  assetMetadata: ResourceAssetMetadata;
+  assetUrls: ResourceAssetUrls;
+  flashcardCount: number;
+  quizQuestionCount: number;
+  usageCount: number;
+  publishedUsageCount: number;
+  createdAt: string;
 }
 
 export interface TutorProgramCreateInput {
