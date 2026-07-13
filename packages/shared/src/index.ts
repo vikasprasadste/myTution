@@ -50,6 +50,8 @@ export interface IdentityTutorProfile {
   gender: string;
   location: string;
   bio: string;
+  verificationStatus?: string;
+  profileStatus?: string;
 }
 
 export interface IdentityProfile {
@@ -185,6 +187,7 @@ export interface TutorProgramCreateInput {
 
 export interface TutorBatchSummary {
   id: string;
+  programId?: string | null;
   title: string;
   course: string;
   subject: string;
@@ -195,11 +198,42 @@ export interface TutorBatchSummary {
   classroomLocation: string | null;
   startsAt: string;
   capacity: number;
+  status?: string;
+  feeType?: string;
+  feeAmount?: number | null;
   enrolledCount: number;
   requestCount: number;
   fillPercent?: number;
   availabilityStatus?: "booked" | "filling_fast" | "available" | string;
   onlineVideoLink: string | null;
+}
+
+export interface TutorSupplyAnalytics {
+  programs: {
+    total: number;
+    draft: number;
+    published: number;
+    archived: number;
+  };
+  batches: {
+    total: number;
+    active: number;
+    available: number;
+    fillingFast: number;
+    booked: number;
+    archived: number;
+  };
+  requests: {
+    total: number;
+    pending: number;
+    approved: number;
+    rejected: number;
+    deferred: number;
+    suggested: number;
+  };
+  enrollments: {
+    active: number;
+  };
 }
 
 export interface TutorSearchResult {

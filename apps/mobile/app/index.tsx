@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, UserListItem, UserProfileDetails } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics, UserListItem, UserProfileDetails } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -120,6 +120,25 @@ type QuizQuestion = { id: string; prompt: string; options: string[]; answerIndex
 type QuizPayload = { resourceId: string; title: string; description: string; questions: QuizQuestion[] };
 type SignInMode = "fresh" | "returning";
 type TutorFilterOptions = { subjects: string[]; locations: string[]; grades: string[]; boards: string[]; modes: string[]; languages: string[]; genders: string[]; experience: string[]; ratings: string[] };
+type TutorSupplyState = { profile: IdentityProfile; programs: ProgramSummary[]; batches: TutorBatchSummary[]; analytics?: TutorSupplyAnalytics };
+type TutorBatchDraft = {
+  id?: string | null;
+  programId: string;
+  title: string;
+  course: string;
+  subject: string;
+  grade: string;
+  board: string;
+  mode: string;
+  schedule: string;
+  classroomLocation: string;
+  onlineLink: string;
+  startsAt: string;
+  capacity: string;
+  status: string;
+  feeType: string;
+  feeAmount: string;
+};
 type ProfileDraft = {
   firstName: string;
   lastName: string;
@@ -190,6 +209,25 @@ const defaultTutorProgramDraft: TutorProgramDraft = {
   feeType: "free",
   feeAmount: null,
   milestones: []
+};
+
+const defaultTutorBatchDraft: TutorBatchDraft = {
+  id: null,
+  programId: "",
+  title: "",
+  course: "",
+  subject: "Mathematics",
+  grade: "Class 10",
+  board: "CBSE",
+  mode: "online",
+  schedule: "",
+  classroomLocation: "",
+  onlineLink: "",
+  startsAt: "2026-08-01T13:30:00.000Z",
+  capacity: "20",
+  status: "available",
+  feeType: "free",
+  feeAmount: ""
 };
 
 const emptyFlashcards = [
@@ -288,6 +326,8 @@ export default function Index() {
   const [tutorFilterOptions, setTutorFilterOptions] = useState<TutorFilterOptions>({ subjects: [], locations: [], grades: [], boards: [], modes: [], languages: [], genders: [], experience: [], ratings: [] });
   const [batchClasses, setBatchClasses] = useState<BatchClass[]>([]);
   const [batchRequests, setBatchRequests] = useState<BatchRequestSummary[]>([]);
+  const [tutorSupply, setTutorSupply] = useState<TutorSupplyState | null>(null);
+  const [tutorBatchDraft, setTutorBatchDraft] = useState<TutorBatchDraft>(defaultTutorBatchDraft);
   const [tutorSearchLoading, setTutorSearchLoading] = useState(false);
   const [classHubLoading, setClassHubLoading] = useState(false);
   const [completedTopic, setCompletedTopic] = useState<null | { milestoneId: string; nextActivity?: SelectedActivity; nextMilestoneActivity?: SelectedActivity; milestoneComplete: boolean; programComplete?: boolean }>(null);
@@ -384,7 +424,10 @@ export default function Index() {
     if (screen === "home" && role === "student") refreshStudentBatchRequests();
     if (screen === "roleHub") {
       if (role === "student") refreshClasses();
-      if (role === "tutor") refreshBatchRequests();
+      if (role === "tutor") {
+        refreshBatchRequests();
+        refreshTutorSupply();
+      }
     }
     if (screen === "account" && role === "tutor") refreshBatchRequests();
   }, [screen, role, authSession?.accessToken]);
@@ -493,6 +536,44 @@ export default function Index() {
       setApiNotice("");
     } catch {
       setApiNotice(editingId ? "Program could not be updated. Please check API deployment and login state." : "Program could not be created. Please check API deployment and login state.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function publishTutorProgram(programId: string) {
+    setLoadingAction("publishTutorProgram:" + programId);
+    try {
+      const response = await apiPost<{ data: ProgramSummary }>(`/api/v1/education-plan/tutor/programs/${programId}/publish`, {}, authSession?.accessToken);
+      setPrograms((items) => [response.data, ...items.filter((item) => item.id !== response.data.id)]);
+      setSelectedProgramId(response.data.id);
+      setTutorProgramComposerOpen(false);
+      setEditingTutorProgramId(null);
+      setProgramRefreshKey((value) => value + 1);
+      await refreshTutorSupply();
+      setProgramToast("Program published. Students can now discover it.");
+      setApiNotice("");
+    } catch {
+      setApiNotice("Program could not be published. Make sure every milestone has at least one activity.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function archiveTutorProgram(programId?: string | null) {
+    if (!programId) return;
+    setProgramMenuOpen(false);
+    setLoadingAction("archiveTutorProgram:" + programId);
+    try {
+      await apiPost(`/api/v1/education-plan/tutor/programs/${programId}/archive`, {}, authSession?.accessToken);
+      setPrograms((items) => items.filter((item) => item.id !== programId));
+      if (selectedProgramId === programId) setSelectedProgramId(null);
+      setProgramRefreshKey((value) => value + 1);
+      await refreshTutorSupply();
+      setProgramToast("Program archived.");
+      setApiNotice("");
+    } catch {
+      setApiNotice("Program could not be archived. Please check API deployment and login state.");
     } finally {
       setLoadingAction(null);
     }
@@ -649,6 +730,92 @@ export default function Index() {
     } finally {
       setClassHubLoading(false);
     }
+  }
+
+  async function refreshTutorSupply() {
+    try {
+      const response = await apiGet<{ data: TutorSupplyState }>("/api/v1/tutor/supply", authSession?.accessToken);
+      setTutorSupply(response.data);
+      setPrograms(response.data.programs);
+      if (!tutorBatchDraft.programId && response.data.programs[0]?.id) {
+        setTutorBatchDraft((draft) => ({ ...draft, programId: response.data.programs[0].id, course: draft.course || response.data.programs[0].title }));
+      }
+      setApiNotice("");
+    } catch {
+      setTutorSupply(null);
+      setApiNotice("Tutor supply could not be loaded from API.");
+    }
+  }
+
+  async function saveTutorBatch() {
+    const programId = tutorBatchDraft.programId || tutorSupply?.programs[0]?.id || "";
+    const payload = {
+      programId: programId || undefined,
+      title: tutorBatchDraft.title,
+      course: tutorBatchDraft.course || tutorSupply?.programs.find((program) => program.id === programId)?.title || "",
+      subject: tutorBatchDraft.subject,
+      grade: tutorBatchDraft.grade,
+      board: tutorBatchDraft.board,
+      mode: tutorBatchDraft.mode,
+      schedule: tutorBatchDraft.schedule,
+      classroomLocation: tutorBatchDraft.classroomLocation || null,
+      onlineLink: tutorBatchDraft.onlineLink || null,
+      startsAt: tutorBatchDraft.startsAt,
+      capacity: Number(tutorBatchDraft.capacity) || 1,
+      status: tutorBatchDraft.status,
+      feeType: tutorBatchDraft.feeType,
+      feeAmount: tutorBatchDraft.feeType === "paid" ? Number(tutorBatchDraft.feeAmount) || 0 : null
+    };
+    setLoadingAction("saveTutorBatch");
+    try {
+      if (tutorBatchDraft.id) {
+        await apiPut<{ data: TutorBatchSummary }>(`/api/v1/tutor/batches/${tutorBatchDraft.id}`, payload, authSession?.accessToken);
+        setApiNotice("Batch updated.");
+      } else {
+        await apiPost<{ data: TutorBatchSummary }>("/api/v1/tutor/batches", payload, authSession?.accessToken);
+        setApiNotice("Batch created.");
+      }
+      setTutorBatchDraft({ ...defaultTutorBatchDraft, programId, course: payload.course });
+      await refreshTutorSupply();
+    } catch {
+      setApiNotice("Batch could not be saved. Please check required fields and API deployment.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function archiveTutorBatch(batchId: string) {
+    setLoadingAction("archiveTutorBatch:" + batchId);
+    try {
+      await apiPost(`/api/v1/tutor/batches/${batchId}/archive`, {}, authSession?.accessToken);
+      setApiNotice("Batch archived.");
+      await refreshTutorSupply();
+    } catch {
+      setApiNotice("Batch could not be archived.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  function editTutorBatch(batch: TutorBatchSummary) {
+    setTutorBatchDraft({
+      id: batch.id,
+      programId: batch.programId ?? "",
+      title: batch.title,
+      course: batch.course,
+      subject: batch.subject,
+      grade: batch.grade,
+      board: batch.board,
+      mode: batch.mode,
+      schedule: batch.schedule,
+      classroomLocation: batch.classroomLocation ?? "",
+      onlineLink: batch.onlineVideoLink ?? "",
+      startsAt: batch.startsAt,
+      capacity: String(batch.capacity),
+      status: batch.status ?? "available",
+      feeType: batch.feeType ?? "free",
+      feeAmount: batch.feeAmount ? String(batch.feeAmount) : ""
+    });
   }
 
   async function refreshStudentBatchRequests() {
@@ -1345,12 +1512,12 @@ export default function Index() {
     if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestLoading={loadingAction} search={refreshTutorSearch} back={() => setScreen("home")} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
-    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} />;
+    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} refreshSupply={refreshTutorSupply} />;
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
-    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
+    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
     if (screen === "milestoneDetail" && selectedMilestone) {
       const selectedProgram = programs.find((program) => program.id === selectedProgramId);
       return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} editableActivities={role === "tutor" && !isPublishedProgram(selectedProgram)} onEditActivity={editTutorActivityFromMilestone} />;
@@ -2569,6 +2736,7 @@ function Sessions({
   setMenuOpen,
   openProgramPicker,
   archiveProgram,
+  publishProgram,
   tutorProgramDraft,
   setTutorProgramDraft,
   tutorProgramComposerOpen,
@@ -2591,7 +2759,8 @@ function Sessions({
   menuOpen: boolean;
   setMenuOpen: (value: boolean) => void;
   openProgramPicker: () => void;
-  archiveProgram: () => void;
+  archiveProgram: (programId?: string | null) => void;
+  publishProgram: (programId: string) => void;
   tutorProgramDraft: TutorProgramDraft;
   setTutorProgramDraft: (value: TutorProgramDraft | ((draft: TutorProgramDraft) => TutorProgramDraft)) => void;
   tutorProgramComposerOpen: boolean;
@@ -2627,7 +2796,7 @@ function Sessions({
                 <Text style={styles.programMenuText}>Add a program</Text>
               </Pressable>
             ) : null}
-            <Pressable style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]} onPress={archiveProgram}>
+            <Pressable style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]} onPress={() => archiveProgram(selectedProgram?.id)}>
               <Text style={styles.programMenuText}>Archive a program</Text>
             </Pressable>
           </View>
@@ -2656,6 +2825,8 @@ function Sessions({
           open={tutorProgramComposerOpen}
           setOpen={setTutorProgramComposerOpen}
           createProgram={createTutorProgram}
+          publishProgram={publishProgram}
+          archiveProgram={archiveProgram}
           loading={createTutorProgramLoading}
           editingProgramId={editingProgramId}
           setEditingProgramId={setEditingProgramId}
@@ -2747,6 +2918,8 @@ function TutorProgramAuthoring({
   open,
   setOpen,
   createProgram,
+  publishProgram,
+  archiveProgram,
   loading,
   editingProgramId,
   setEditingProgramId,
@@ -2761,6 +2934,8 @@ function TutorProgramAuthoring({
   open: boolean;
   setOpen: (value: boolean) => void;
   createProgram: () => void;
+  publishProgram: (programId: string) => void;
+  archiveProgram: (programId?: string | null) => void;
   loading: boolean;
   editingProgramId: string | null;
   setEditingProgramId: (value: string | null) => void;
@@ -2887,6 +3062,12 @@ function TutorProgramAuthoring({
           <View style={styles.row}>
             <Button role={role} label="Add new" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
           </View>
+          {selectedProgram ? (
+            <View style={styles.programLifecycleActions}>
+              {!isPublishedProgram(selectedProgram) ? <Button role={role} label="Publish program" onPress={() => publishProgram(selectedProgram.id)} loading={loadingAction === "publishTutorProgram:" + selectedProgram.id} /> : null}
+              <Button role={role} variant="secondary" label="Archive program" onPress={() => archiveProgram(selectedProgram.id)} loading={loadingAction === "archiveTutorProgram:" + selectedProgram.id} />
+            </View>
+          ) : null}
           {selectedProgram && !selectedProgramEditable ? <Muted>This program is published. Students can view it, but edits are locked.</Muted> : null}
         </View>
       ) : (
@@ -3213,8 +3394,40 @@ function FilterDropdown({ label, value, options, onSelect }: { label: string; va
   );
 }
 
-function RoleHub({ role, classes, requests, loading, approveRequest, requestAction, actionLoading, back }: { role: Role; classes: BatchClass[]; requests: BatchRequestSummary[]; loading: boolean; approveRequest: (id: string) => void; requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void; actionLoading: string | null; back: () => void }) {
-  const title = role === "tutor" ? "Students" : role === "student" ? "Classes" : "Surveys";
+function RoleHub({
+  role,
+  classes,
+  requests,
+  loading,
+  approveRequest,
+  requestAction,
+  actionLoading,
+  back,
+  tutorSupply,
+  batchDraft,
+  setBatchDraft,
+  saveBatch,
+  editBatch,
+  archiveBatch,
+  refreshSupply
+}: {
+  role: Role;
+  classes: BatchClass[];
+  requests: BatchRequestSummary[];
+  loading: boolean;
+  approveRequest: (id: string) => void;
+  requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void;
+  actionLoading: string | null;
+  back: () => void;
+  tutorSupply: TutorSupplyState | null;
+  batchDraft: TutorBatchDraft;
+  setBatchDraft: (value: TutorBatchDraft | ((draft: TutorBatchDraft) => TutorBatchDraft)) => void;
+  saveBatch: () => void;
+  editBatch: (batch: TutorBatchSummary) => void;
+  archiveBatch: (batchId: string) => void;
+  refreshSupply: () => void;
+}) {
+  const title = role === "tutor" ? "Tutor supply" : role === "student" ? "Classes" : "Surveys";
   if (role === "student") {
     return (
       <>
@@ -3230,6 +3443,18 @@ function RoleHub({ role, classes, requests, loading, approveRequest, requestActi
       <>
         <TopBar title={title} left="‹" onLeft={back} />
         {loading ? <ActivityIndicator /> : null}
+        <TutorSupplyPanel
+          role={role}
+          supply={tutorSupply}
+          batchDraft={batchDraft}
+          setBatchDraft={setBatchDraft}
+          saveBatch={saveBatch}
+          editBatch={editBatch}
+          archiveBatch={archiveBatch}
+          actionLoading={actionLoading}
+          refreshSupply={refreshSupply}
+        />
+        <SectionTitle>Batch requests</SectionTitle>
         {requests.map((request) => <BatchRequestCard key={request.id} role={role} request={request} approveRequest={approveRequest} requestAction={requestAction} actionLoading={actionLoading} />)}
         {!loading && !requests.length ? <Card role={role}><CardTitle>No student requests yet</CardTitle><Muted>Batch requests from students will appear here for approval.</Muted></Card> : null}
       </>
@@ -3239,6 +3464,151 @@ function RoleHub({ role, classes, requests, loading, approveRequest, requestActi
     <>
       <TopBar title={title} left="‹" onLeft={back} />
       <Card role={role}><CardTitle>No surveys yet</CardTitle><Muted>Weekly progress surveys will appear here.</Muted></Card>
+    </>
+  );
+}
+
+function TutorSupplyPanel({
+  role,
+  supply,
+  batchDraft,
+  setBatchDraft,
+  saveBatch,
+  editBatch,
+  archiveBatch,
+  actionLoading,
+  refreshSupply
+}: {
+  role: Role;
+  supply: TutorSupplyState | null;
+  batchDraft: TutorBatchDraft;
+  setBatchDraft: (value: TutorBatchDraft | ((draft: TutorBatchDraft) => TutorBatchDraft)) => void;
+  saveBatch: () => void;
+  editBatch: (batch: TutorBatchSummary) => void;
+  archiveBatch: (batchId: string) => void;
+  actionLoading: string | null;
+  refreshSupply: () => void;
+}) {
+  const programs = supply?.programs ?? [];
+  const batches = supply?.batches ?? [];
+  const analytics = supply?.analytics;
+  const selectedProgram = programs.find((program) => program.id === batchDraft.programId);
+  const updateDraft = (patch: Partial<TutorBatchDraft>) => setBatchDraft((draft) => ({ ...draft, ...patch }));
+  return (
+    <>
+      <SectionTitle>Programs</SectionTitle>
+      <View style={styles.supplyStatsRow}>
+        <View style={styles.supplyStatCard}>
+          <Text style={styles.supplyStatValue}>{analytics?.programs.total ?? programs.length}</Text>
+          <Text style={styles.supplyStatLabel}>Programs</Text>
+        </View>
+        <View style={styles.supplyStatCard}>
+          <Text style={styles.supplyStatValue}>{analytics?.batches.active ?? batches.filter((batch) => (batch.status ?? "available") !== "archived").length}</Text>
+          <Text style={styles.supplyStatLabel}>Active batches</Text>
+        </View>
+      </View>
+      {analytics ? (
+        <View style={styles.supplyStatsRow}>
+          <View style={styles.supplyStatCard}>
+            <Text style={styles.supplyStatValue}>{analytics.requests.pending}</Text>
+            <Text style={styles.supplyStatLabel}>Pending requests</Text>
+          </View>
+          <View style={styles.supplyStatCard}>
+            <Text style={styles.supplyStatValue}>{analytics.enrollments.active}</Text>
+            <Text style={styles.supplyStatLabel}>Active enrollments</Text>
+          </View>
+        </View>
+      ) : null}
+      {!programs.length ? (
+        <Card role={role}><CardTitle>No programs yet</CardTitle><Muted>Create a draft program from Program, then attach batches here after it is ready for students.</Muted></Card>
+      ) : null}
+
+      <SectionTitle>Batch builder</SectionTitle>
+      <View style={styles.supplyBuilderCard}>
+        <FieldLabel>Program</FieldLabel>
+        <DropdownField
+          value={selectedProgram?.title ?? "Select program"}
+          options={programs.map((program) => program.title)}
+          onSelect={(title) => {
+            const program = programs.find((item) => item.title === title);
+            updateDraft({ programId: program?.id ?? "", course: program?.title ?? batchDraft.course });
+          }}
+        />
+        <FieldLabel>Batch title</FieldLabel>
+        <Input value={batchDraft.title} onChangeText={(value) => updateDraft({ title: value })} placeholder="Weekend foundation batch" />
+        <View style={styles.twoColumn}>
+          <View style={styles.fieldColumn}>
+            <FieldLabel>Subject</FieldLabel>
+            <Input value={batchDraft.subject} onChangeText={(value) => updateDraft({ subject: value })} placeholder="Mathematics" />
+          </View>
+          <View style={styles.fieldColumn}>
+            <FieldLabel>Capacity</FieldLabel>
+            <Input value={batchDraft.capacity} onChangeText={(value) => updateDraft({ capacity: value.replace(/\D/g, "") })} keyboardType="number-pad" placeholder="20" />
+          </View>
+        </View>
+        <View style={styles.twoColumn}>
+          <View style={styles.fieldColumn}>
+            <FieldLabel>Grade</FieldLabel>
+            <Input value={batchDraft.grade} onChangeText={(value) => updateDraft({ grade: value })} placeholder="Class 10" />
+          </View>
+          <View style={styles.fieldColumn}>
+            <FieldLabel>Board</FieldLabel>
+            <Input value={batchDraft.board} onChangeText={(value) => updateDraft({ board: value })} placeholder="CBSE" />
+          </View>
+        </View>
+        <FieldLabel>Schedule</FieldLabel>
+        <Input value={batchDraft.schedule} onChangeText={(value) => updateDraft({ schedule: value })} placeholder="Sat-Sun • 6:00 pm" />
+        <FieldLabel>Start date/time</FieldLabel>
+        <Input value={batchDraft.startsAt} onChangeText={(value) => updateDraft({ startsAt: value })} placeholder="2026-08-01T13:30:00.000Z" />
+        <View style={styles.twoColumn}>
+          <View style={styles.fieldColumn}>
+            <FieldLabel>Mode</FieldLabel>
+            <DropdownField value={batchDraft.mode} options={["online", "offline", "hybrid"]} onSelect={(value) => updateDraft({ mode: value })} />
+          </View>
+          <View style={styles.fieldColumn}>
+            <FieldLabel>Status</FieldLabel>
+            <DropdownField value={batchDraft.status} options={["available", "filling_fast", "booked"]} onSelect={(value) => updateDraft({ status: value })} />
+          </View>
+        </View>
+        <FieldLabel>Classroom location</FieldLabel>
+        <Input value={batchDraft.classroomLocation} onChangeText={(value) => updateDraft({ classroomLocation: value })} placeholder="Koramangala centre or home classroom" />
+        <FieldLabel>Online link</FieldLabel>
+        <Input value={batchDraft.onlineLink} onChangeText={(value) => updateDraft({ onlineLink: value })} placeholder="https://meet.google.com/..." />
+        <View style={styles.twoColumn}>
+          <View style={styles.fieldColumn}>
+            <FieldLabel>Fee type</FieldLabel>
+            <DropdownField value={batchDraft.feeType} options={["free", "paid"]} onSelect={(value) => updateDraft({ feeType: value })} />
+          </View>
+          <View style={styles.fieldColumn}>
+            <FieldLabel>Fee amount</FieldLabel>
+            <Input value={batchDraft.feeAmount} onChangeText={(value) => updateDraft({ feeAmount: value.replace(/\D/g, "") })} keyboardType="number-pad" placeholder="0" />
+          </View>
+        </View>
+        <View style={styles.supplyActionRow}>
+          <Button role={role} label={batchDraft.id ? "Update batch" : "Create batch"} onPress={saveBatch} loading={actionLoading === "saveTutorBatch"} disabled={!batchDraft.title.trim() || !batchDraft.schedule.trim() || !programs.length} />
+          <Button role={role} variant="secondary" label="New batch" onPress={() => setBatchDraft({ ...defaultTutorBatchDraft, programId: programs[0]?.id ?? "", course: programs[0]?.title ?? "" })} />
+        </View>
+      </View>
+
+      <SectionTitle>Batches</SectionTitle>
+      {batches.map((batch) => (
+        <View key={batch.id} style={styles.supplyBatchCard}>
+          <View style={styles.rowBetween}>
+            <View style={styles.flex}>
+              <Text style={styles.batchTitle}>{batch.title}</Text>
+              <Text style={styles.batchMeta}>{batch.course} • {batch.mode} • {batch.schedule}</Text>
+              <Text style={styles.batchMeta}>{capitalize(batch.status ?? "available")} • {batch.fillPercent ?? 0}% filled • {batch.enrolledCount}/{batch.capacity}</Text>
+              <Text style={styles.batchMeta}>{batch.feeType === "paid" ? `₹${batch.feeAmount ?? 0}` : "Free"} • Starts {formatReminderDateTime(batch.startsAt)}</Text>
+            </View>
+          </View>
+          <View style={styles.supplyActionRow}>
+            <Button role={role} variant="secondary" label="Edit" onPress={() => editBatch(batch)} />
+            <Button role={role} variant="secondary" label="Archive" onPress={() => archiveBatch(batch.id)} loading={actionLoading === "archiveTutorBatch:" + batch.id} />
+          </View>
+        </View>
+      ))}
+      {!batches.length ? <Card role={role}><CardTitle>No batches yet</CardTitle><Muted>Create a batch so students can request admission from tutor discovery.</Muted></Card> : null}
+      <Button role={role} variant="secondary" label="Refresh supply" onPress={refreshSupply} />
     </>
   );
 }
@@ -4294,6 +4664,7 @@ const styles = StyleSheet.create({
   selectedProgramPanel: { borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, padding: 12 },
   programStatusLine: { alignItems: "flex-start", marginTop: -2 },
   programStatusPill: { backgroundColor: "rgba(255,255,255,0.82)", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, fontSize: 12, fontWeight: "900", overflow: "hidden", paddingHorizontal: 12, paddingVertical: 7 },
+  programLifecycleActions: { gap: 8, marginTop: 10 },
   tutorProgramPanel: { gap: 14 },
   tutorProgramSummary: { borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, flexDirection: "row", gap: 12, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
   tutorProgramEyebrow: { color: "#64748B", fontSize: 12, fontWeight: "900", letterSpacing: 0 },
@@ -4688,6 +5059,13 @@ const styles = StyleSheet.create({
   batchTitle: { color: "#111827", fontSize: 15, fontWeight: "900", lineHeight: 20 },
   batchMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17 },
   requestActionGrid: { gap: 8, marginTop: 10 },
+  supplyStatsRow: { flexDirection: "row", gap: 10 },
+  supplyStatCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flex: 1, padding: 14 },
+  supplyStatValue: { color: "#202A35", fontSize: 26, fontWeight: "900", lineHeight: 31 },
+  supplyStatLabel: { color: "#536A86", fontSize: 12, fontWeight: "800", lineHeight: 17 },
+  supplyBuilderCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
+  supplyBatchCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 12, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
+  supplyActionRow: { gap: 8 },
   batchRequestCard: { alignItems: "stretch", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12 },
   accountInviteCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15 },
   activationCodeText: { color: "#202A35", fontSize: 30, fontWeight: "900", letterSpacing: 6, textAlign: "center" },

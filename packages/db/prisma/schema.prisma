@@ -281,6 +281,8 @@ model TutorProfile {
   gender          String
   location        String
   bio             String
+  verificationStatus String    @default("unverified")
+  profileStatus   String       @default("active")
   sourceTag       String       @default("app")
   profile         Profile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
   batches         TutorBatch[]
@@ -294,6 +296,7 @@ model TutorProfile {
 model TutorBatch {
   id                String            @id @default(cuid())
   tutorProfileId    String
+  programId         String?
   title             String
   course            String
   subject           String
@@ -305,14 +308,20 @@ model TutorBatch {
   onlineLink        String?
   startsAt          DateTime
   capacity          Int               @default(12)
+  status            String            @default("available")
+  feeType           String            @default("free")
+  feeAmount         Int?
   sourceTag         String            @default("app")
   tutorProfile      TutorProfile      @relation(fields: [tutorProfileId], references: [id], onDelete: Cascade)
+  program           Program?          @relation(fields: [programId], references: [id], onDelete: SetNull)
   requests          BatchRequest[]
   enrollments       BatchEnrollment[]
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
   @@index([subject, grade, board, mode])
+  @@index([tutorProfileId, status])
+  @@index([programId, status])
   @@index([startsAt])
 }
 
@@ -432,6 +441,7 @@ model Program {
   feeAmount   Int?
   sourceTag   String             @default("app")
   creatorProfile Profile?         @relation("ProgramCreator", fields: [creatorProfileId], references: [id], onDelete: SetNull)
+  batches     TutorBatch[]
   milestones  ProgramMilestone[]
   progress    ProgramProgress[]
   studentSelections StudentProgramSelection[]

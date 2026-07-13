@@ -582,6 +582,161 @@ app.put("/api/v1/identity/tutor-profile", async (req, res) => {
   res.json({ data: tutorProfile });
 });
 
+app.get("/api/v1/tutor/supply", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const tutorProfile = await prisma.tutorProfile.findUnique({
+    where: { profileId: profile.id },
+    include: {
+      batches: {
+        orderBy: { startsAt: "asc" },
+        include: { requests: true, enrollments: true, program: true }
+      }
+    }
+  });
+  const programs = await prisma.program.findMany({
+    where: { creatorProfileId: profile.id, role: "tutor" },
+    orderBy: [{ status: "asc" }, { title: "asc" }],
+    include: { milestones: { include: { activities: true } } }
+  });
+  const analytics = tutorProfile ? await buildTutorSupplyAnalytics(profile.id, tutorProfile.id) : emptyTutorSupplyAnalytics();
+  res.json({
+    data: {
+      profile: toIdentityProfile({ ...profile, tutorProfile, studentParentLinks: [], parentStudentLinks: [] }),
+      programs: programs.map(tutorProgramSummary),
+      batches: tutorProfile?.batches.map(toBatchSummary) ?? [],
+      analytics
+    }
+  });
+});
+
+app.get("/api/v1/tutor/supply/analytics", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+  if (!tutorProfile) {
+    res.json({ data: emptyTutorSupplyAnalytics() });
+    return;
+  }
+  res.json({ data: await buildTutorSupplyAnalytics(profile.id, tutorProfile.id) });
+});
+
+app.get("/api/v1/tutor/batches", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+  if (!tutorProfile) {
+    res.json({ data: [] });
+    return;
+  }
+  const batches = await prisma.tutorBatch.findMany({
+    where: { tutorProfileId: tutorProfile.id, status: { not: "archived" } },
+    orderBy: { startsAt: "asc" },
+    include: { requests: true, enrollments: true, program: true }
+  });
+  res.json({ data: batches.map(toBatchSummary) });
+});
+
+app.post("/api/v1/tutor/batches", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+  if (!tutorProfile) {
+    res.status(400).json({ error: "Tutor profile is required before creating batches" });
+    return;
+  }
+  const programId = stringOrNull(req.body.programId);
+  if (programId && !(await tutorOwnsProgram(profile.id, programId))) {
+    res.status(404).json({ error: "Program not found" });
+    return;
+  }
+  const data = normalizeTutorBatchInput(req.body, tutorProfile.id, programId);
+  if (!data.title || !data.course || !data.subject || !data.grade || !data.board || !data.schedule) {
+    res.status(400).json({ error: "Batch title, course, subject, grade, board, and schedule are required" });
+    return;
+  }
+  const batch = await prisma.tutorBatch.create({
+    data,
+    include: { requests: true, enrollments: true, program: true }
+  });
+  await logAudit({
+    userId: profile.userId,
+    profileId: profile.id,
+    role: "tutor",
+    action: "tutor.batch.create",
+    entityType: "TutorBatch",
+    entityId: batch.id,
+    metadata: { programId }
+  });
+  res.status(201).json({ data: toBatchSummary(batch) });
+});
+
+app.put("/api/v1/tutor/batches/:id", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+  if (!tutorProfile) {
+    res.status(400).json({ error: "Tutor profile is required before updating batches" });
+    return;
+  }
+  const existing = await prisma.tutorBatch.findFirst({ where: { id: req.params.id, tutorProfileId: tutorProfile.id } });
+  if (!existing) {
+    res.status(404).json({ error: "Batch not found" });
+    return;
+  }
+  const programId = Object.prototype.hasOwnProperty.call(req.body, "programId") ? stringOrNull(req.body.programId) : existing.programId;
+  if (programId && !(await tutorOwnsProgram(profile.id, programId))) {
+    res.status(404).json({ error: "Program not found" });
+    return;
+  }
+  const data = normalizeTutorBatchInput(req.body, tutorProfile.id, programId, existing);
+  if (!data.title || !data.course || !data.subject || !data.grade || !data.board || !data.schedule) {
+    res.status(400).json({ error: "Batch title, course, subject, grade, board, and schedule are required" });
+    return;
+  }
+  const batch = await prisma.tutorBatch.update({
+    where: { id: existing.id },
+    data,
+    include: { requests: true, enrollments: true, program: true }
+  });
+  await logAudit({
+    userId: profile.userId,
+    profileId: profile.id,
+    role: "tutor",
+    action: "tutor.batch.update",
+    entityType: "TutorBatch",
+    entityId: batch.id
+  });
+  res.json({ data: toBatchSummary(batch) });
+});
+
+app.post("/api/v1/tutor/batches/:id/archive", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+  if (!tutorProfile) {
+    res.status(400).json({ error: "Tutor profile is required before archiving batches" });
+    return;
+  }
+  const batch = await prisma.tutorBatch.updateMany({
+    where: { id: req.params.id, tutorProfileId: tutorProfile.id },
+    data: { status: "archived" }
+  });
+  if (!batch.count) {
+    res.status(404).json({ error: "Batch not found" });
+    return;
+  }
+  await logAudit({
+    userId: profile.userId,
+    profileId: profile.id,
+    role: "tutor",
+    action: "tutor.batch.archive",
+    entityType: "TutorBatch",
+    entityId: req.params.id
+  });
+  res.status(204).send();
+});
+
 app.delete("/api/v1/admin/users/by-phone", async (req, res) => {
   if (!isAdminRequest(req)) {
     res.status(401).json({ error: "Unauthorized" });
@@ -1452,8 +1607,9 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
   if (!tutor) return;
 
   const input = normalizeTutorProgramInput(req.body);
-  if (!input.title || !input.description || !input.milestones?.length) {
-    res.status(400).json({ error: "Program title, description, milestone, and resources are required" });
+  const publishing = input.visibility !== "private";
+  if (!input.title || !input.description || (publishing && !input.milestones?.length)) {
+    res.status(400).json({ error: publishing ? "Published programs require title, description, milestones, and resources" : "Program title and description are required" });
     return;
   }
 
@@ -1471,61 +1627,7 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
         sourceTag: "app"
       }
     });
-    const orderedMilestones = [...(input.milestones ?? [])].sort((a, b) => a.sequence - b.sequence);
-    for (const milestoneInput of orderedMilestones) {
-      const milestone = await tx.programMilestone.create({
-        data: {
-          programId: createdProgram.id,
-          sequence: milestoneInput.sequence,
-          title: milestoneInput.title,
-          sourceTag: "app"
-        }
-      });
-      for (const [index, resourceInput] of milestoneInput.resources.entries()) {
-        const resource = await tx.resource.create({
-          data: {
-            creatorProfileId: tutor.id,
-            type: resourceInput.type,
-            title: resourceInput.title,
-            description: resourceInput.description,
-            body: resourceInput.body || resourceInput.description,
-            sourceUrl: resourceInput.mediaUrl || null,
-            storageType: "db",
-            contentJson: resourceInput.type === "quiz" ? {
-              questions: (resourceInput.quizQuestions ?? []).map((question, questionIndex) => ({
-                id: `${createdProgram.id}-m${milestoneInput.sequence}-q${questionIndex + 1}`,
-                prompt: question.prompt,
-                options: question.options,
-                answerIndex: question.answerIndex,
-                learnMore: question.learnMore ?? "Review the linked notes and try the concept again."
-              }))
-            } : undefined,
-            sourceTag: "app"
-          }
-        });
-        if (resourceInput.type === "flashcard") {
-          const cards = (resourceInput.flashcards?.length ? resourceInput.flashcards : defaultTutorFlashcards(resourceInput.title)).map((card, cardIndex) => ({
-            resourceId: resource.id,
-            sequence: cardIndex + 1,
-            question: card.question,
-            answer: card.answer,
-            sourceTag: "app"
-          }));
-          await tx.flashcard.createMany({ data: cards });
-        }
-        await tx.milestoneActivity.create({
-          data: {
-            milestoneId: milestone.id,
-            resourceId: resource.id,
-            sequence: index + 1,
-            type: resourceInput.type,
-            title: resourceInput.title,
-            description: resourceInput.description,
-            sourceTag: "app"
-          }
-        });
-      }
-    }
+    await writeTutorProgramTree(tx, createdProgram.id, tutor.id, input);
 
     return tx.program.findUnique({
       where: { id: createdProgram.id },
@@ -1533,7 +1635,15 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
     });
   });
 
-  res.status(201).json({ data: program });
+  await logAudit({
+    userId: tutor.userId,
+    profileId: tutor.id,
+    role: "tutor",
+    action: publishing ? "tutor.program.publish" : "tutor.program.create_draft",
+    entityType: "Program",
+    entityId: program?.id
+  });
+  res.status(201).json({ data: tutorProgramSummary(program) });
 });
 
 
@@ -1682,6 +1792,10 @@ app.put("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
     res.status(404).json({ error: "Program not found" });
     return;
   }
+  if (existing.status === "published") {
+    res.status(409).json({ error: "Published programs are view-only. Archive or create a new draft version to change content." });
+    return;
+  }
   const program = await prisma.$transaction(async (tx) => {
     const milestoneIds = existing.milestones.map((milestone) => milestone.id);
     const activities = existing.milestones.flatMap((milestone) => milestone.activities);
@@ -1710,7 +1824,69 @@ app.put("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
       include: { milestones: { include: { activities: true }, orderBy: { sequence: "asc" } } }
     });
   });
+  await logAudit({
+    userId: tutor.userId,
+    profileId: tutor.id,
+    role: "tutor",
+    action: input.visibility === "private" ? "tutor.program.update_draft" : "tutor.program.publish",
+    entityType: "Program",
+    entityId: existing.id
+  });
   res.json({ data: tutorProgramSummary(program) });
+});
+
+app.post("/api/v1/education-plan/tutor/programs/:id/publish", async (req, res) => {
+  const tutor = await requireProfile(req, res, "tutor");
+  if (!tutor) return;
+  const program = await prisma.program.findFirst({
+    where: { id: req.params.id, creatorProfileId: tutor.id, role: "tutor" },
+    include: { milestones: { include: { activities: true } } }
+  });
+  if (!program) {
+    res.status(404).json({ error: "Program not found" });
+    return;
+  }
+  const hasContent = program.milestones.length > 0 && program.milestones.every((milestone) => milestone.activities.length > 0);
+  if (!hasContent) {
+    res.status(400).json({ error: "Program needs at least one activity in each milestone before publishing" });
+    return;
+  }
+  const updated = await prisma.program.update({
+    where: { id: program.id },
+    data: { status: "published", visibility: "published" },
+    include: { milestones: { include: { activities: true } } }
+  });
+  await logAudit({
+    userId: tutor.userId,
+    profileId: tutor.id,
+    role: "tutor",
+    action: "tutor.program.publish",
+    entityType: "Program",
+    entityId: program.id
+  });
+  res.json({ data: tutorProgramSummary(updated) });
+});
+
+app.post("/api/v1/education-plan/tutor/programs/:id/archive", async (req, res) => {
+  const tutor = await requireProfile(req, res, "tutor");
+  if (!tutor) return;
+  const updated = await prisma.program.updateMany({
+    where: { id: req.params.id, creatorProfileId: tutor.id, role: "tutor" },
+    data: { status: "archived", visibility: "private" }
+  });
+  if (!updated.count) {
+    res.status(404).json({ error: "Program not found" });
+    return;
+  }
+  await logAudit({
+    userId: tutor.userId,
+    profileId: tutor.id,
+    role: "tutor",
+    action: "tutor.program.archive",
+    entityType: "Program",
+    entityId: req.params.id
+  });
+  res.status(204).send();
 });
 
 app.get("/api/v1/programs/current", async (req, res) => {
@@ -2011,6 +2187,75 @@ function csvString(value: unknown) {
   return String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean).join(", ");
 }
 
+async function tutorOwnsProgram(profileId: string, programId: string) {
+  const count = await prisma.program.count({
+    where: { id: programId, creatorProfileId: profileId, role: "tutor", status: { not: "archived" } }
+  });
+  return count > 0;
+}
+
+function emptyTutorSupplyAnalytics() {
+  return {
+    programs: { total: 0, draft: 0, published: 0, archived: 0 },
+    batches: { total: 0, active: 0, available: 0, fillingFast: 0, booked: 0, archived: 0 },
+    requests: { total: 0, pending: 0, approved: 0, rejected: 0, deferred: 0, suggested: 0 },
+    enrollments: { active: 0 }
+  };
+}
+
+async function buildTutorSupplyAnalytics(profileId: string, tutorProfileId: string) {
+  const [programs, batches, requests, activeEnrollments] = await Promise.all([
+    prisma.program.findMany({ where: { creatorProfileId: profileId, role: "tutor" }, select: { status: true, visibility: true } }),
+    prisma.tutorBatch.findMany({ where: { tutorProfileId }, select: { status: true } }),
+    prisma.batchRequest.findMany({ where: { batch: { tutorProfileId } }, select: { status: true } }),
+    prisma.batchEnrollment.count({ where: { batch: { tutorProfileId }, status: "active" } })
+  ]);
+  const analytics = emptyTutorSupplyAnalytics();
+  analytics.programs.total = programs.length;
+  analytics.programs.published = programs.filter((program) => program.status === "published" || program.visibility === "published").length;
+  analytics.programs.archived = programs.filter((program) => program.status === "archived").length;
+  analytics.programs.draft = programs.filter((program) => program.status !== "published" && program.status !== "archived" && program.visibility !== "published").length;
+  analytics.batches.total = batches.length;
+  analytics.batches.archived = batches.filter((batch) => batch.status === "archived").length;
+  analytics.batches.active = batches.length - analytics.batches.archived;
+  analytics.batches.available = batches.filter((batch) => !batch.status || batch.status === "available").length;
+  analytics.batches.fillingFast = batches.filter((batch) => batch.status === "filling_fast").length;
+  analytics.batches.booked = batches.filter((batch) => batch.status === "booked").length;
+  analytics.requests.total = requests.length;
+  analytics.requests.pending = requests.filter((request) => request.status === "pending").length;
+  analytics.requests.approved = requests.filter((request) => request.status === "approved").length;
+  analytics.requests.rejected = requests.filter((request) => request.status === "rejected").length;
+  analytics.requests.deferred = requests.filter((request) => request.status === "deferred").length;
+  analytics.requests.suggested = requests.filter((request) => request.status === "suggested").length;
+  analytics.enrollments.active = activeEnrollments;
+  return analytics;
+}
+
+function normalizeTutorBatchInput(input: any, tutorProfileId: string, programId?: string | null, existing?: any) {
+  const startsAt = parseDate(input.startsAt) || existing?.startsAt || new Date();
+  const capacity = Number(input.capacity ?? existing?.capacity ?? 12) || 12;
+  const feeType = String(input.feeType ?? existing?.feeType ?? "free") === "paid" ? "paid" : "free";
+  return {
+    tutorProfileId,
+    programId: programId ?? null,
+    title: String(input.title ?? existing?.title ?? "").trim(),
+    course: String(input.course ?? existing?.course ?? "").trim(),
+    subject: String(input.subject ?? existing?.subject ?? "").trim(),
+    grade: String(input.grade ?? existing?.grade ?? "").trim(),
+    board: String(input.board ?? existing?.board ?? "").trim(),
+    mode: String(input.mode ?? existing?.mode ?? "online").trim(),
+    schedule: String(input.schedule ?? existing?.schedule ?? "").trim(),
+    classroomLocation: stringOrNull(input.classroomLocation) ?? existing?.classroomLocation ?? null,
+    onlineLink: stringOrNull(input.onlineLink ?? input.onlineVideoLink) ?? existing?.onlineLink ?? null,
+    startsAt,
+    capacity,
+    status: String(input.status ?? existing?.status ?? "available").trim(),
+    feeType,
+    feeAmount: feeType === "paid" ? Number(input.feeAmount ?? existing?.feeAmount ?? 0) || 0 : null,
+    sourceTag: "app"
+  };
+}
+
 function readCommunityReactionType(value: unknown): CommunityReactionType {
   const type = String(value ?? "upvote");
   if (type === "helpful" || type === "like") return type;
@@ -2238,9 +2483,12 @@ function toTutionDetail(batch: any, tutor: any) {
 function toBatchSummary(batch: any) {
   const enrolledCount = batch.enrollments?.length ?? 0;
   const fillPercent = batch.capacity ? Math.min(100, Math.round((enrolledCount / batch.capacity) * 100)) : 0;
-  const availabilityStatus = fillPercent >= 100 ? "booked" : fillPercent >= 70 ? "filling_fast" : "available";
+  const availabilityStatus = batch.status === "booked" || batch.status === "archived"
+    ? batch.status
+    : fillPercent >= 100 ? "booked" : fillPercent >= 70 ? "filling_fast" : batch.status ?? "available";
   return {
     id: batch.id,
+    programId: batch.programId ?? null,
     title: batch.title,
     course: batch.course,
     subject: batch.subject,
@@ -2251,6 +2499,9 @@ function toBatchSummary(batch: any) {
     classroomLocation: batch.classroomLocation,
     startsAt: batch.startsAt.toISOString(),
     capacity: batch.capacity,
+    status: batch.status ?? availabilityStatus,
+    feeType: batch.feeType ?? "free",
+    feeAmount: batch.feeAmount ?? null,
     enrolledCount,
     requestCount: batch.requests?.length ?? 0,
     fillPercent,
@@ -2519,7 +2770,9 @@ function toIdentityProfile(profile: any) {
       hourlyRate: profile.tutorProfile.hourlyRate,
       gender: profile.tutorProfile.gender,
       location: profile.tutorProfile.location,
-      bio: profile.tutorProfile.bio
+      bio: profile.tutorProfile.bio,
+      verificationStatus: profile.tutorProfile.verificationStatus,
+      profileStatus: profile.tutorProfile.profileStatus
     } : null,
     linkedParents: (profile.studentParentLinks ?? []).map((link: any) => ({
       id: link.id,
