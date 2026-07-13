@@ -197,6 +197,16 @@ Acceptance criteria:
 - Student home shows tutor/program recommendations from API.
 - Search uses DB-backed tutor supply.
 - Student can view tutor details and program/batch offerings.
+- Student can tap home marketplace cards and land on the relevant tutor detail.
+- Free tutor programs can be added to the student's active program list.
+- Paid tutor programs record purchase interest until payment/order service is built.
+- Batch CTAs reflect request/enrollment state for the signed-in student.
+
+Status:
+
+- Completed in code through `GET /api/v1/marketplace/recommendations`, DB-backed tutor discovery, tutor detail program/batch CTAs, free-program add, paid-program interest logging, and batch request state display.
+- No Neon migration was needed for Phase 4. The phase reuses tutor profile, program, batch, student program selection, batch request, batch enrollment, and audit log tables.
+- Next phase should turn batch request approval, suggested batches, paid order creation, and enrollment state into a stronger workflow.
 
 ### Phase 5: Enrollment Workflow
 
