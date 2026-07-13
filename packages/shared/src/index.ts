@@ -108,6 +108,17 @@ export interface ResourceAssetUrls {
   media?: string | null;
 }
 
+export interface ResourceAssetMetadata {
+  provider: string;
+  accessLevel: string;
+  version: string;
+  storageType: string;
+  assetSlug?: string | null;
+  entitled: boolean;
+  readonly: boolean;
+  urls: ResourceAssetUrls;
+}
+
 export interface Reminder {
   id: string;
   role: Role;

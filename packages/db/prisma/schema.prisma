@@ -383,6 +383,9 @@ model Resource {
   description      String
   body             String?
   assetSlug        String?            @unique
+  assetProvider    String             @default("repo")
+  accessLevel      String             @default("program")
+  assetVersion     String             @default("v1")
   storageType      String             @default("db")
   contentJson      Json?
   thumbnailPath    String?

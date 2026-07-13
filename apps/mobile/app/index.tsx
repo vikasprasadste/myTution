@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics, UserListItem, UserProfileDetails } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics, UserListItem, UserProfileDetails } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -113,6 +113,7 @@ type ResourceDetailPayload = SelectedActivity & {
     metadata?: string | null;
     media?: string | null;
   };
+  assetMetadata?: ResourceAssetMetadata;
 };
 type VttCue = { start: number; end: number; text: string };
 type JourneyActivity = SelectedActivity & { milestoneTitle: string; milestoneSequence: number; activitySequence: number; required: boolean; status: "pending" | "in_progress" | "complete" };
@@ -1031,7 +1032,7 @@ export default function Index() {
   function openResource(resource: SelectedActivity) {
     setSelectedResource(resource);
     setResourceDetail(null);
-    apiGet<{ data: ResourceDetailPayload }>(`/api/v1/resources/${resource.id}`, authSession?.accessToken)
+    apiGet<{ data: ResourceDetailPayload }>(`/api/v1/resources/${resource.id}?role=${role}`, authSession?.accessToken)
       .then((response) => {
         setResourceDetail({
           ...resource,
@@ -1067,7 +1068,7 @@ export default function Index() {
   async function startQuiz(resource: SelectedActivity) {
     setLoadingAction("startQuiz");
     try {
-      const response = await apiGet<{ data: QuizPayload }>(`/api/v1/resources/${resource.id}/quiz`, authSession?.accessToken);
+      const response = await apiGet<{ data: QuizPayload }>(`/api/v1/resources/${resource.id}/quiz?role=${role}`, authSession?.accessToken);
       if (!response.data?.questions?.length) throw new Error("Quiz has no questions");
       const payload = response.data;
       setQuizPayload(payload);

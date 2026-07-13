@@ -135,7 +135,21 @@ const defaultAssetPathsByType: Record<string, { thumbnailPath: string; bannerPat
   }
 };
 
-function assetUrlsFor(resource?: { type?: string | null; thumbnailPath?: string | null; bannerPath?: string | null; vttPath?: string | null; metadataPath?: string | null; contentJson?: unknown } | null) {
+type ResourceAssetShape = {
+  assetProvider?: string | null;
+  accessLevel?: string | null;
+  assetVersion?: string | null;
+  storageType?: string | null;
+  assetSlug?: string | null;
+  type?: string | null;
+  thumbnailPath?: string | null;
+  bannerPath?: string | null;
+  vttPath?: string | null;
+  metadataPath?: string | null;
+  contentJson?: unknown;
+};
+
+function assetUrlsFor(resource?: ResourceAssetShape | null) {
   if (!resource) {
     return { thumbnail: null, banner: null, vtt: null, metadata: null, media: null };
   }
@@ -149,10 +163,24 @@ function assetUrlsFor(resource?: { type?: string | null; thumbnailPath?: string 
   };
 }
 
-function withAssetUrls<T extends { type?: string | null; thumbnailPath?: string | null; bannerPath?: string | null; vttPath?: string | null; metadataPath?: string | null; contentJson?: unknown }>(resource: T) {
+function assetMetadataFor(resource: ResourceAssetShape, entitlement?: { entitled?: boolean; readonly?: boolean }) {
+  return {
+    provider: resource.assetProvider ?? "repo",
+    accessLevel: resource.accessLevel ?? "program",
+    version: resource.assetVersion ?? "v1",
+    storageType: resource.storageType ?? "db",
+    assetSlug: resource.assetSlug ?? null,
+    entitled: entitlement?.entitled ?? true,
+    readonly: entitlement?.readonly ?? false,
+    urls: assetUrlsFor(resource)
+  };
+}
+
+function withAssetUrls<T extends ResourceAssetShape>(resource: T, entitlement?: { entitled?: boolean; readonly?: boolean }) {
   return {
     ...resource,
-    assetUrls: assetUrlsFor(resource)
+    assetUrls: assetUrlsFor(resource),
+    assetMetadata: assetMetadataFor(resource, entitlement)
   };
 }
 
@@ -1903,32 +1931,58 @@ app.get("/api/v1/programs/current", async (req, res) => {
 app.get("/api/v1/resources/:id", async (req, res) => {
   const resource = await prisma.resource.findUnique({
     where: { id: req.params.id },
-    include: { flashcards: { orderBy: { sequence: "asc" } } }
+    include: {
+      flashcards: { orderBy: { sequence: "asc" } },
+      milestoneActivities: { include: { milestone: { include: { program: true } } } }
+    }
   });
   if (!resource) {
     res.status(404).json({ error: "Resource not found" });
     return;
   }
-  res.json({ data: withAssetUrls(withFlashcardFallback(resource)) });
+  const entitlement = await resolveResourceEntitlement(req, resource);
+  if (!entitlement.entitled) {
+    res.status(403).json({ error: "Resource access denied" });
+    return;
+  }
+  res.json({ data: withAssetUrls(withFlashcardFallback(resource), entitlement) });
 });
 
 app.get("/api/v1/ams/assets/:id", async (req, res) => {
   const resource = await prisma.resource.findUnique({
     where: { id: req.params.id },
-    include: { flashcards: { orderBy: { sequence: "asc" } } }
+    include: {
+      flashcards: { orderBy: { sequence: "asc" } },
+      milestoneActivities: { include: { milestone: { include: { program: true } } } }
+    }
   });
   if (!resource) {
     res.status(404).json({ error: "Asset not found" });
     return;
   }
-  res.json({ data: withAssetUrls(withFlashcardFallback(resource)) });
+  const entitlement = await resolveResourceEntitlement(req, resource);
+  if (!entitlement.entitled) {
+    res.status(403).json({ error: "Asset access denied" });
+    return;
+  }
+  res.json({ data: withAssetUrls(withFlashcardFallback(resource), entitlement) });
 });
 
 app.get("/api/v1/resources/:id/quiz", async (req, res) => {
-  const resource = await prisma.resource.findUnique({ where: { id: req.params.id } });
+  const resource = await prisma.resource.findUnique({
+    where: { id: req.params.id },
+    include: { milestoneActivities: { include: { milestone: { include: { program: true } } } } }
+  });
   if (resource && resource.type !== "quiz") {
     res.status(400).json({ error: "Resource is not a quiz" });
     return;
+  }
+  if (resource) {
+    const entitlement = await resolveResourceEntitlement(req, resource);
+    if (!entitlement.entitled) {
+      res.status(403).json({ error: "Quiz access denied" });
+      return;
+    }
   }
   const contentJson = resource?.contentJson as { questions?: QuizQuestion[] } | null | undefined;
   const resourceQuestions = contentJson && Array.isArray(contentJson.questions)
@@ -2229,6 +2283,43 @@ async function buildTutorSupplyAnalytics(profileId: string, tutorProfileId: stri
   analytics.requests.suggested = requests.filter((request) => request.status === "suggested").length;
   analytics.enrollments.active = activeEnrollments;
   return analytics;
+}
+
+async function resolveResourceEntitlement(req: express.Request, resource: any) {
+  const role = readRole(req.query.role);
+  const userId = await readUserId(req);
+  const publicAccess = resource.accessLevel === "public";
+  if (!userId) return { entitled: publicAccess, readonly: true, role, profile: null };
+  const profile = await findProfile(role, userId);
+  if (!profile) return { entitled: publicAccess, readonly: true, role, profile: null };
+  if (publicAccess) return { entitled: true, readonly: role === "parent", role, profile };
+
+  const activities = resource.milestoneActivities ?? [];
+  const programs = activities.map((activity: any) => activity.milestone?.program).filter(Boolean);
+  const programIds: string[] = Array.from(new Set(programs.map((program: any) => program.id).filter((id: unknown): id is string => typeof id === "string" && id.length > 0)));
+
+  if (role === "tutor") {
+    const ownsResource = resource.creatorProfileId === profile.id;
+    const ownsProgram = programs.some((program: any) => program.creatorProfileId === profile.id);
+    return { entitled: ownsResource || ownsProgram, readonly: programs.some((program: any) => program.status === "published"), role, profile };
+  }
+
+  if (role === "student") {
+    const selectedCount = programIds.length ? await prisma.studentProgramSelection.count({
+      where: { profileId: profile.id, programId: { in: programIds }, status: "active" }
+    }) : 0;
+    return { entitled: selectedCount > 0, readonly: false, role, profile };
+  }
+
+  const link = await prisma.parentStudentLink.findFirst({
+    where: { parentProfileId: profile.id, status: "active" },
+    orderBy: { createdAt: "asc" }
+  });
+  if (!link) return { entitled: false, readonly: true, role, profile };
+  const selectedCount = programIds.length ? await prisma.studentProgramSelection.count({
+    where: { profileId: link.studentProfileId, programId: { in: programIds }, status: "active" }
+  }) : 0;
+  return { entitled: selectedCount > 0, readonly: true, role, profile };
 }
 
 function normalizeTutorBatchInput(input: any, tutorProfileId: string, programId?: string | null, existing?: any) {
