@@ -100,6 +100,8 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+type AssetKind = "thumbnail" | "banner" | "vtt" | "metadata";
+
 function toAssetUrl(assetPath?: string | null) {
   if (!assetPath) return null;
   return `/api/v1/ams/files/${assetPath.replace(/^services\/api\/assets\//, "")}`;
@@ -136,6 +138,7 @@ const defaultAssetPathsByType: Record<string, { thumbnailPath: string; bannerPat
 };
 
 type ResourceAssetShape = {
+  id?: string | null;
   assetProvider?: string | null;
   accessLevel?: string | null;
   assetVersion?: string | null;
@@ -149,21 +152,40 @@ type ResourceAssetShape = {
   contentJson?: unknown;
 };
 
-function assetUrlsFor(resource?: ResourceAssetShape | null) {
+function assetPathForKind(resource: ResourceAssetShape | null | undefined, kind: AssetKind) {
+  if (!resource) return null;
+  const defaults = resource.type ? defaultAssetPathsByType[resource.type] : undefined;
+  if (kind === "thumbnail") return resource.thumbnailPath ?? defaults?.thumbnailPath ?? null;
+  if (kind === "banner") return resource.bannerPath ?? defaults?.bannerPath ?? null;
+  if (kind === "vtt") return resource.vttPath ?? defaults?.vttPath ?? null;
+  return resource.metadataPath ?? defaults?.metadataPath ?? null;
+}
+
+function toPrivateAssetUrl(resource: ResourceAssetShape, kind: AssetKind, options?: { private?: boolean; role?: Role; accessToken?: string | null }) {
+  const assetPath = assetPathForKind(resource, kind);
+  if (!assetPath) return null;
+  if (!options?.private || !("id" in resource) || typeof resource.id !== "string") return toAssetUrl(assetPath);
+  const params = new URLSearchParams();
+  if (options.role) params.set("role", options.role);
+  if (options.accessToken) params.set("accessToken", options.accessToken);
+  const query = params.toString();
+  return `/api/v1/ams/assets/${resource.id}/file/${kind}${query ? `?${query}` : ""}`;
+}
+
+function assetUrlsFor(resource?: ResourceAssetShape | null, options?: { private?: boolean; role?: Role; accessToken?: string | null }) {
   if (!resource) {
     return { thumbnail: null, banner: null, vtt: null, metadata: null, media: null };
   }
-  const defaults = resource.type ? defaultAssetPathsByType[resource.type] : undefined;
   return {
-    thumbnail: toAssetUrl(resource.thumbnailPath ?? defaults?.thumbnailPath),
-    banner: toAssetUrl(resource.bannerPath ?? defaults?.bannerPath),
-    vtt: toAssetUrl(resource.vttPath ?? defaults?.vttPath),
-    metadata: toAssetUrl(resource.metadataPath ?? defaults?.metadataPath),
+    thumbnail: toPrivateAssetUrl(resource, "thumbnail", options),
+    banner: toPrivateAssetUrl(resource, "banner", options),
+    vtt: toPrivateAssetUrl(resource, "vtt", options),
+    metadata: toPrivateAssetUrl(resource, "metadata", options),
     media: readMediaUrl(resource.contentJson)
   };
 }
 
-function assetMetadataFor(resource: ResourceAssetShape, entitlement?: { entitled?: boolean; readonly?: boolean }) {
+function assetMetadataFor(resource: ResourceAssetShape, entitlement?: { entitled?: boolean; readonly?: boolean; role?: Role; accessToken?: string | null }) {
   return {
     provider: resource.assetProvider ?? "repo",
     accessLevel: resource.accessLevel ?? "program",
@@ -172,14 +194,14 @@ function assetMetadataFor(resource: ResourceAssetShape, entitlement?: { entitled
     assetSlug: resource.assetSlug ?? null,
     entitled: entitlement?.entitled ?? true,
     readonly: entitlement?.readonly ?? false,
-    urls: assetUrlsFor(resource)
+    urls: assetUrlsFor(resource, { private: true, role: entitlement?.role, accessToken: entitlement?.accessToken })
   };
 }
 
-function withAssetUrls<T extends ResourceAssetShape>(resource: T, entitlement?: { entitled?: boolean; readonly?: boolean }) {
+function withAssetUrls<T extends ResourceAssetShape>(resource: T, entitlement?: { entitled?: boolean; readonly?: boolean; role?: Role; accessToken?: string | null }) {
   return {
     ...resource,
-    assetUrls: assetUrlsFor(resource),
+    assetUrls: assetUrlsFor(resource, { private: true, role: entitlement?.role, accessToken: entitlement?.accessToken }),
     assetMetadata: assetMetadataFor(resource, entitlement)
   };
 }
@@ -1945,7 +1967,7 @@ app.get("/api/v1/resources/:id", async (req, res) => {
     res.status(403).json({ error: "Resource access denied" });
     return;
   }
-  res.json({ data: withAssetUrls(withFlashcardFallback(resource), entitlement) });
+  res.json({ data: withAssetUrls(withFlashcardFallback(resource), { ...entitlement, accessToken: readRequestAccessToken(req) }) });
 });
 
 app.get("/api/v1/ams/assets/:id", async (req, res) => {
@@ -1965,7 +1987,40 @@ app.get("/api/v1/ams/assets/:id", async (req, res) => {
     res.status(403).json({ error: "Asset access denied" });
     return;
   }
-  res.json({ data: withAssetUrls(withFlashcardFallback(resource), entitlement) });
+  res.json({ data: withAssetUrls(withFlashcardFallback(resource), { ...entitlement, accessToken: readRequestAccessToken(req) }) });
+});
+
+app.get("/api/v1/ams/assets/:id/file/:kind", async (req, res) => {
+  const kind = String(req.params.kind) as AssetKind;
+  if (!["thumbnail", "banner", "vtt", "metadata"].includes(kind)) {
+    res.status(400).json({ error: "Unsupported asset kind" });
+    return;
+  }
+  const resource = await prisma.resource.findUnique({
+    where: { id: req.params.id },
+    include: { milestoneActivities: { include: { milestone: { include: { program: true } } } } }
+  });
+  if (!resource) {
+    res.status(404).json({ error: "Asset not found" });
+    return;
+  }
+  const entitlement = await resolveResourceEntitlement(req, resource);
+  if (!entitlement.entitled) {
+    res.status(403).json({ error: "Asset access denied" });
+    return;
+  }
+  const assetPath = assetPathForKind(resource, kind);
+  if (!assetPath) {
+    res.status(404).json({ error: "Asset file not configured" });
+    return;
+  }
+  const relativePath = assetPath.replace(/^services\/api\/assets\//, "");
+  const fullPath = path.resolve(assetsRoot, relativePath);
+  if (!fullPath.startsWith(assetsRoot)) {
+    res.status(400).json({ error: "Invalid asset path" });
+    return;
+  }
+  res.sendFile(fullPath);
 });
 
 app.get("/api/v1/resources/:id/quiz", async (req, res) => {
@@ -2151,11 +2206,15 @@ async function createSession(userId: string) {
 }
 
 async function readUserId(req: express.Request) {
-  const accessToken = readBearer(req.headers.authorization);
+  const accessToken = readRequestAccessToken(req);
   if (!accessToken) return null;
   const session = await prisma.authSession.findUnique({ where: { accessToken } });
   if (!session || session.revokedAt || session.accessTokenExpiresAt < new Date()) return null;
   return session.userId;
+}
+
+function readRequestAccessToken(req: express.Request) {
+  return readBearer(req.headers.authorization) || stringOrNull(req.query.accessToken) || "";
 }
 
 async function requireUserId(req: express.Request, res: express.Response) {

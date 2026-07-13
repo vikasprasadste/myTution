@@ -6,7 +6,7 @@ Make education content reusable, ownership-aware, and access-controlled while ke
 
 ## Phase 3 Slice 1: Resource Asset Metadata and Entitlement
 
-Status: Implemented locally, not yet committed.
+Status: Pushed to `main`.
 
 This slice adds the first platform boundary around learning content:
 
@@ -71,6 +71,40 @@ Returns the resource plus:
 - `assetMetadata.entitled`
 - `assetMetadata.readonly`
 
+## Phase 3 Slice 2: Private Repo-Backed Asset URLs
+
+Status: Implemented locally, not yet committed.
+
+This slice keeps repo-backed storage for MVP, but routes authenticated asset access through AMS instead of exposing raw repo/static paths from resource detail APIs.
+
+### Private Asset File
+
+```http
+GET /api/v1/ams/assets/:id/file/:kind?role=student&accessToken=<accessToken>
+```
+
+Supported `kind` values:
+
+- `thumbnail`
+- `banner`
+- `vtt`
+- `metadata`
+
+Behavior:
+
+- Looks up the resource by `id`
+- Applies the same entitlement rules as resource detail
+- Resolves the requested repo-backed file safely under `services/api/assets`
+- Streams the file with `sendFile`
+
+The legacy static route remains available for default/mock cards:
+
+```http
+GET /api/v1/ams/files/:path
+```
+
+Authenticated resource detail responses now return private AMS URLs for `assetUrls.thumbnail`, `assetUrls.banner`, `assetUrls.vtt`, and `assetUrls.metadata`.
+
 ### Quiz Payload
 
 ```http
@@ -88,11 +122,13 @@ Quiz content now uses the same entitlement check as resource detail.
 4. Login as a parent linked to that student and confirm the same child content opens read-only.
 5. Login as a tutor and confirm own draft/published program content opens.
 6. Try opening a resource outside the selected program and confirm the API returns `403`.
+7. Open a resource detail response and confirm `assetUrls.banner` uses `/api/v1/ams/assets/:id/file/banner`.
+8. Paste that private URL without a valid `accessToken` and confirm it is rejected.
+9. Paste it with a valid access token and confirm the file loads.
 
 ## Next Phase 3 Slices
 
-1. Private file URL mediation instead of direct static paths.
-2. Tutor upload/create APIs for article, video metadata, thumbnail, banner, VTT, flashcard JSON, and quiz JSON.
-3. Storage adapter interface for repo now and S3/R2 later.
-4. Content versioning before program publish.
-5. Content reaction analytics scoped to entitled students.
+1. Tutor upload/create APIs for article, video metadata, thumbnail, banner, VTT, flashcard JSON, and quiz JSON.
+2. Storage adapter interface for repo now and S3/R2 later.
+3. Content versioning before program publish.
+4. Content reaction analytics scoped to entitled students.
