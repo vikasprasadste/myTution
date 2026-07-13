@@ -1906,6 +1906,46 @@ app.post("/api/v1/education-plan/programs/select", async (req, res) => {
   });
 });
 
+app.post("/api/v1/marketplace/program-interest", async (req, res) => {
+  const userId = await readUserId(req);
+  const profile = await findProfile("student", userId);
+  if (!profile) {
+    res.status(404).json({ error: "Student profile not found" });
+    return;
+  }
+  const programId = String(req.body.programId ?? "");
+  const program = await prisma.program.findFirst({
+    where: { id: programId, role: "tutor", status: "published", visibility: "published" },
+    include: { creatorProfile: { include: { tutorProfile: true } } }
+  });
+  if (!program) {
+    res.status(404).json({ error: "Program not found" });
+    return;
+  }
+  await logAudit({
+    userId: profile.userId,
+    profileId: profile.id,
+    role: "student",
+    action: "marketplace.program_interest",
+    entityType: "Program",
+    entityId: program.id,
+    metadata: {
+      title: program.title,
+      feeType: program.feeType,
+      feeAmount: program.feeAmount,
+      tutorProfileId: program.creatorProfile?.tutorProfile?.id ?? null,
+      tutorProfileOwnerId: program.creatorProfileId
+    }
+  });
+  res.status(201).json({
+    data: {
+      programId: program.id,
+      status: "interest_recorded",
+      message: "Purchase interest recorded. Payment checkout will be available in a later release."
+    }
+  });
+});
+
 app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
   const tutor = await requireProfile(req, res, "tutor");
   if (!tutor) return;

@@ -722,6 +722,18 @@ export default function Index() {
     }
   }
 
+  async function requestProgramPurchase(programId: string) {
+    setLoadingAction("purchaseProgram:" + programId);
+    try {
+      await apiPost("/api/v1/marketplace/program-interest", { programId }, authSession?.accessToken);
+      setApiNotice("Purchase interest recorded. We will connect this to checkout in the payment phase.");
+    } catch {
+      setApiNotice("Purchase interest could not be recorded. Please check login/API.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
   async function refreshClasses() {
     setClassHubLoading(true);
     try {
@@ -1537,7 +1549,7 @@ export default function Index() {
       );
     }
 
-    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} marketplaceTarget={marketplaceTarget} clearTargetTutor={() => setMarketplaceTarget(null)} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestLoading={loadingAction} search={refreshTutorSearch} back={() => { setMarketplaceTarget(null); setScreen("home"); }} />;
+    if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} marketplaceTarget={marketplaceTarget} clearTargetTutor={() => setMarketplaceTarget(null)} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestProgramPurchase={requestProgramPurchase} requestLoading={loadingAction} search={refreshTutorSearch} back={() => { setMarketplaceTarget(null); setScreen("home"); }} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} refreshSupply={refreshTutorSupply} />;
@@ -3317,6 +3329,7 @@ function TutorDiscovery({
   loading,
   requestBatch,
   addTutorProgram,
+  requestProgramPurchase,
   requestLoading,
   search,
   back
@@ -3329,6 +3342,7 @@ function TutorDiscovery({
   loading: boolean;
   requestBatch: (batchId: string) => void;
   addTutorProgram: (programId: string) => void;
+  requestProgramPurchase: (programId: string) => void;
   requestLoading: string | null;
   search: (filters: { subject?: string; location?: string; grade?: string; board?: string; mode?: string; language?: string; gender?: string; experience?: string; rating?: string }) => void;
   back: () => void;
@@ -3402,7 +3416,13 @@ function TutorDiscovery({
             </View>
             <Text style={styles.batchMeta}>{program.description}</Text>
             <Text style={styles.batchMeta}>{program.milestoneCount} milestones • {program.activityCount} activities</Text>
-            <Button role={role} label={program.selected ? "Added to Program" : program.feeType === "paid" ? "Purchase program" : "Add free program"} disabled={!!program.selected} loading={requestLoading === "addTutorProgram:" + program.id} onPress={() => addTutorProgram(program.id)} />
+            <Button
+              role={role}
+              label={program.selected ? "Added to Program" : program.feeType === "paid" ? "Request purchase details" : "Add free program"}
+              disabled={!!program.selected}
+              loading={requestLoading === "addTutorProgram:" + program.id || requestLoading === "purchaseProgram:" + program.id}
+              onPress={() => program.feeType === "paid" ? requestProgramPurchase(program.id) : addTutorProgram(program.id)}
+            />
           </View>
         )) : <View style={styles.emptyInlineCard}><Text style={styles.todayTitle}>No programs yet</Text><Text style={styles.todayMeta}>This tutor has not published any program offerings.</Text></View>}
         <SectionTitle>Batches</SectionTitle>
