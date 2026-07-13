@@ -414,7 +414,9 @@ export interface BatchRequestSummary {
   message: string | null;
   tutorResponse?: string | null;
   suggestedBatchId?: string | null;
+  suggestedBatch?: BatchClass | null;
   createdAt: string;
+  timeline?: Array<{ key: string; label: string; status: "complete" | "current" | "pending"; at?: string | null }>;
   student: { id: string; name: string; city: string | null };
   tutor: { id: string; name: string; headline: string; rating: number };
   batch: BatchClass;

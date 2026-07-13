@@ -1560,7 +1560,7 @@ app.get("/api/v1/usermanagement/batch-requests", async (req, res) => {
       include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true },
       orderBy: { createdAt: "desc" }
     }) : [];
-    res.json({ data: requests.map(toBatchRequestSummary) });
+    res.json({ data: await enrichBatchRequestSummaries(requests) });
     return;
   }
   const requests = await prisma.batchRequest.findMany({
@@ -1568,7 +1568,7 @@ app.get("/api/v1/usermanagement/batch-requests", async (req, res) => {
     include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true },
     orderBy: { createdAt: "desc" }
   });
-  res.json({ data: requests.map(toBatchRequestSummary) });
+  res.json({ data: await enrichBatchRequestSummaries(requests) });
 });
 
 app.post("/api/v1/usermanagement/batch-requests/:id/approve", async (req, res) => {
@@ -3088,8 +3088,42 @@ function toBatchRequestSummary(request: any) {
       name: tutorProfile.profile.firstName + " " + tutorProfile.profile.lastName,
       headline: tutorProfile.headline,
       rating: tutorProfile.rating
-    }
+    },
+    timeline: batchRequestTimeline(request)
   };
+}
+
+async function enrichBatchRequestSummaries(requests: any[]) {
+  const suggestedIds = Array.from(new Set(requests.map((request) => request.suggestedBatchId).filter(Boolean)));
+  const suggestedBatches = suggestedIds.length ? await prisma.tutorBatch.findMany({
+    where: { id: { in: suggestedIds } },
+    include: { tutorProfile: { include: { profile: true } }, enrollments: { include: { studentProfile: true } }, requests: true }
+  }) : [];
+  const suggestedById = new Map(suggestedBatches.map((batch) => [batch.id, toStudentClass(batch)]));
+  return requests.map((request) => ({
+    ...toBatchRequestSummary(request),
+    suggestedBatch: request.suggestedBatchId ? suggestedById.get(request.suggestedBatchId) ?? null : null
+  }));
+}
+
+function batchRequestTimeline(request: any) {
+  const createdAt = request.createdAt?.toISOString?.() ?? null;
+  const isTerminal = ["approved", "rejected", "deferred", "dismissed"].includes(request.status);
+  return [
+    { key: "requested", label: "Request sent", status: "complete" as const, at: createdAt },
+    {
+      key: "tutor_review",
+      label: request.status === "suggested" ? "Tutor suggested another batch" : request.status === "pending" ? "Tutor review pending" : "Tutor responded",
+      status: request.status === "pending" ? "current" as const : "complete" as const,
+      at: request.status === "pending" ? null : request.updatedAt?.toISOString?.() ?? null
+    },
+    {
+      key: "next_step",
+      label: request.status === "approved" ? "Enrollment active" : request.status === "suggested" ? "Student action needed" : request.status === "rejected" ? "Request denied" : request.status === "deferred" ? "Deferred for later" : request.status === "dismissed" ? "Closed" : "Awaiting result",
+      status: isTerminal || request.status === "suggested" ? "current" as const : "pending" as const,
+      at: isTerminal ? request.updatedAt?.toISOString?.() ?? null : null
+    }
+  ];
 }
 
 function toStudentClass(batch: any, enrollmentId?: string) {

@@ -3802,6 +3802,24 @@ function StudentBatchRequestAlerts({ role, requests, openTutorSearch, acceptSugg
           <Text style={styles.batchTitle}>{request.batch.title}</Text>
           <Text style={styles.batchMeta}>{capitalize(request.status)} by {request.tutor.name}</Text>
           <Text style={styles.batchMeta}>{request.tutorResponse ?? "Please choose your next action."}</Text>
+          {request.suggestedBatch ? (
+            <View style={styles.suggestedBatchBox}>
+              <Text style={styles.suggestedBatchLabel}>Suggested batch</Text>
+              <Text style={styles.batchTitle}>{request.suggestedBatch.title}</Text>
+              <Text style={styles.batchMeta}>{request.suggestedBatch.course} • {request.suggestedBatch.schedule}</Text>
+              <Text style={styles.batchMeta}>{request.suggestedBatch.mode}{request.suggestedBatch.classroomLocation ? " • " + request.suggestedBatch.classroomLocation : ""}</Text>
+            </View>
+          ) : null}
+          {request.timeline?.length ? (
+            <View style={styles.requestTimeline}>
+              {request.timeline.map((step) => (
+                <View key={step.key} style={styles.timelineStep}>
+                  <View style={[styles.timelineDot, step.status === "complete" && styles.timelineDotDone, step.status === "current" && styles.timelineDotCurrent]} />
+                  <Text style={[styles.timelineText, step.status === "current" && styles.timelineTextCurrent]}>{step.label}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
           {request.status === "suggested" ? (
             <View style={styles.requestActionGrid}>
               <Button role={role} label="Accept suggested batch" loading={actionLoading === "acceptSuggestion:" + request.id} onPress={() => acceptSuggestion(request.id)} />
@@ -5188,6 +5206,15 @@ const styles = StyleSheet.create({
   parentRowName: { color: "#202A35", fontSize: 15, fontWeight: "900" },
   parentRowMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", marginTop: 2 },
   batchAlertCard: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, gap: 8, padding: 14, paddingRight: 44, position: "relative", shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.045, shadowRadius: 12, elevation: 1 },
+  suggestedBatchBox: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 13, borderWidth: 1, gap: 4, padding: 10 },
+  suggestedBatchLabel: { color: "#6B21A8", fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
+  requestTimeline: { gap: 6, paddingTop: 2 },
+  timelineStep: { alignItems: "center", flexDirection: "row", gap: 8 },
+  timelineDot: { backgroundColor: "#E2E8F0", borderRadius: 999, height: 9, width: 9 },
+  timelineDotDone: { backgroundColor: "#16A34A" },
+  timelineDotCurrent: { backgroundColor: "#8B5CF6" },
+  timelineText: { color: "#64748B", flex: 1, fontSize: 12, fontWeight: "800", lineHeight: 16 },
+  timelineTextCurrent: { color: "#202A35" },
   alertClose: { alignItems: "center", backgroundColor: "#F8FAFC", borderRadius: 999, height: 30, justifyContent: "center", position: "absolute", right: 10, top: 10, width: 30, zIndex: 2 },
   alertCloseText: { color: "#111827", fontSize: 18, fontWeight: "900", lineHeight: 20 },
   classTile: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 17, borderWidth: 1, gap: 7, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
