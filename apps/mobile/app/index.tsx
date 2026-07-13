@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics, UserListItem, UserProfileDetails } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, MarketplaceRecommendationResponse, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics, UserListItem, UserProfileDetails } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -294,6 +294,7 @@ export default function Index() {
   const [identityContext, setIdentityContext] = useState<IdentityContext | null>(null);
   const [apiPersona, setApiPersona] = useState<Persona | null>(null);
   const [apiRecommendations, setApiRecommendations] = useState<Recommendation[] | null>(null);
+  const [marketplaceRecommendations, setMarketplaceRecommendations] = useState<MarketplaceRecommendationResponse | null>(null);
   const [dashboardCards, setDashboardCards] = useState<DashboardCard[] | null>(null);
   const [apiMilestones, setApiMilestones] = useState<ProgramMilestone[] | null>(null);
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
@@ -585,10 +586,11 @@ export default function Index() {
     async function loadRoleData() {
       try {
         const token = authSession?.accessToken;
-        const [identity, bootstrap, recs, eventData, dashboard, programList] = await Promise.all([
+        const [identity, bootstrap, recs, marketplace, eventData, dashboard, programList] = await Promise.all([
           token ? apiGet<{ data: IdentityContext }>(`/api/v1/identity/me?role=${role}`, token) : Promise.resolve({ data: null as IdentityContext | null }),
           apiGet<{ persona: Persona }>(`/api/v1/bootstrap?role=${role}`, token),
           apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`),
+          role === "student" ? apiGet<{ data: MarketplaceRecommendationResponse }>(`/api/v1/marketplace/recommendations?role=student`, token) : Promise.resolve({ data: null as MarketplaceRecommendationResponse | null }),
           token ? apiGet<{ data: Reminder[] }>(`/api/v1/events-reminders?role=${role}`, token) : Promise.resolve({ data: [] }),
           token ? apiGet<{ data: { cards: DashboardCard[] } }>(`/api/v1/dis/dashboard?role=${role}`, token) : Promise.resolve({ data: { cards: [] } }),
           apiGet<{ data: ProgramSummary[]; selectedPrograms?: ProgramSummary[]; maxSelectedPrograms?: number }>(`/api/v1/education-plan/programs?role=${role}`, token)
@@ -602,6 +604,7 @@ export default function Index() {
         setIdentityContext(identity.data);
         setApiPersona(token ? personaFromIdentity(identity.data?.activeProfile, identity.data?.user.phone) ?? bootstrap.persona : null);
         setApiRecommendations(recs.data);
+        setMarketplaceRecommendations(marketplace.data);
         setReminders(eventData.data);
         setDashboardCards(dashboard.data.cards);
         setPrograms(programList.data);
@@ -1431,6 +1434,10 @@ export default function Index() {
           {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
           <TrackCard role={role} onPress={() => setScreen(role === "student" ? "search" : role === "tutor" ? "roleHub" : "sessions")} />
 
+          {role === "student" && marketplaceRecommendations ? (
+            <MarketplaceHomeSection data={marketplaceRecommendations} onOpen={() => setScreen("search")} />
+          ) : null}
+
           {role === "student" || role === "parent" ? (
             <>
               {programComplete ? <ProgramCompletedCard role={role} onPress={() => setScreen("sessions")} /> : <ProgramJourneyCard role={role} milestones={homeMilestones} completedMilestone={completedMilestone} onPress={() => setScreen("sessions")} />}
@@ -1882,6 +1889,54 @@ function TrackCard({ role, onPress }: { role: Role; onPress: () => void }) {
         </LinearGradient>
       </Pressable>
     </View>
+  );
+}
+
+function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendationResponse; onOpen: () => void }) {
+  const items = [
+    ...data.tutors.slice(0, 3).map((tutor) => ({
+      id: "tutor-" + tutor.id,
+      eyebrow: "Tutor match",
+      title: tutor.name,
+      meta: `${tutor.subjects.slice(0, 2).join(", ") || "Tutor"} • ${tutor.rating.toFixed(1)} ★`,
+      copy: tutor.location || tutor.headline,
+      initials: tutor.initials
+    })),
+    ...data.programs.slice(0, 3).map((program) => ({
+      id: "program-" + program.id,
+      eyebrow: program.feeType === "paid" ? `Program • ₹${program.feeAmount ?? 0}` : "Free program",
+      title: program.title,
+      meta: `${program.milestoneCount} milestones • ${program.tutor.name}`,
+      copy: program.fitReasons.join(" • "),
+      initials: program.tutor.initials
+    })),
+    ...data.batches.slice(0, 2).map((batch) => ({
+      id: "batch-" + batch.id,
+      eyebrow: batch.availabilityStatus === "filling_fast" ? "Filling fast" : "Batch open",
+      title: batch.title,
+      meta: `${batch.schedule} • ${batch.tutor.name}`,
+      copy: `${batch.fillPercent}% filled • ${batch.mode}`,
+      initials: batch.tutor.initials
+    }))
+  ].slice(0, 6);
+  if (!items.length) return null;
+  return (
+    <>
+      <SectionTitle>Recommended tutors and programs</SectionTitle>
+      <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.carousel}>
+        {items.map((item) => (
+          <Pressable key={item.id} style={({ pressed }) => [styles.marketplaceCard, pressed && styles.pressed]} onPress={onOpen}>
+            <View style={styles.marketplaceAvatar}>
+              <Text style={styles.marketplaceAvatarText}>{item.initials}</Text>
+            </View>
+            <Text style={styles.marketplaceEyebrow}>{item.eyebrow}</Text>
+            <Text style={styles.marketplaceTitle}>{item.title}</Text>
+            <Text style={styles.marketplaceMeta}>{item.meta}</Text>
+            <Text style={styles.marketplaceCopy}>{item.copy}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+    </>
   );
 }
 
@@ -4507,6 +4562,13 @@ const styles = StyleSheet.create({
   trackButtonText: { fontSize: 14, fontWeight: "900" },
   smartPickCard: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, minHeight: 82, padding: 15 },
   carousel: { gap: 12, paddingBottom: 10 },
+  marketplaceCard: { backgroundColor: "#F2E1E5", borderColor: "#E8CFD8", borderRadius: 16, borderWidth: 1, gap: 7, minHeight: 178, padding: 14, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.045, shadowRadius: 12, width: 210 },
+  marketplaceAvatar: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 14, height: 42, justifyContent: "center", width: 42 },
+  marketplaceAvatarText: { color: "#202A35", fontSize: 14, fontWeight: "900" },
+  marketplaceEyebrow: { color: "#6B3F75", fontSize: 11, fontWeight: "900", marginTop: 2, textTransform: "uppercase" },
+  marketplaceTitle: { color: "#111827", fontSize: 16, fontWeight: "900", lineHeight: 21 },
+  marketplaceMeta: { color: "#3E4B5E", fontSize: 12, fontWeight: "800", lineHeight: 17 },
+  marketplaceCopy: { color: "#64748B", fontSize: 12, fontWeight: "700", lineHeight: 17, marginTop: "auto" },
   programJourneyCard: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 17, borderWidth: 1, gap: 14, padding: 16, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.055, shadowRadius: 14, elevation: 2 },
   programJourneyTop: { alignItems: "center", flexDirection: "row", gap: 12 },
   programJourneyTitle: { color: "#202A35", fontSize: 18, fontWeight: "800", lineHeight: 23 },

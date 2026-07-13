@@ -295,6 +295,49 @@ export interface TutorSearchResult {
   tutionDetails?: TutionDetail[];
 }
 
+export interface MarketplaceProgramRecommendation {
+  id: string;
+  title: string;
+  description: string;
+  feeType: string;
+  feeAmount?: number | null;
+  milestoneCount: number;
+  activityCount: number;
+  tutor: Pick<TutorSearchResult, "id" | "tutorProfileId" | "profileId" | "name" | "initials" | "headline" | "rating" | "location" | "subjects" | "boards" | "grades" | "languages" | "mode" | "experienceYears" | "hourlyRate">;
+  fitScore: number;
+  fitReasons: string[];
+}
+
+export interface MarketplaceBatchRecommendation {
+  id: string;
+  title: string;
+  course: string;
+  subject: string;
+  grade: string;
+  board: string;
+  mode: string;
+  schedule: string;
+  classroomLocation: string | null;
+  onlineLink: string | null;
+  startsAt: string;
+  capacity: number;
+  enrolledCount: number;
+  fillPercent: number;
+  availabilityStatus: string;
+  feeType: string;
+  feeAmount?: number | null;
+  tutor: Pick<TutorSearchResult, "id" | "tutorProfileId" | "profileId" | "name" | "initials" | "headline" | "rating" | "location" | "subjects" | "boards" | "grades" | "languages" | "mode" | "experienceYears" | "hourlyRate">;
+  programId?: string | null;
+  fitScore: number;
+  fitReasons: string[];
+}
+
+export interface MarketplaceRecommendationResponse {
+  tutors: TutorSearchResult[];
+  programs: MarketplaceProgramRecommendation[];
+  batches: MarketplaceBatchRecommendation[];
+}
+
 export interface TutionDetail {
   id: string;
   subject: string;

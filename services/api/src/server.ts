@@ -8,7 +8,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { featureFlags, isFeatureEnabled, paletteConfig, roleThemes } from "@mytution/config";
 import { prisma } from "@mytution/db";
-import type { CommunityReactionType, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
+import type { CommunityReactionType, MarketplaceBatchRecommendation, MarketplaceProgramRecommendation, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
 
 const app = express();
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
@@ -1472,6 +1472,49 @@ app.get("/api/v1/usermanagement/tutors", async (req, res) => {
   res.json({ data: tutors.map(toTutorSearchResult) });
 });
 
+app.get("/api/v1/marketplace/recommendations", async (req, res) => {
+  const role = readRole(req.query.role);
+  if (role !== "student") {
+    res.json({ data: { tutors: [], programs: [], batches: [] } });
+    return;
+  }
+
+  await ensureSharedTutorFixture();
+  const userId = await readUserId(req);
+  const studentProfile = await findProfile("student", userId);
+  const tutors = await prisma.tutorProfile.findMany({
+    where: { profileStatus: "active" },
+    include: {
+      profile: {
+        include: {
+          authoredPrograms: {
+            where: { status: "published", visibility: "published" },
+            orderBy: [{ feeType: "asc" }, { title: "asc" }],
+            include: { milestones: { include: { activities: true } } }
+          }
+        }
+      },
+      batches: {
+        where: { status: { not: "archived" } },
+        orderBy: [{ startsAt: "asc" }],
+        include: { requests: true, enrollments: true, program: true }
+      }
+    }
+  });
+  const ranked = tutors
+    .map((tutor) => ({ tutor, score: marketplaceFitScore(tutor, studentProfile), reasons: marketplaceFitReasons(tutor, studentProfile) }))
+    .sort((a, b) => b.score - a.score || b.tutor.rating - a.tutor.rating || b.tutor.experienceYears - a.tutor.experienceYears);
+  const tutorResults = ranked.slice(0, 8).map((item) => toTutorSearchResult(item.tutor));
+  const programs = ranked
+    .flatMap((item) => (item.tutor.profile.authoredPrograms ?? []).map((program: any) => toMarketplaceProgram(program, item.tutor, item.score, item.reasons)))
+    .slice(0, 8);
+  const batches = ranked
+    .flatMap((item) => (item.tutor.batches ?? []).map((batch: any) => toMarketplaceBatch(batch, item.tutor, item.score, item.reasons)))
+    .filter((batch) => batch.availabilityStatus !== "archived" && batch.availabilityStatus !== "booked")
+    .slice(0, 8);
+  res.json({ data: { tutors: tutorResults, programs, batches } });
+});
+
 app.post("/api/v1/usermanagement/batch-requests", async (req, res) => {
   const userId = await readUserId(req);
   const student = await findProfile("student", userId);
@@ -2739,6 +2782,95 @@ function toTutorSearchResult(tutor: any) {
     batches: tutor.batches.map(toBatchSummary),
     programs: (tutor.profile.authoredPrograms ?? []).map(toTutorProgramSummary),
     tutionDetails: tutor.batches.map((batch: any) => toTutionDetail(batch, tutor))
+  };
+}
+
+function marketplaceTutorBrief(tutor: any) {
+  const result = toTutorSearchResult(tutor);
+  return {
+    id: result.id,
+    tutorProfileId: result.tutorProfileId,
+    profileId: result.profileId,
+    name: result.name,
+    initials: result.initials,
+    headline: result.headline,
+    rating: result.rating,
+    location: result.location,
+    subjects: result.subjects,
+    boards: result.boards,
+    grades: result.grades,
+    languages: result.languages,
+    mode: result.mode,
+    experienceYears: result.experienceYears,
+    hourlyRate: result.hourlyRate
+  };
+}
+
+function marketplaceFitScore(tutor: any, studentProfile?: any | null) {
+  const subjects = splitCsv(tutor.subjects).map((item) => item.toLowerCase());
+  const boards = splitCsv(tutor.boards).map((item) => item.toLowerCase());
+  const grades = splitCsv(tutor.grades).map((item) => item.toLowerCase());
+  const specialization = String(studentProfile?.specialization ?? "").toLowerCase();
+  const city = String(studentProfile?.city ?? "").toLowerCase();
+  let score = 40 + Math.round((Number(tutor.rating) || 0) * 8) + Math.min(15, Number(tutor.experienceYears) || 0);
+  if (specialization && subjects.some((subject) => specialization.includes(subject))) score += 18;
+  if (specialization && boards.some((board) => specialization.includes(board))) score += 10;
+  if (specialization && grades.some((grade) => specialization.includes(grade.toLowerCase()))) score += 8;
+  if (city && String(tutor.location ?? "").toLowerCase().includes(city)) score += 12;
+  if (splitCsv(tutor.mode).some((mode) => mode.toLowerCase() === "online")) score += 4;
+  if (tutor.verificationStatus === "verified") score += 6;
+  return Math.min(100, score);
+}
+
+function marketplaceFitReasons(tutor: any, studentProfile?: any | null) {
+  const reasons: string[] = [];
+  const specialization = String(studentProfile?.specialization ?? "").toLowerCase();
+  const city = String(studentProfile?.city ?? "").toLowerCase();
+  const matchedSubject = splitCsv(tutor.subjects).find((subject) => specialization.includes(subject.toLowerCase()));
+  const matchedBoard = splitCsv(tutor.boards).find((board) => specialization.includes(board.toLowerCase()));
+  if (matchedSubject) reasons.push(`${matchedSubject} match`);
+  if (matchedBoard) reasons.push(`${matchedBoard} board`);
+  if (city && String(tutor.location ?? "").toLowerCase().includes(city)) reasons.push("near your city");
+  if ((Number(tutor.rating) || 0) >= 4.5) reasons.push("high rated");
+  if ((Number(tutor.experienceYears) || 0) >= 5) reasons.push("experienced tutor");
+  if (!reasons.length) reasons.push("popular with students");
+  return reasons.slice(0, 3);
+}
+
+function toMarketplaceProgram(program: any, tutor: any, fitScore: number, fitReasons: string[]): MarketplaceProgramRecommendation {
+  const summary = toTutorProgramSummary(program);
+  return {
+    ...summary,
+    tutor: marketplaceTutorBrief(tutor),
+    fitScore,
+    fitReasons
+  };
+}
+
+function toMarketplaceBatch(batch: any, tutor: any, fitScore: number, fitReasons: string[]): MarketplaceBatchRecommendation {
+  const summary = toBatchSummary(batch);
+  return {
+    id: summary.id,
+    title: summary.title,
+    course: summary.course,
+    subject: summary.subject,
+    grade: summary.grade,
+    board: summary.board,
+    mode: summary.mode,
+    schedule: summary.schedule,
+    classroomLocation: summary.classroomLocation,
+    onlineLink: summary.onlineVideoLink,
+    startsAt: summary.startsAt,
+    capacity: summary.capacity,
+    enrolledCount: summary.enrolledCount,
+    fillPercent: summary.fillPercent,
+    availabilityStatus: summary.availabilityStatus,
+    feeType: summary.feeType,
+    feeAmount: summary.feeAmount,
+    programId: summary.programId,
+    tutor: marketplaceTutorBrief(tutor),
+    fitScore,
+    fitReasons
   };
 }
 
