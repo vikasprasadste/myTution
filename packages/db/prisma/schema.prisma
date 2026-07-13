@@ -526,3 +526,20 @@ model ActivityProgress {
   @@unique([profileId, activityId])
   @@index([profileId, status])
 }
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  profileId   String?
+  role        Role?
+  action      String
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  sourceTag   String   @default("app")
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([profileId, createdAt])
+  @@index([action, createdAt])
+}

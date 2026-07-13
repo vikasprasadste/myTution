@@ -26,6 +26,68 @@ export interface Persona {
   profileLabel: string;
 }
 
+export interface IdentityLinkedProfile {
+  id: string;
+  relationship: string;
+  status: string;
+  profileId: string;
+  userId?: string;
+  phone?: string;
+  name: string;
+}
+
+export interface IdentityTutorProfile {
+  id: string;
+  headline: string;
+  subjects: string[];
+  boards: string[];
+  grades: string[];
+  languages: string[];
+  mode: string[];
+  experienceYears: number;
+  rating: number;
+  hourlyRate: number;
+  gender: string;
+  location: string;
+  bio: string;
+}
+
+export interface IdentityProfile {
+  id: string;
+  userId: string;
+  role: Role;
+  firstName: string;
+  lastName: string;
+  initials: string;
+  dob: string | null;
+  city: string | null;
+  communicationAddress: string | null;
+  alternatePhone: string | null;
+  avatarUrl: string | null;
+  stream: string | null;
+  specialization: string | null;
+  sourceTag: string;
+  profileCompletion: number;
+  tutorProfile: IdentityTutorProfile | null;
+  linkedParents: IdentityLinkedProfile[];
+  linkedStudents: IdentityLinkedProfile[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IdentityContext {
+  user: {
+    id: string;
+    phone: string;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+  activeProfile: IdentityProfile | null;
+  profiles: IdentityProfile[];
+  permissions: string[];
+}
+
 export interface Recommendation {
   id: string;
   role: Role;

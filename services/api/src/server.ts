@@ -365,10 +365,26 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
         where: { id: activation.id },
         data: { status: "accepted", acceptedAt: new Date(), parentProfileId: profile.id }
       });
+      await logAudit({
+        userId: user.id,
+        profileId: profile.id,
+        role,
+        action: "parent.student_link.accepted",
+        entityType: "ParentStudentLink",
+        metadata: { studentProfileId: activation.studentProfileId, relationship: activation.relationship }
+      });
     }
   }
 
   const session = await createSession(user.id);
+  await logAudit({
+    userId: user.id,
+    profileId: profile?.id,
+    role,
+    action: "auth.register",
+    entityType: "User",
+    entityId: user.id
+  });
   res.status(201).json({ data: { userId: user.id, profileId: profile?.id, role, ...session } });
 });
 
@@ -391,6 +407,14 @@ app.post("/api/v1/auth/login", async (req, res) => {
   }
 
   const session = await createSession(user.id);
+  await logAudit({
+    userId: user.id,
+    profileId: user.profiles[0]?.id,
+    role,
+    action: "auth.login",
+    entityType: "User",
+    entityId: user.id
+  });
   res.json({ data: { userId: user.id, profileId: user.profiles[0]?.id, role, ...session } });
 });
 
@@ -420,6 +444,142 @@ app.post("/api/v1/auth/revoke", async (req, res) => {
     data: { revokedAt: new Date() }
   });
   res.status(204).send();
+});
+
+app.get("/api/v1/identity/me", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+
+  const requestedRole = req.query.role ? readRole(req.query.role) : null;
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      profiles: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          tutorProfile: true,
+          studentParentLinks: {
+            where: { status: "active" },
+            include: { parentProfile: { include: { user: true } } }
+          },
+          parentStudentLinks: {
+            where: { status: "active" },
+            include: { studentProfile: { include: { user: true } } }
+          }
+        }
+      }
+    }
+  });
+  if (!user) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  const profiles = user.profiles.map(toIdentityProfile);
+  const activeProfile = profiles.find((profile) => requestedRole && profile.role === requestedRole) ?? profiles[0] ?? null;
+  res.json({
+    data: {
+      user: {
+        id: user.id,
+        phone: user.phone,
+        status: user.status,
+        createdAt: user.createdAt.toISOString(),
+        updatedAt: user.updatedAt.toISOString()
+      },
+      activeProfile,
+      profiles,
+      permissions: activeProfile ? permissionsForRole(activeProfile.role) : []
+    }
+  });
+});
+
+app.get("/api/v1/identity/linked-children", async (req, res) => {
+  const parent = await requireProfile(req, res, "parent");
+  if (!parent) return;
+  const links = await prisma.parentStudentLink.findMany({
+    where: { parentProfileId: parent.id, status: "active" },
+    orderBy: { createdAt: "asc" },
+    include: { studentProfile: { include: { user: true } } }
+  });
+  res.json({
+    data: links.map((link) => ({
+      id: link.id,
+      relationship: link.relationship,
+      status: link.status,
+      profileId: link.studentProfileId,
+      userId: link.studentProfile.userId,
+      phone: link.studentProfile.user.phone,
+      name: `${link.studentProfile.firstName} ${link.studentProfile.lastName}`.trim(),
+      stream: link.studentProfile.stream,
+      specialization: link.studentProfile.specialization
+    }))
+  });
+});
+
+app.put("/api/v1/identity/student-education-profile", async (req, res) => {
+  const profile = await requireProfile(req, res, "student");
+  if (!profile) return;
+  const data = {
+    stream: stringOrNull(req.body.stream) ?? profile.stream,
+    specialization: stringOrNull(req.body.specialization) ?? profile.specialization,
+    city: stringOrNull(req.body.city) ?? profile.city
+  };
+  const updated = await prisma.profile.update({ where: { id: profile.id }, data });
+  await logAudit({
+    userId: profile.userId,
+    profileId: profile.id,
+    role: "student",
+    action: "student.education_profile.update",
+    entityType: "Profile",
+    entityId: profile.id
+  });
+  res.json({ data: updated });
+});
+
+app.put("/api/v1/identity/tutor-profile", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const tutorProfile = await prisma.tutorProfile.upsert({
+    where: { profileId: profile.id },
+    update: {
+      headline: String(req.body.headline ?? ""),
+      subjects: csvString(req.body.subjects),
+      boards: csvString(req.body.boards),
+      grades: csvString(req.body.grades),
+      languages: csvString(req.body.languages),
+      mode: csvString(req.body.mode),
+      experienceYears: Number(req.body.experienceYears ?? 0) || 0,
+      hourlyRate: Number(req.body.hourlyRate ?? 0) || 0,
+      gender: String(req.body.gender ?? ""),
+      location: String(req.body.location ?? ""),
+      bio: String(req.body.bio ?? "")
+    },
+    create: {
+      profileId: profile.id,
+      headline: String(req.body.headline ?? ""),
+      subjects: csvString(req.body.subjects),
+      boards: csvString(req.body.boards),
+      grades: csvString(req.body.grades),
+      languages: csvString(req.body.languages),
+      mode: csvString(req.body.mode),
+      experienceYears: Number(req.body.experienceYears ?? 0) || 0,
+      rating: 0,
+      hourlyRate: Number(req.body.hourlyRate ?? 0) || 0,
+      gender: String(req.body.gender ?? ""),
+      location: String(req.body.location ?? ""),
+      bio: String(req.body.bio ?? ""),
+      sourceTag: "app"
+    }
+  });
+  await logAudit({
+    userId: profile.userId,
+    profileId: profile.id,
+    role: "tutor",
+    action: "tutor.profile.update",
+    entityType: "TutorProfile",
+    entityId: tutorProfile.id
+  });
+  res.json({ data: tutorProfile });
 });
 
 app.delete("/api/v1/admin/users/by-phone", async (req, res) => {
@@ -827,10 +987,8 @@ app.get("/api/v1/usermanagement/getUserProfile", async (req, res) => {
 
 app.put("/api/v1/usermanagement/profile", async (req, res) => {
   const role = readRole(req.body.role);
-  const userId = await readUserId(req);
-  const current = await findProfile(role, userId);
+  const current = await requireProfile(req, res, role);
   if (!current) {
-    res.status(404).json({ error: "Profile not found" });
     return;
   }
 
@@ -854,6 +1012,14 @@ app.put("/api/v1/usermanagement/profile", async (req, res) => {
       create: { userId: current.userId, role, ...data }
     })
   ]);
+  await logAudit({
+    userId: current.userId,
+    profileId: current.id,
+    role,
+    action: "profile.update",
+    entityType: "Profile",
+    entityId: current.id
+  });
 
   res.json({ data: { profile, userManagement } });
 });
@@ -1282,13 +1448,8 @@ app.post("/api/v1/education-plan/programs/select", async (req, res) => {
 });
 
 app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
-  const userId = await requireUserId(req, res);
-  if (!userId) return;
-  const tutor = await findProfile("tutor", userId);
-  if (!tutor) {
-    res.status(404).json({ error: "Tutor profile not found" });
-    return;
-  }
+  const tutor = await requireProfile(req, res, "tutor");
+  if (!tutor) return;
 
   const input = normalizeTutorProgramInput(req.body);
   if (!input.title || !input.description || !input.milestones?.length) {
@@ -1304,7 +1465,7 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
         description: input.description,
         creatorProfileId: tutor.id,
         visibility: input.visibility ?? "published",
-        status: "published",
+        status: input.visibility === "private" ? "draft" : "published",
         feeType: input.feeType ?? "free",
         feeAmount: input.feeType === "paid" ? input.feeAmount ?? 0 : null,
         sourceTag: "app"
@@ -1487,13 +1648,8 @@ async function writeTutorProgramTree(tx: any, programId: string, tutorId: string
 }
 
 app.get("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
-  const userId = await requireUserId(req, res);
-  if (!userId) return;
-  const tutor = await findProfile("tutor", userId);
-  if (!tutor) {
-    res.status(404).json({ error: "Tutor profile not found" });
-    return;
-  }
+  const tutor = await requireProfile(req, res, "tutor");
+  if (!tutor) return;
   const program = await prisma.program.findFirst({
     where: { id: req.params.id, creatorProfileId: tutor.id, role: "tutor" },
     include: {
@@ -1511,13 +1667,8 @@ app.get("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
 });
 
 app.put("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
-  const userId = await requireUserId(req, res);
-  if (!userId) return;
-  const tutor = await findProfile("tutor", userId);
-  if (!tutor) {
-    res.status(404).json({ error: "Tutor profile not found" });
-    return;
-  }
+  const tutor = await requireProfile(req, res, "tutor");
+  if (!tutor) return;
   const input = normalizeTutorProgramInput(req.body);
   if (!input.title || !input.description || !input.milestones?.length) {
     res.status(400).json({ error: "Program title, description, milestone, and resources are required" });
@@ -1786,6 +1937,44 @@ async function requireUserId(req: express.Request, res: express.Response) {
   return userId;
 }
 
+async function requireProfile(req: express.Request, res: express.Response, role: Role) {
+  const userId = await requireUserId(req, res);
+  if (!userId) return null;
+  const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return null;
+  }
+  return profile;
+}
+
+async function logAudit(input: {
+  userId?: string | null;
+  profileId?: string | null;
+  role?: Role | null;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        userId: input.userId ?? null,
+        profileId: input.profileId ?? null,
+        role: input.role ?? null,
+        action: input.action,
+        entityType: input.entityType ?? null,
+        entityId: input.entityId ?? null,
+        metadata: input.metadata ? JSON.parse(JSON.stringify(input.metadata)) as any : undefined,
+        sourceTag: "app"
+      }
+    });
+  } catch (error) {
+    console.warn("audit log skipped", error);
+  }
+}
+
 async function findProfile(role: Role, userId?: string | null) {
   return prisma.profile.findFirst({
     where: { role, ...(userId ? { userId } : {}) },
@@ -1815,6 +2004,11 @@ function textContains(value: unknown) {
 
 function splitCsv(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function csvString(value: unknown) {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean).join(", ");
+  return String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean).join(", ");
 }
 
 function readCommunityReactionType(value: unknown): CommunityReactionType {
@@ -2293,6 +2487,126 @@ function toPersona(profile: Awaited<ReturnType<typeof findProfile>>) {
       ? `Parent • Apoorv Gulati • Class 10`
       : `${capitalize(profile.role)} • ${profile.stream ?? "Senior"} • ${profile.specialization ?? "myTution"}`
   };
+}
+
+function toIdentityProfile(profile: any) {
+  return {
+    id: profile.id,
+    userId: profile.userId,
+    role: profile.role,
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    initials: `${profile.firstName.charAt(0)}${profile.lastName.charAt(0)}`.toUpperCase(),
+    dob: profile.dob?.toISOString() ?? null,
+    city: profile.city,
+    communicationAddress: profile.communicationAddress,
+    alternatePhone: profile.alternatePhone,
+    avatarUrl: profile.avatarUrl,
+    stream: profile.stream,
+    specialization: profile.specialization,
+    sourceTag: profile.sourceTag,
+    profileCompletion: profileCompletionFor(profile),
+    tutorProfile: profile.tutorProfile ? {
+      id: profile.tutorProfile.id,
+      headline: profile.tutorProfile.headline,
+      subjects: splitCsv(profile.tutorProfile.subjects),
+      boards: splitCsv(profile.tutorProfile.boards),
+      grades: splitCsv(profile.tutorProfile.grades),
+      languages: splitCsv(profile.tutorProfile.languages),
+      mode: splitCsv(profile.tutorProfile.mode),
+      experienceYears: profile.tutorProfile.experienceYears,
+      rating: profile.tutorProfile.rating,
+      hourlyRate: profile.tutorProfile.hourlyRate,
+      gender: profile.tutorProfile.gender,
+      location: profile.tutorProfile.location,
+      bio: profile.tutorProfile.bio
+    } : null,
+    linkedParents: (profile.studentParentLinks ?? []).map((link: any) => ({
+      id: link.id,
+      relationship: link.relationship,
+      status: link.status,
+      profileId: link.parentProfileId,
+      userId: link.parentProfile?.userId,
+      phone: link.parentProfile?.user?.phone,
+      name: `${link.parentProfile?.firstName ?? ""} ${link.parentProfile?.lastName ?? ""}`.trim()
+    })),
+    linkedStudents: (profile.parentStudentLinks ?? []).map((link: any) => ({
+      id: link.id,
+      relationship: link.relationship,
+      status: link.status,
+      profileId: link.studentProfileId,
+      userId: link.studentProfile?.userId,
+      phone: link.studentProfile?.user?.phone,
+      name: `${link.studentProfile?.firstName ?? ""} ${link.studentProfile?.lastName ?? ""}`.trim()
+    })),
+    createdAt: profile.createdAt.toISOString(),
+    updatedAt: profile.updatedAt.toISOString()
+  };
+}
+
+function profileCompletionFor(profile: any) {
+  const baseFields = [
+    profile.firstName,
+    profile.lastName,
+    profile.dob,
+    profile.city,
+    profile.communicationAddress,
+    profile.alternatePhone
+  ];
+  const roleFields = profile.role === "parent"
+    ? []
+    : [profile.stream, profile.specialization];
+  const tutorFields = profile.role === "tutor" && profile.tutorProfile
+    ? [
+      profile.tutorProfile.headline,
+      profile.tutorProfile.subjects?.length,
+      profile.tutorProfile.boards?.length,
+      profile.tutorProfile.grades?.length,
+      profile.tutorProfile.languages?.length,
+      profile.tutorProfile.mode?.length,
+      profile.tutorProfile.experienceYears,
+      profile.tutorProfile.location,
+      profile.tutorProfile.bio
+    ]
+    : [];
+  const fields = [...baseFields, ...roleFields, ...tutorFields];
+  if (!fields.length) return 0;
+  const completed = fields.filter((value) => {
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === "number") return value > 0;
+    return Boolean(value);
+  }).length;
+  return Math.round((completed / fields.length) * 100);
+}
+
+function permissionsForRole(role: Role) {
+  if (role === "tutor") {
+    return [
+      "profile:manage",
+      "program:create",
+      "program:draft:update",
+      "program:publish",
+      "batch:create",
+      "batch:request:manage",
+      "student:progress:view"
+    ];
+  }
+  if (role === "parent") {
+    return [
+      "child:profile:view",
+      "child:program:view",
+      "child:progress:view",
+      "child:community:view"
+    ];
+  }
+  return [
+    "profile:manage",
+    "tutor:discover",
+    "program:enroll",
+    "batch:request:create",
+    "activity:complete",
+    "parent:invite"
+  ];
 }
 
 function fallbackPersona(role: Role) {

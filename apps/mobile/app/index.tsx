@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, UserListItem, UserProfileDetails } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, UserListItem, UserProfileDetails } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -129,6 +129,20 @@ type ProfileDraft = {
   alternatePhone: string;
 };
 
+function personaFromIdentity(profile: IdentityProfile | null | undefined, phone = ""): Persona | null {
+  if (!profile) return null;
+  return {
+    role: profile.role,
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    initials: profile.initials,
+    phone,
+    profileLabel: profile.role === "parent"
+      ? `Parent • ${profile.linkedStudents[0]?.name ?? "Linked student"}`
+      : `${capitalize(profile.role)} • ${profile.stream ?? "Senior"} • ${profile.specialization ?? "myTution"}`
+  };
+}
+
 const streamOptions: Array<{ label: string; value: StreamKey }> = [
   { label: "Junior", value: "junior" },
   { label: "Senior", value: "senior" },
@@ -191,6 +205,23 @@ const emptyQuizQuestions = [{
   learnMore: ""
 }];
 
+function isPublishedProgram(program?: ProgramSummary | null) {
+  return program?.status === "published" || program?.visibility === "published";
+}
+
+function programStatusMeta(program?: ProgramSummary | null) {
+  const published = isPublishedProgram(program);
+  return {
+    icon: published ? "✓" : "◔",
+    label: published ? "Published" : "In progress"
+  };
+}
+
+function programOptionLabel(program: ProgramSummary) {
+  const status = programStatusMeta(program);
+  return `${status.icon} ${program.title} • ${status.label}`;
+}
+
 export default function Index() {
   const [role, setRole] = useState<Role>("student");
   const [screen, setScreen] = useState<AppScreen>("role");
@@ -221,6 +252,7 @@ export default function Index() {
   const [apiNotice, setApiNotice] = useState("");
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [identityContext, setIdentityContext] = useState<IdentityContext | null>(null);
   const [apiPersona, setApiPersona] = useState<Persona | null>(null);
   const [apiRecommendations, setApiRecommendations] = useState<Recommendation[] | null>(null);
   const [dashboardCards, setDashboardCards] = useState<DashboardCard[] | null>(null);
@@ -282,7 +314,8 @@ export default function Index() {
     phone: phoneForApi,
     profileLabel: `${capitalize(role)} • myTution`
   }), [phoneForApi, role]);
-  const persona = (authSession || screen === "signin") && apiPersona?.role === role ? apiPersona : emptyPersona;
+  const identityPersona = personaFromIdentity(identityContext?.activeProfile, identityContext?.user.phone);
+  const persona = (authSession || screen === "signin") && identityPersona?.role === role ? identityPersona : (authSession || screen === "signin") && apiPersona?.role === role ? apiPersona : emptyPersona;
 
   const roleRecommendations = useMemo(
     () => (apiRecommendations ?? recommendations.filter((item) => item.role === role)).filter((item) => !completedRecommendations.includes(item.id)),
@@ -390,6 +423,8 @@ export default function Index() {
   function openProgramPicker() {
     if (role === "tutor") {
       setProgramMenuOpen(false);
+      setTutorProgramDraft(defaultTutorProgramDraft);
+      setEditingTutorProgramId(null);
       setTutorProgramComposerOpen(true);
       return;
     }
@@ -407,6 +442,15 @@ export default function Index() {
   }
 
   async function loadTutorProgramForEdit(programId: string) {
+    const program = programs.find((item) => item.id === programId);
+    if (isPublishedProgram(program)) {
+      setSelectedProgramId(programId);
+      setTutorProgramComposerOpen(false);
+      setEditingTutorProgramId(null);
+      setProgramRefreshKey((value) => value + 1);
+      setProgramToast("Published programs are view-only.");
+      return;
+    }
     setLoadingAction("loadTutorProgram:" + programId);
     try {
       const response = await apiGet<{ data: TutorProgramDraft & { id: string } }>(`/api/v1/education-plan/tutor/programs/${programId}`, authSession?.accessToken);
@@ -419,6 +463,17 @@ export default function Index() {
     } finally {
       setLoadingAction(null);
     }
+  }
+
+  function editTutorActivityFromMilestone(activityId: string) {
+    const program = programs.find((item) => item.id === selectedProgramId);
+    if (!program || isPublishedProgram(program)) {
+      setProgramToast("Published programs are view-only.");
+      return;
+    }
+    void loadTutorProgramForEdit(program.id);
+    setProgramToast("Activity editor opened. Update the activity and save the program.");
+    setScreen("sessions");
   }
 
   async function createTutorProgram() {
@@ -448,7 +503,8 @@ export default function Index() {
     async function loadRoleData() {
       try {
         const token = authSession?.accessToken;
-        const [bootstrap, recs, eventData, dashboard, programList] = await Promise.all([
+        const [identity, bootstrap, recs, eventData, dashboard, programList] = await Promise.all([
+          token ? apiGet<{ data: IdentityContext }>(`/api/v1/identity/me?role=${role}`, token) : Promise.resolve({ data: null as IdentityContext | null }),
           apiGet<{ persona: Persona }>(`/api/v1/bootstrap?role=${role}`, token),
           apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`),
           token ? apiGet<{ data: Reminder[] }>(`/api/v1/events-reminders?role=${role}`, token) : Promise.resolve({ data: [] }),
@@ -461,7 +517,8 @@ export default function Index() {
           ? await apiGet<{ data: { milestones: ProgramMilestone[]; completedMilestoneSequence: number } }>(`/api/v1/education-plan/current?role=${role}&programId=${programId}`, token)
           : { data: { milestones: [], completedMilestoneSequence: 0 } };
         if (ignore) return;
-        setApiPersona(token ? bootstrap.persona : null);
+        setIdentityContext(identity.data);
+        setApiPersona(token ? personaFromIdentity(identity.data?.activeProfile, identity.data?.user.phone) ?? bootstrap.persona : null);
         setApiRecommendations(recs.data);
         setReminders(eventData.data);
         setDashboardCards(dashboard.data.cards);
@@ -486,6 +543,7 @@ export default function Index() {
       } catch {
         if (ignore) return;
         setApiNotice("Using local fallback data because API is unavailable.");
+        setIdentityContext(null);
         setApiRecommendations(null);
         setDashboardCards(null);
         setApiMilestones(null);
@@ -647,6 +705,7 @@ export default function Index() {
     setReminders([]);
     setConnectedPeople("");
     setConnectedPeopleByReminder({});
+    setIdentityContext(null);
     setApiPersona(null);
     setApiRecommendations(null);
     setDashboardCards(null);
@@ -1288,11 +1347,14 @@ export default function Index() {
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} />;
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
-    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
+    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
     if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={() => { setProgramMenuOpen(false); setProgramToast("Program archived."); }} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
-    if (screen === "milestoneDetail" && selectedMilestone) return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} />;
+    if (screen === "milestoneDetail" && selectedMilestone) {
+      const selectedProgram = programs.find((program) => program.id === selectedProgramId);
+      return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} editableActivities={role === "tutor" && !isPublishedProgram(selectedProgram)} onEditActivity={editTutorActivityFromMilestone} />;
+    }
     if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={resourceDetail ?? selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} completedTopic={completedTopic} continueActivity={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} nextMilestone={() => { const next = completedTopic?.nextMilestoneActivity; setCompletedTopic(null); if (next) openResource(next); }} backToProgram={() => { setCompletedTopic(null); setSelectedResource(null); refreshProgramFromApi(); setScreen("sessions"); }} backToHome={() => { setCompletedTopic(null); setSelectedResource(null); refreshProgramFromApi(); setScreen("home"); }} />;
     if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={resourceDetail ?? selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "home")} />;
     if (screen === "flashPlay" && selectedResource) {
@@ -2252,6 +2314,7 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
   const cta = resource.type === "article" ? "Mark as read" : resource.type === "video" ? "Mark watched" : "Mark complete";
   const detail = resource as ResourceDetailPayload;
   const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
+  const readOnly = role === "parent" || role === "tutor";
   return (
     <>
       <TopBar title={resource.thumbnailLabel.toUpperCase()} left="‹" onLeft={back} />
@@ -2261,13 +2324,16 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
           fallback={<Text style={[styles.playerIcon, { color: resource.type === "video" ? "#FFFFFF" : theme.text }]}>{resource.type === "video" ? "▶" : "A"}</Text>}
         />
       </View>
-      <View style={styles.reactionRow}><Text style={styles.reactionButton}>👍</Text><Text style={styles.reactionButton}>👎</Text></View>
+      <View style={styles.reactionRow}>
+        <Text style={styles.reactionButton}>👍 {role === "tutor" ? "0" : ""}</Text>
+        <Text style={styles.reactionButton}>👎 {role === "tutor" ? "0" : ""}</Text>
+      </View>
       <Text style={styles.resourceTitle}>{resource.title}</Text>
       <Text style={styles.resourceSubtitle}>{resource.description}</Text>
       <Text style={styles.assetMetaText}>{resourceMetaLine(resource)}</Text>
       {resource.type === "video" ? <VideoResourcePlayer resource={resource} /> : null}
       <Text style={styles.articleBody}>{resourceArticleText(resource)}</Text>
-      {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label={cta} onPress={complete} loading={loading} /></View> : null}
+      {!readOnly ? <View style={styles.resourceBottomCta}><Button role={role} label={cta} onPress={complete} loading={loading} /></View> : null}
       {completedTopic ? (
         <View style={styles.topicTrayBackdrop}>
           <View style={styles.topicTray}>
@@ -2308,7 +2374,7 @@ function FlashIntro({ role, resource, start, back }: { role: Role; resource: Res
         <Text style={styles.flashIntroCopy}>{description}</Text>
         <Text style={styles.flashIntroMeta}>{cards.length} cards • Tap each card to reveal the answer</Text>
       </View>
-      {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View> : null}
+      {role !== "parent" && role !== "tutor" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View> : null}
     </>
   );
 }
@@ -2349,7 +2415,7 @@ function QuizIntro({ role, resource, loading, start, back }: { role: Role; resou
         <Text style={styles.quizHeroTitle}>{resource.title}</Text>
         <Text style={styles.quizHeroCopy}>{resource.description}</Text>
       </View>
-      {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start" onPress={start} loading={loading} /></View> : null}
+      {role !== "parent" && role !== "tutor" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start" onPress={start} loading={loading} /></View> : null}
     </>
   );
 }
@@ -2414,7 +2480,21 @@ function QuizResult({ role, payload, answers, complete, loading, backToTopic }: 
   );
 }
 
-function MilestoneDetail({ role, milestone, openActivity, back }: { role: Role; milestone: ProgramMilestone; openActivity: (activityId?: string) => void; back: () => void }) {
+function MilestoneDetail({
+  role,
+  milestone,
+  openActivity,
+  back,
+  editableActivities,
+  onEditActivity
+}: {
+  role: Role;
+  milestone: ProgramMilestone;
+  openActivity: (activityId?: string) => void;
+  back: () => void;
+  editableActivities?: boolean;
+  onEditActivity?: (activityId: string) => void;
+}) {
   const theme = useRoleTheme(role);
   const activities = milestone.activities ?? [];
   const completed = activities.filter((activity) => activity.status === "complete").length;
@@ -2433,17 +2513,17 @@ function MilestoneDetail({ role, milestone, openActivity, back }: { role: Role; 
         <Text style={styles.activitySectionTitle}>Getting started</Text>
         <View style={[styles.activityBadge, { backgroundColor: theme.accent }]}><Text style={[styles.activityBadgeText, { color: theme.text }]}>Required</Text></View>
       </View>
-      {required.map((activity) => <ActivityRow key={activity.id} activity={activity} disabled={role === "parent"} onPress={() => openActivity(activity.id)} />)}
+      {required.map((activity) => <ActivityRow key={activity.id} activity={activity} disabled={role === "parent"} onPress={() => openActivity(activity.id)} editable={editableActivities} onEdit={() => onEditActivity?.(activity.id)} />)}
       {supporting.length ? (
         <>
           <View style={styles.activitySectionHeader}>
             <Text style={styles.activitySectionTitle}>Supporting activities</Text>
             <View style={styles.optionalBadge}><Text style={styles.optionalBadgeText}>Optional</Text></View>
           </View>
-          {supporting.map((activity) => <ActivityRow key={activity.id} activity={activity} disabled={role === "parent"} onPress={() => openActivity(activity.id)} />)}
+          {supporting.map((activity) => <ActivityRow key={activity.id} activity={activity} disabled={role === "parent"} onPress={() => openActivity(activity.id)} editable={editableActivities} onEdit={() => onEditActivity?.(activity.id)} />)}
         </>
       ) : null}
-      {role !== "parent" ? (
+      {role !== "parent" && role !== "tutor" ? (
         <View style={styles.bottomCtaInline}>
           <Button role={role} label={completed > 0 ? "Continue" : "Let's get started"} onPress={() => openActivity(nextActivity?.id)} disabled={!nextActivity} />
         </View>
@@ -2452,7 +2532,7 @@ function MilestoneDetail({ role, milestone, openActivity, back }: { role: Role; 
   );
 }
 
-function ActivityRow({ activity, onPress, disabled }: { activity: NonNullable<ProgramMilestone["activities"]>[number]; onPress: () => void; disabled?: boolean }) {
+function ActivityRow({ activity, onPress, disabled, editable, onEdit }: { activity: NonNullable<ProgramMilestone["activities"]>[number]; onPress: () => void; disabled?: boolean; editable?: boolean; onEdit?: () => void }) {
   const palette = activity.type === "video" ? ["#FBE7FA", "▷"] : activity.type === "flashcard" ? ["#EAD8FF", "▤"] : activity.type === "quiz" ? ["#FFE8D8", "?"] : ["#E5F6FD", "▣"];
   return (
     <Pressable disabled={disabled} style={({ pressed }) => [styles.activityRow, activity.status === "complete" && styles.activityRowComplete, disabled && styles.activityRowDisabled, pressed && !disabled && styles.pressed]} onPress={onPress}>
@@ -2467,6 +2547,11 @@ function ActivityRow({ activity, onPress, disabled }: { activity: NonNullable<Pr
         <Text style={styles.activityType}>{capitalize(activity.type)}</Text>
       </View>
       {activity.status === "complete" ? <View style={styles.activityCompleteTick}><Text style={styles.activityCompleteTickText}>✓</Text></View> : null}
+      {editable ? (
+        <Pressable style={({ pressed }) => [styles.activityEditButton, pressed && styles.pressed]} onPress={(event) => { event.stopPropagation(); onEdit?.(); }}>
+          <Text style={styles.activityEditText}>Edit</Text>
+        </Pressable>
+      ) : null}
     </Pressable>
   );
 }
@@ -2520,6 +2605,7 @@ function Sessions({
 }) {
   const theme = useRoleTheme(role);
   const selectedProgram = selectedPrograms.find((program) => program.id === selectedProgramId) ?? programs.find((program) => program.id === selectedProgramId) ?? selectedPrograms[0] ?? programs[0];
+  const selectedProgramStatus = programStatusMeta(selectedProgram);
 
   return (
     <>
@@ -2577,6 +2663,11 @@ function Sessions({
           loadingAction={loadingAction}
         />
       ) : null}
+      {role === "tutor" && selectedProgram ? (
+        <View style={styles.programStatusLine}>
+          <Text style={[styles.programStatusPill, { color: theme.text }]}>{selectedProgramStatus.icon} {selectedProgramStatus.label}</Text>
+        </View>
+      ) : null}
       <View style={styles.milesTimeline}>
         {milestones.map((milestone, index) => {
           const locked = milestone.sequence > completedMilestone + 1;
@@ -2590,7 +2681,7 @@ function Sessions({
           const totalActivities = milestone.activities?.length ?? 4;
           const progress = complete ? 1 : totalActivities ? completedActivities / totalActivities : 0;
           const hasStarted = completedActivities > 0;
-          const ctaLabel = locked ? "Coming soon" : role === "parent" ? "View progress" : complete ? "Review" : hasStarted ? "Continue" : "Start";
+          const ctaLabel = locked ? "Coming soon" : role === "parent" ? "View progress" : role === "tutor" ? "Review" : complete ? "Review" : hasStarted ? "Continue" : "Start";
           const chipLabel = !complete && hasStarted ? "Keep learning" : null;
 
           return (
@@ -2678,6 +2769,8 @@ function TutorProgramAuthoring({
 }) {
   const theme = useRoleTheme(role);
   const updateDraft = (patch: Partial<TutorProgramDraft>) => setDraft((current) => ({ ...current, ...patch }));
+  const selectedProgramStatus = programStatusMeta(selectedProgram);
+  const selectedProgramEditable = selectedProgram ? !isPublishedProgram(selectedProgram) : false;
   const milestones = draft.milestones?.length ? draft.milestones : [{
     title: draft.milestoneTitle ?? "Milestone 1",
     sequence: 1,
@@ -2772,24 +2865,29 @@ function TutorProgramAuthoring({
         <View style={styles.flex}>
           <Text style={styles.tutorProgramEyebrow}>Educator programs</Text>
           <Text style={styles.tutorProgramTitle}>{selectedProgram?.title ?? "Create your first program"}</Text>
-          <Text style={styles.tutorProgramCopy}>{programs.length ? "Select a configured program to edit, or start a blank one." : "Add a program and configure milestones with your own education content."}</Text>
+          <Text style={styles.tutorProgramCopy}>{programs.length ? `${selectedProgramStatus.icon} ${selectedProgramStatus.label}. Drafts can be resumed; published programs are view-only.` : "Add a program and configure milestones with your own education content."}</Text>
         </View>
       </View>
       {programs.length ? (
         <View style={[styles.selectedProgramPanel, { backgroundColor: theme.card }]}>
           <FieldLabel>Configured programs</FieldLabel>
           <DropdownField
-            value={selectedProgram?.title ?? "Select program"}
-            options={programs.map((program) => program.title)}
-            onSelect={(title) => {
-              const program = programs.find((item) => item.title === title);
-              if (program) loadProgramForEdit(program.id);
+            value={selectedProgram ? programOptionLabel(selectedProgram) : "Select program"}
+            options={programs.map(programOptionLabel)}
+            onSelect={(label) => {
+              const program = programs.find((item) => programOptionLabel(item) === label);
+              if (!program) return;
+              if (isPublishedProgram(program)) {
+                setEditingProgramId(null);
+                setOpen(false);
+              }
+              loadProgramForEdit(program.id);
             }}
           />
           <View style={styles.row}>
-            <Button role={role} variant="secondary" label="Edit selected" loading={loadingAction === "loadTutorProgram:" + selectedProgram?.id} onPress={() => selectedProgram && loadProgramForEdit(selectedProgram.id)} />
             <Button role={role} label="Add new" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
           </View>
+          {selectedProgram && !selectedProgramEditable ? <Muted>This program is published. Students can view it, but edits are locked.</Muted> : null}
         </View>
       ) : (
         <Button role={role} label="Add a program" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
@@ -4188,10 +4286,14 @@ const styles = StyleSheet.create({
   activityType: { color: "#111827", fontSize: 16, fontWeight: "500", lineHeight: 22, marginTop: 2 },
   activityCompleteTick: { alignItems: "center", backgroundColor: "#35B34A", borderRadius: 999, height: 28, justifyContent: "center", width: 28 },
   activityCompleteTickText: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" },
+  activityEditButton: { alignItems: "center", backgroundColor: "#F8FAFC", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, justifyContent: "center", minHeight: 34, paddingHorizontal: 14 },
+  activityEditText: { color: "#202A35", fontSize: 12, fontWeight: "900" },
   bottomCtaInline: { marginTop: 26 },
   milesSummaryTitle: { color: "#202A35", fontSize: 17, fontWeight: "900", lineHeight: 22 },
   milesSummaryCopy: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19 },
   selectedProgramPanel: { borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, padding: 12 },
+  programStatusLine: { alignItems: "flex-start", marginTop: -2 },
+  programStatusPill: { backgroundColor: "rgba(255,255,255,0.82)", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, fontSize: 12, fontWeight: "900", overflow: "hidden", paddingHorizontal: 12, paddingVertical: 7 },
   tutorProgramPanel: { gap: 14 },
   tutorProgramSummary: { borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, flexDirection: "row", gap: 12, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
   tutorProgramEyebrow: { color: "#64748B", fontSize: 12, fontWeight: "900", letterSpacing: 0 },
