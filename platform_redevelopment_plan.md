@@ -257,8 +257,9 @@ Status:
 - Completed: tutor batch roster drill-down shows enrolled students and pending request count.
 - Completed: parent class hub shows linked child classes in view-only mode.
 - Completed: DIS dashboard cards use live enrollment/request counts instead of static mock values.
+- Completed: approved batch schedules automatically create idempotent in-app reminders for the student and active linked parents.
 - Neon migration added in `202607140001_add_cancelled_batch_request_status` for the `BatchRequestStatus.cancelled` enum value.
-- Remaining outside the core workflow: paid order/payment intent, push/in-app notification delivery, and automatic calendar/reminder generation from approved batch schedules.
+- Remaining outside the core workflow: paid order/payment intent and push/in-app notification delivery.
 
 Phase 5 consolidated test matrix:
 
@@ -268,6 +269,7 @@ Phase 5 consolidated test matrix:
 - Student accepts a suggested batch and sees a new pending request.
 - Student withdraws a pending request and it moves to `cancelled`.
 - Tutor approves a pending request; an active enrollment is created.
+- Approval creates one active schedule reminder for the student and linked parent accounts without duplicates on re-approval.
 - Student sees the approved class in `Classes` and can open class details.
 - Tutor sees the approved student in batch roster drill-down.
 - Parent linked to the student sees the child class in view-only mode.

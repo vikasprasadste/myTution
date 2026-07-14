@@ -1593,16 +1593,7 @@ app.post("/api/v1/usermanagement/batch-requests/:id/approve", async (req, res) =
       update: { status: "active", requestId: request.id },
       create: { batchId: request.batchId, studentProfileId: request.studentProfileId, requestId: request.id, status: "active", sourceTag: "app" }
     });
-    await tx.reminder.create({
-      data: {
-        userId: request.studentProfile.userId,
-        profileId: request.studentProfileId,
-        role: "student",
-        title: `Class: ${request.batch.title}`,
-        startsAt: request.batch.startsAt,
-        sourceTag: "app"
-      }
-    });
+    await ensureBatchScheduleReminders(tx, request);
     return { approved, enrollment };
   });
   const updatedRequest = await prisma.batchRequest.findUnique({
@@ -2637,6 +2628,61 @@ async function listReminders(role: Role, userId?: string | null) {
     orderBy: { startsAt: "asc" }
   });
   return reminders.map(toReminder);
+}
+
+async function ensureBatchScheduleReminders(tx: any, request: {
+  batchId: string;
+  studentProfileId: string;
+  studentProfile: { userId: string };
+  batch: { title: string; startsAt: Date };
+}) {
+  const sourceTag = `batch:${request.batchId}:schedule`;
+  const studentTitle = `Class: ${request.batch.title}`;
+  await upsertReminderBySource(tx, {
+    userId: request.studentProfile.userId,
+    profileId: request.studentProfileId,
+    role: "student",
+    title: studentTitle,
+    startsAt: request.batch.startsAt,
+    sourceTag
+  });
+
+  const parentLinks = await tx.parentStudentLink.findMany({
+    where: { studentProfileId: request.studentProfileId, status: "active" },
+    include: { parentProfile: true }
+  });
+  await Promise.all(parentLinks.map((link: any) => upsertReminderBySource(tx, {
+    userId: link.parentProfile.userId,
+    profileId: link.parentProfileId,
+    role: "parent",
+    title: `Child class: ${request.batch.title}`,
+    startsAt: request.batch.startsAt,
+    sourceTag
+  })));
+}
+
+async function upsertReminderBySource(tx: any, input: {
+  userId: string;
+  profileId: string;
+  role: Role;
+  title: string;
+  startsAt: Date;
+  sourceTag: string;
+}) {
+  const existing = await tx.reminder.findFirst({
+    where: {
+      profileId: input.profileId,
+      startsAt: input.startsAt,
+      sourceTag: input.sourceTag
+    }
+  });
+  if (existing) {
+    return tx.reminder.update({
+      where: { id: existing.id },
+      data: { title: input.title, status: "active" }
+    });
+  }
+  return tx.reminder.create({ data: input });
 }
 
 function textContains(value: unknown) {
