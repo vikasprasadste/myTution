@@ -355,6 +355,24 @@ Acceptance criteria:
 - Parent can switch between linked children, later.
 - Parent cannot mutate learning state.
 
+Status:
+
+- Complete.
+- Completed: `GET /api/v1/parent/monitoring` returns linked children, program progress, active classes, latest quiz attempts, weekly learning summary, progress alerts, and placeholders for attendance, tutor notes, and payment status.
+- Completed: Parent Home displays a child monitoring panel sourced from API data only.
+- Completed: Parent monitoring cards link to existing read-only program and class views.
+- Completed: Parent monitoring uses existing child-linked progress, quiz attempt, and batch enrollment records without creating a second source of truth.
+- No Neon migration required for Phase 7 beyond the Phase 6 `QuizAttempt` migration.
+
+Phase 7 test matrix:
+
+- Parent `7838920130 / Parent@123` logs in and sees linked child `7838920127` monitoring data.
+- Parent Home shows child program percent, weekly completed activities, active class count, quiz average, latest quiz, and upcoming classes.
+- Parent taps the progress card and lands on read-only Program.
+- Parent taps class metrics and lands on read-only Reminders/Class visibility.
+- Parent cannot complete activities, comment/react in community, or mutate child learning state.
+- API `GET /api/v1/parent/monitoring?role=parent` returns only linked children for the authenticated parent.
+
 ### Phase 8: Trust, Reviews & Marketplace Quality
 
 Goal: Build confidence in tutor discovery and enrollment.

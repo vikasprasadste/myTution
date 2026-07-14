@@ -1969,6 +1969,161 @@ app.get("/api/v1/education-plan/activity-timeline", async (req, res) => {
   res.json({ data: progress.map(toActivityTimelineItem) });
 });
 
+app.get("/api/v1/parent/monitoring", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await readUserId(req);
+  if (role !== "parent") {
+    res.status(403).json({ error: "Parent monitoring is available only for parent profiles" });
+    return;
+  }
+  const parentProfile = await findProfile("parent", userId);
+  if (!parentProfile) {
+    res.status(404).json({ error: "Parent profile not found" });
+    return;
+  }
+
+  const childProfileIds = await getParentChildProfileIds(userId);
+  if (!childProfileIds.length) {
+    res.json({ data: { children: [] } });
+    return;
+  }
+
+  const [children, selections, enrollments, latestQuizAttempts, weeklyActivity] = await Promise.all([
+    prisma.profile.findMany({ where: { id: { in: childProfileIds } }, orderBy: [{ firstName: "asc" }, { lastName: "asc" }] }),
+    prisma.studentProgramSelection.findMany({
+      where: { profileId: { in: childProfileIds }, status: "active" },
+      select: { profileId: true, programId: true }
+    }),
+    prisma.batchEnrollment.findMany({
+      where: { studentProfileId: { in: childProfileIds }, status: "active" },
+      include: { studentProfile: true, batch: { include: { tutorProfile: { include: { profile: true } }, enrollments: { include: { studentProfile: true } } } } },
+      orderBy: { createdAt: "desc" }
+    }),
+    prisma.quizAttempt.findMany({
+      where: { profileId: { in: childProfileIds } },
+      orderBy: { createdAt: "desc" },
+      take: 40,
+      include: { resource: { select: { title: true } } }
+    }),
+    prisma.activityProgress.findMany({
+      where: {
+        profileId: { in: childProfileIds },
+        status: "complete",
+        updatedAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+      },
+      orderBy: { updatedAt: "desc" },
+      select: { profileId: true, updatedAt: true }
+    })
+  ]);
+
+  const programIds = Array.from(new Set(selections.map((selection) => selection.programId)));
+  const progressSummaries = await buildLearnerProgressSummaries(children, programIds);
+  const progressByChild = new Map(progressSummaries.map((summary) => [summary.profileId, summary.programs]));
+  const classesByChild = new Map<string, ReturnType<typeof toStudentClass>[]>();
+  enrollments.forEach((enrollment) => {
+    const current = classesByChild.get(enrollment.studentProfileId) ?? [];
+    current.push(toStudentClass(enrollment.batch, enrollment.id));
+    classesByChild.set(enrollment.studentProfileId, current);
+  });
+
+  const quizByChild = new Map<string, Array<{
+    id: string;
+    resourceId: string;
+    title: string;
+    score: number;
+    total: number;
+    percent: number;
+    createdAt: string;
+  }>>();
+  latestQuizAttempts.forEach((attempt) => {
+    const current = quizByChild.get(attempt.profileId) ?? [];
+    if (current.length < 5) {
+      current.push({
+        id: attempt.id,
+        resourceId: attempt.resourceId,
+        title: attempt.resource?.title ?? "Quiz",
+        score: attempt.score,
+        total: attempt.total,
+        percent: attempt.percent,
+        createdAt: attempt.createdAt.toISOString()
+      });
+      quizByChild.set(attempt.profileId, current);
+    }
+  });
+
+  const weeklyByChild = new Map<string, { completedActivities: number; latestActivityAt: string | null }>();
+  weeklyActivity.forEach((item) => {
+    const current = weeklyByChild.get(item.profileId) ?? { completedActivities: 0, latestActivityAt: null };
+    current.completedActivities += 1;
+    if (!current.latestActivityAt) current.latestActivityAt = item.updatedAt.toISOString();
+    weeklyByChild.set(item.profileId, current);
+  });
+
+  const data = children.map((child) => {
+    const progress = progressByChild.get(child.id) ?? [];
+    const classes = classesByChild.get(child.id) ?? [];
+    const latestQuiz = quizByChild.get(child.id) ?? [];
+    const weekly = weeklyByChild.get(child.id) ?? { completedActivities: 0, latestActivityAt: null };
+    const averageQuizPercent = latestQuiz.length
+      ? Math.round(latestQuiz.reduce((sum, quiz) => sum + quiz.percent, 0) / latestQuiz.length)
+      : null;
+    const primaryProgram = progress[0];
+    const alerts = [
+      ...(primaryProgram && primaryProgram.percent >= 100 ? [{
+        id: `${child.id}:program-complete`,
+        type: "progress" as const,
+        severity: "success" as const,
+        title: "Program complete",
+        copy: `${child.firstName} has completed ${primaryProgram.title}.`
+      }] : []),
+      ...(primaryProgram && primaryProgram.percent > 0 && primaryProgram.percent < 100 ? [{
+        id: `${child.id}:progress`,
+        type: "progress" as const,
+        severity: "info" as const,
+        title: "Learning is moving",
+        copy: `${primaryProgram.completedActivities}/${primaryProgram.totalActivities} activities complete in ${primaryProgram.title}.`
+      }] : []),
+      ...(latestQuiz[0] ? [{
+        id: `${child.id}:quiz`,
+        type: "quiz" as const,
+        severity: latestQuiz[0].percent >= 60 ? "success" as const : "warning" as const,
+        title: "Latest quiz score",
+        copy: `${latestQuiz[0].title}: ${latestQuiz[0].percent}%`
+      }] : []),
+      ...(classes[0] ? [{
+        id: `${child.id}:class`,
+        type: "class" as const,
+        severity: "info" as const,
+        title: "Upcoming class",
+        copy: `${classes[0].title} with ${classes[0].tutorName}`
+      }] : [])
+    ].slice(0, 4);
+
+    return {
+      profileId: child.id,
+      name: `${child.firstName} ${child.lastName}`.trim(),
+      city: child.city,
+      progress,
+      classes,
+      latestQuiz,
+      weeklySummary: {
+        completedActivities: weekly.completedActivities,
+        activeClasses: classes.length,
+        averageQuizPercent,
+        latestActivityAt: weekly.latestActivityAt
+      },
+      alerts,
+      placeholders: {
+        attendance: "Attendance tracking coming soon",
+        tutorNotes: "Tutor notes coming soon",
+        paymentStatus: "Payment status coming soon"
+      }
+    };
+  });
+
+  res.json({ data: { children: data } });
+});
+
 app.get("/api/v1/education-plan/programs", async (req, res) => {
   const role = readRole(req.query.role);
   if (role === "parent") {

@@ -191,6 +191,51 @@ export interface ActivityTimelineItem {
   updatedAt: string;
 }
 
+export interface ParentMonitoringQuizSummary {
+  id: string;
+  resourceId: string;
+  title: string;
+  score: number;
+  total: number;
+  percent: number;
+  createdAt: string;
+}
+
+export interface ParentMonitoringAlert {
+  id: string;
+  type: "progress" | "quiz" | "class" | "attention";
+  severity: "info" | "success" | "warning";
+  title: string;
+  copy: string;
+}
+
+export interface ParentWeeklySummary {
+  completedActivities: number;
+  activeClasses: number;
+  averageQuizPercent: number | null;
+  latestActivityAt: string | null;
+}
+
+export interface ParentMonitoringChild {
+  profileId: string;
+  name: string;
+  city: string | null;
+  progress: LearnerProgressProgramSummary[];
+  classes: BatchClass[];
+  latestQuiz: ParentMonitoringQuizSummary[];
+  weeklySummary: ParentWeeklySummary;
+  alerts: ParentMonitoringAlert[];
+  placeholders: {
+    attendance: string;
+    tutorNotes: string;
+    paymentStatus: string;
+  };
+}
+
+export interface ParentMonitoringResponse {
+  children: ParentMonitoringChild[];
+}
+
 export interface ProgramSummary {
   id: string;
   role: Role;

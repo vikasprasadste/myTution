@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, ParentMonitoringResponse, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -338,6 +338,7 @@ export default function Index() {
   const [batchClasses, setBatchClasses] = useState<BatchClass[]>([]);
   const [batchRequests, setBatchRequests] = useState<BatchRequestSummary[]>([]);
   const [learnerProgress, setLearnerProgress] = useState<LearnerProgressSummary[]>([]);
+  const [parentMonitoring, setParentMonitoring] = useState<ParentMonitoringResponse | null>(null);
   const [tutorSupply, setTutorSupply] = useState<TutorSupplyState | null>(null);
   const [tutorBatchDraft, setTutorBatchDraft] = useState<TutorBatchDraft>(defaultTutorBatchDraft);
   const [tutorSearchLoading, setTutorSearchLoading] = useState(false);
@@ -602,14 +603,15 @@ export default function Index() {
     async function loadRoleData() {
       try {
         const token = authSession?.accessToken;
-        const [identity, bootstrap, recs, marketplace, eventData, dashboard, programList] = await Promise.all([
+        const [identity, bootstrap, recs, marketplace, eventData, dashboard, programList, monitoring] = await Promise.all([
           token ? apiGet<{ data: IdentityContext }>(`/api/v1/identity/me?role=${role}`, token) : Promise.resolve({ data: null as IdentityContext | null }),
           apiGet<{ persona: Persona }>(`/api/v1/bootstrap?role=${role}`, token),
           apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`),
           role === "student" ? apiGet<{ data: MarketplaceRecommendationResponse }>(`/api/v1/marketplace/recommendations?role=student`, token) : Promise.resolve({ data: null as MarketplaceRecommendationResponse | null }),
           token ? apiGet<{ data: Reminder[] }>(`/api/v1/events-reminders?role=${role}`, token) : Promise.resolve({ data: [] }),
           token ? apiGet<{ data: { cards: DashboardCard[] } }>(`/api/v1/dis/dashboard?role=${role}`, token) : Promise.resolve({ data: { cards: [] } }),
-          apiGet<{ data: ProgramSummary[]; selectedPrograms?: ProgramSummary[]; maxSelectedPrograms?: number }>(`/api/v1/education-plan/programs?role=${role}`, token)
+          apiGet<{ data: ProgramSummary[]; selectedPrograms?: ProgramSummary[]; maxSelectedPrograms?: number }>(`/api/v1/education-plan/programs?role=${role}`, token),
+          token && role === "parent" ? apiGet<{ data: ParentMonitoringResponse }>(`/api/v1/parent/monitoring?role=parent`, token) : Promise.resolve({ data: null as ParentMonitoringResponse | null })
         ]);
         const selectedFromApi = programList.selectedPrograms ?? programList.data.filter((program) => program.selected);
         const programId = selectedProgramId ?? selectedFromApi[0]?.id ?? (role === "student" ? null : programList.data[0]?.id ?? null);
@@ -627,6 +629,7 @@ export default function Index() {
         }
         setReminders(eventData.data);
         setDashboardCards(dashboard.data.cards);
+        setParentMonitoring(monitoring.data);
         setPrograms(programList.data);
         setSelectedPrograms(selectedFromApi);
         setSelectedProgramId(programId);
@@ -651,6 +654,7 @@ export default function Index() {
         setIdentityContext(null);
         setApiRecommendations(null);
         setDashboardCards(null);
+        setParentMonitoring(null);
         setApiMilestones(null);
         if (pendingProgramId) {
           if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
@@ -1626,6 +1630,7 @@ export default function Index() {
           ) : null}
 
           {role === "student" ? <StudentBatchRequestAlerts role={role} requests={batchRequests} openTutorSearch={() => setScreen("search")} acceptSuggestion={acceptSuggestedBatch} withdrawRequest={withdrawBatchRequest} dismiss={(id) => actOnBatchRequest(id, "dismiss")} actionLoading={loadingAction} /> : null}
+          {role === "parent" ? <ParentMonitoringPanel data={parentMonitoring} openProgram={() => setScreen("sessions")} openClasses={() => setScreen("roleHub")} /> : null}
 
           <SectionTitle>Dashboard</SectionTitle>
           <DashboardGrid role={role} cards={dashboardCards} setScreen={setScreen} />
@@ -2360,6 +2365,111 @@ function DashboardGrid({ role, cards, setScreen }: { role: Role; cards: Dashboar
         <Metric key={item.label} role={role} value={item.value} label={item.label} onPress={() => setScreen(item.target)} />
       ))}
     </View>
+  );
+}
+
+function ParentMonitoringPanel({ data, openProgram, openClasses }: { data: ParentMonitoringResponse | null; openProgram: () => void; openClasses: () => void }) {
+  const theme = useRoleTheme("parent");
+  if (!data) {
+    return (
+      <>
+        <SectionTitle>Child monitoring</SectionTitle>
+        <View style={styles.monitoringCard}>
+          <ActivityIndicator color={theme.accentStrong} />
+          <Muted>Loading child progress</Muted>
+        </View>
+      </>
+    );
+  }
+  if (!data.children.length) {
+    return (
+      <>
+        <SectionTitle>Child monitoring</SectionTitle>
+        <View style={styles.monitoringCard}>
+          <CardTitle>No linked child yet</CardTitle>
+          <Muted>Use the activation code from the student account to connect this parent profile.</Muted>
+        </View>
+      </>
+    );
+  }
+  return (
+    <>
+      <SectionTitle>Child monitoring</SectionTitle>
+      {data.children.map((child) => {
+        const primaryProgram = child.progress[0];
+        const latestQuiz = child.latestQuiz[0];
+        return (
+          <View key={child.profileId} style={styles.monitoringCard}>
+            <View style={styles.monitoringHeaderRow}>
+              <View>
+                <Text style={styles.monitoringChildName}>{child.name}</Text>
+                <Text style={styles.monitoringMeta}>{child.city ?? "City not added"}</Text>
+              </View>
+              <View style={[styles.monitoringScorePill, { backgroundColor: theme.accent }]}>
+                <Text style={[styles.monitoringScoreText, { color: theme.text }]}>{primaryProgram?.percent ?? 0}%</Text>
+              </View>
+            </View>
+
+            <Pressable style={({ pressed }) => [styles.monitoringProgressBox, pressed && styles.pressed]} onPress={openProgram}>
+              <View style={styles.monitoringHeaderRow}>
+                <Text style={styles.learnerProgressTitle}>{primaryProgram?.title ?? "No active program"}</Text>
+                <Text style={styles.learnerProgressPercent}>{primaryProgram ? `${primaryProgram.completedActivities}/${primaryProgram.totalActivities}` : "0/0"}</Text>
+              </View>
+              <View style={styles.learnerProgressTrack}>
+                <View style={[styles.learnerProgressFill, { width: `${primaryProgram?.percent ?? 0}%`, backgroundColor: theme.accentStrong }]} />
+              </View>
+              <Text style={styles.monitoringMeta}>Tap to view read-only program journey</Text>
+            </Pressable>
+
+            <View style={styles.monitoringSummaryGrid}>
+              <View style={styles.monitoringMiniBox}>
+                <Text style={styles.monitoringMiniValue}>{child.weeklySummary.completedActivities}</Text>
+                <Text style={styles.monitoringMiniLabel}>Done this week</Text>
+              </View>
+              <Pressable style={({ pressed }) => [styles.monitoringMiniBox, pressed && styles.pressed]} onPress={openClasses}>
+                <Text style={styles.monitoringMiniValue}>{child.weeklySummary.activeClasses}</Text>
+                <Text style={styles.monitoringMiniLabel}>Classes</Text>
+              </Pressable>
+              <View style={styles.monitoringMiniBox}>
+                <Text style={styles.monitoringMiniValue}>{child.weeklySummary.averageQuizPercent !== null ? `${child.weeklySummary.averageQuizPercent}%` : "--"}</Text>
+                <Text style={styles.monitoringMiniLabel}>Quiz avg.</Text>
+              </View>
+            </View>
+
+            {latestQuiz ? (
+              <View style={styles.monitoringInfoRow}>
+                <Text style={styles.monitoringInfoTitle}>Latest quiz</Text>
+                <Text style={styles.monitoringInfoMeta}>{latestQuiz.title} • {latestQuiz.score}/{latestQuiz.total} • {latestQuiz.percent}%</Text>
+              </View>
+            ) : null}
+
+            {child.classes.slice(0, 2).map((item) => (
+              <Pressable key={item.id} style={({ pressed }) => [styles.monitoringInfoRow, pressed && styles.pressed]} onPress={openClasses}>
+                <Text style={styles.monitoringInfoTitle}>{item.title}</Text>
+                <Text style={styles.monitoringInfoMeta}>{item.schedule} • {item.tutorName}</Text>
+              </Pressable>
+            ))}
+
+            {child.alerts.length ? (
+              <View style={styles.monitoringAlertStack}>
+                {child.alerts.map((alert) => (
+                  <View key={alert.id} style={styles.monitoringAlert}>
+                    <Text style={styles.monitoringAlertTitle}>{alert.title}</Text>
+                    <Text style={styles.monitoringAlertCopy}>{alert.copy}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
+            <View style={styles.monitoringPlaceholderRow}>
+              <Text style={styles.monitoringPlaceholder}>{child.placeholders.attendance}</Text>
+              <Text style={styles.monitoringPlaceholder}>{child.placeholders.tutorNotes}</Text>
+              <Text style={styles.monitoringPlaceholder}>{child.placeholders.paymentStatus}</Text>
+            </View>
+          </View>
+        );
+      })}
+    </>
   );
 }
 
@@ -5394,6 +5504,26 @@ const styles = StyleSheet.create({
   parentRow: { backgroundColor: "rgba(255,255,255,0.92)", borderColor: "#DDE7EF", borderRadius: 14, borderWidth: 1, padding: 13 },
   parentRowName: { color: "#202A35", fontSize: 15, fontWeight: "900" },
   parentRowMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", marginTop: 2 },
+  monitoringCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, gap: 12, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
+  monitoringHeaderRow: { alignItems: "center", flexDirection: "row", gap: 10, justifyContent: "space-between" },
+  monitoringChildName: { color: "#202A35", fontSize: 18, fontWeight: "900", lineHeight: 23 },
+  monitoringMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17 },
+  monitoringScorePill: { alignItems: "center", borderRadius: 999, minWidth: 54, paddingHorizontal: 12, paddingVertical: 8 },
+  monitoringScoreText: { fontSize: 13, fontWeight: "900" },
+  monitoringProgressBox: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 14, borderWidth: 1, gap: 7, padding: 12 },
+  monitoringSummaryGrid: { flexDirection: "row", gap: 9 },
+  monitoringMiniBox: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 14, borderWidth: 1, flex: 1, gap: 2, minHeight: 70, padding: 11 },
+  monitoringMiniValue: { color: "#202A35", fontSize: 20, fontWeight: "900", lineHeight: 25 },
+  monitoringMiniLabel: { color: "#536A86", fontSize: 11, fontWeight: "800", lineHeight: 15 },
+  monitoringInfoRow: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 14, borderWidth: 1, gap: 3, padding: 12 },
+  monitoringInfoTitle: { color: "#202A35", fontSize: 14, fontWeight: "900", lineHeight: 19 },
+  monitoringInfoMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17 },
+  monitoringAlertStack: { gap: 8 },
+  monitoringAlert: { backgroundColor: "#ECFEFF", borderColor: "#BAE6FD", borderRadius: 13, borderWidth: 1, gap: 3, padding: 11 },
+  monitoringAlertTitle: { color: "#075985", fontSize: 12, fontWeight: "900", lineHeight: 16 },
+  monitoringAlertCopy: { color: "#334155", fontSize: 12, fontWeight: "700", lineHeight: 17 },
+  monitoringPlaceholderRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  monitoringPlaceholder: { backgroundColor: "#F1F5F9", borderRadius: 999, color: "#64748B", fontSize: 11, fontWeight: "800", overflow: "hidden", paddingHorizontal: 9, paddingVertical: 6 },
   batchAlertCard: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, gap: 8, padding: 14, paddingRight: 44, position: "relative", shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.045, shadowRadius: 12, elevation: 1 },
   suggestedBatchBox: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 13, borderWidth: 1, gap: 4, padding: 10 },
   suggestedBatchLabel: { color: "#6B21A8", fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
