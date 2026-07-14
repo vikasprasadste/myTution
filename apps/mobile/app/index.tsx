@@ -902,6 +902,20 @@ export default function Index() {
     }
   }
 
+  async function withdrawBatchRequest(requestId: string) {
+    setLoadingAction("withdrawRequest:" + requestId);
+    try {
+      await apiPost("/api/v1/usermanagement/batch-requests/" + requestId + "/withdraw", {}, authSession?.accessToken);
+      setApiNotice("Batch request withdrawn.");
+      await refreshStudentBatchRequests();
+      await refreshTutorSearch();
+    } catch {
+      setApiNotice("Batch request could not be withdrawn. Please check API deployment and login state.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
   function restartPrototype() {
     setRole("student");
     setPhoneNumber("");
@@ -1557,7 +1571,7 @@ export default function Index() {
             </Pressable>
           ) : null}
 
-          {role === "student" ? <StudentBatchRequestAlerts role={role} requests={batchRequests} openTutorSearch={() => setScreen("search")} acceptSuggestion={acceptSuggestedBatch} dismiss={(id) => actOnBatchRequest(id, "dismiss")} actionLoading={loadingAction} /> : null}
+          {role === "student" ? <StudentBatchRequestAlerts role={role} requests={batchRequests} openTutorSearch={() => setScreen("search")} acceptSuggestion={acceptSuggestedBatch} withdrawRequest={withdrawBatchRequest} dismiss={(id) => actOnBatchRequest(id, "dismiss")} actionLoading={loadingAction} /> : null}
 
           <SectionTitle>Dashboard</SectionTitle>
           <DashboardGrid role={role} cards={dashboardCards} setScreen={setScreen} />
@@ -3790,15 +3804,15 @@ function BatchRequestCard({ role, request, approveRequest, requestAction, action
   );
 }
 
-function StudentBatchRequestAlerts({ role, requests, openTutorSearch, acceptSuggestion, dismiss, actionLoading }: { role: Role; requests: BatchRequestSummary[]; openTutorSearch: () => void; acceptSuggestion: (id: string) => void; dismiss: (id: string) => void; actionLoading: string | null }) {
-  const visible = requests.filter((request) => ["rejected", "deferred", "suggested"].includes(request.status));
+function StudentBatchRequestAlerts({ role, requests, openTutorSearch, acceptSuggestion, withdrawRequest, dismiss, actionLoading }: { role: Role; requests: BatchRequestSummary[]; openTutorSearch: () => void; acceptSuggestion: (id: string) => void; withdrawRequest: (id: string) => void; dismiss: (id: string) => void; actionLoading: string | null }) {
+  const visible = requests.filter((request) => ["pending", "rejected", "deferred", "suggested", "cancelled"].includes(request.status));
   if (!visible.length) return null;
   return (
     <>
       <SectionTitle>Batch updates</SectionTitle>
       {visible.map((request) => (
         <View key={request.id} style={styles.batchAlertCard}>
-          <Pressable style={styles.alertClose} onPress={() => dismiss(request.id)}><Text style={styles.alertCloseText}>×</Text></Pressable>
+          {request.status === "pending" ? null : <Pressable style={styles.alertClose} onPress={() => dismiss(request.id)}><Text style={styles.alertCloseText}>×</Text></Pressable>}
           <Text style={styles.batchTitle}>{request.batch.title}</Text>
           <Text style={styles.batchMeta}>{capitalize(request.status)} by {request.tutor.name}</Text>
           <Text style={styles.batchMeta}>{request.tutorResponse ?? "Please choose your next action."}</Text>
@@ -3824,6 +3838,11 @@ function StudentBatchRequestAlerts({ role, requests, openTutorSearch, acceptSugg
             <View style={styles.requestActionGrid}>
               <Button role={role} label="Accept suggested batch" loading={actionLoading === "acceptSuggestion:" + request.id} onPress={() => acceptSuggestion(request.id)} />
               <Button role={role} variant="secondary" label="View tutor batches" onPress={openTutorSearch} />
+            </View>
+          ) : null}
+          {request.status === "pending" ? (
+            <View style={styles.requestActionGrid}>
+              <Button role={role} variant="secondary" label="Withdraw request" loading={actionLoading === "withdrawRequest:" + request.id} onPress={() => withdrawRequest(request.id)} />
             </View>
           ) : null}
         </View>

@@ -1718,6 +1718,29 @@ app.post("/api/v1/usermanagement/batch-requests/:id/accept-suggestion", async (r
   res.status(201).json({ data: toBatchRequestSummary(result) });
 });
 
+app.post("/api/v1/usermanagement/batch-requests/:id/withdraw", async (req, res) => {
+  const userId = await readUserId(req);
+  const student = await findProfile("student", userId);
+  if (!student) {
+    res.status(404).json({ error: "Student profile not found" });
+    return;
+  }
+  const request = await prisma.batchRequest.findUnique({
+    where: { id: req.params.id },
+    include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true }
+  });
+  if (!request || request.studentProfileId !== student.id || !["pending", "suggested"].includes(request.status)) {
+    res.status(404).json({ error: "Withdrawable request not found" });
+    return;
+  }
+  const withdrawn = await prisma.batchRequest.update({
+    where: { id: request.id },
+    data: { status: "cancelled", tutorResponse: "Student withdrew this request." },
+    include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true }
+  });
+  res.json({ data: toBatchRequestSummary(withdrawn) });
+});
+
 app.post("/api/v1/usermanagement/batch-requests/:id/dismiss", async (req, res) => {
   const userId = await readUserId(req);
   const student = await findProfile("student", userId);
@@ -3108,18 +3131,18 @@ async function enrichBatchRequestSummaries(requests: any[]) {
 
 function batchRequestTimeline(request: any) {
   const createdAt = request.createdAt?.toISOString?.() ?? null;
-  const isTerminal = ["approved", "rejected", "deferred", "dismissed"].includes(request.status);
+  const isTerminal = ["approved", "rejected", "deferred", "dismissed", "cancelled"].includes(request.status);
   return [
     { key: "requested", label: "Request sent", status: "complete" as const, at: createdAt },
     {
       key: "tutor_review",
-      label: request.status === "suggested" ? "Tutor suggested another batch" : request.status === "pending" ? "Tutor review pending" : "Tutor responded",
+      label: request.status === "suggested" ? "Tutor suggested another batch" : request.status === "pending" ? "Tutor review pending" : request.status === "cancelled" ? "Student withdrew request" : "Tutor responded",
       status: request.status === "pending" ? "current" as const : "complete" as const,
       at: request.status === "pending" ? null : request.updatedAt?.toISOString?.() ?? null
     },
     {
       key: "next_step",
-      label: request.status === "approved" ? "Enrollment active" : request.status === "suggested" ? "Student action needed" : request.status === "rejected" ? "Request denied" : request.status === "deferred" ? "Deferred for later" : request.status === "dismissed" ? "Closed" : "Awaiting result",
+      label: request.status === "approved" ? "Enrollment active" : request.status === "suggested" ? "Student action needed" : request.status === "rejected" ? "Request denied" : request.status === "deferred" ? "Deferred for later" : request.status === "cancelled" ? "Withdrawn by student" : request.status === "dismissed" ? "Closed" : "Awaiting result",
       status: isTerminal || request.status === "suggested" ? "current" as const : "pending" as const,
       at: isTerminal ? request.updatedAt?.toISOString?.() ?? null : null
     }

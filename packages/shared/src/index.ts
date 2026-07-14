@@ -410,7 +410,7 @@ export interface BatchClass {
 
 export interface BatchRequestSummary {
   id: string;
-  status: "pending" | "approved" | "rejected" | "deferred" | "suggested" | "dismissed";
+  status: "pending" | "approved" | "rejected" | "deferred" | "suggested" | "dismissed" | "cancelled";
   message: string | null;
   tutorResponse?: string | null;
   suggestedBatchId?: string | null;
