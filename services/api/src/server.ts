@@ -1775,6 +1775,20 @@ app.get("/api/v1/usermanagement/classes", async (req, res) => {
     res.json({ data: batches.map(toTutorBatchClass) });
     return;
   }
+  if (role === "parent") {
+    const childProfileIds = await getParentChildProfileIds(userId);
+    if (!childProfileIds.length) {
+      res.json({ data: [] });
+      return;
+    }
+    const enrollments = await prisma.batchEnrollment.findMany({
+      where: { studentProfileId: { in: childProfileIds }, status: "active" },
+      include: { batch: { include: { tutorProfile: { include: { profile: true } }, enrollments: { include: { studentProfile: true } } } } },
+      orderBy: { createdAt: "desc" }
+    });
+    res.json({ data: enrollments.map((enrollment) => toStudentClass(enrollment.batch, enrollment.id)) });
+    return;
+  }
   const enrollments = await prisma.batchEnrollment.findMany({
     where: { studentProfileId: profile.id, status: "active" },
     include: { batch: { include: { tutorProfile: { include: { profile: true } }, enrollments: { include: { studentProfile: true } } } } },

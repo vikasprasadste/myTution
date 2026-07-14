@@ -443,6 +443,7 @@ export default function Index() {
         refreshBatchRequests();
         refreshTutorSupply();
       }
+      if (role === "parent") refreshClasses("parent");
     }
     if (screen === "account" && role === "tutor") refreshBatchRequests();
   }, [screen, role, authSession?.accessToken]);
@@ -3597,7 +3598,7 @@ function RoleHub({
   archiveBatch: (batchId: string) => void;
   refreshSupply: () => void;
 }) {
-  const title = role === "tutor" ? "Tutor supply" : role === "student" ? "Classes" : "Surveys";
+  const title = role === "tutor" ? "Tutor supply" : role === "student" ? "Classes" : "Child classes";
   const [selectedRosterClass, setSelectedRosterClass] = useState<BatchClass | null>(null);
   if (role === "tutor" && selectedRosterClass) {
     return <ClassRoster role={role} item={selectedRosterClass} back={() => setSelectedRosterClass(null)} />;
@@ -3605,13 +3606,16 @@ function RoleHub({
   if (role === "student" && selectedRosterClass) {
     return <StudentClassDetail role={role} item={selectedRosterClass} requests={requests.filter((request) => request.batch.batchId === selectedRosterClass.batchId)} back={() => setSelectedRosterClass(null)} />;
   }
-  if (role === "student") {
+  if (role === "parent" && selectedRosterClass) {
+    return <StudentClassDetail role={role} item={selectedRosterClass} requests={[]} back={() => setSelectedRosterClass(null)} />;
+  }
+  if (role === "student" || role === "parent") {
     return (
       <>
         <TopBar title={title} left="‹" onLeft={back} />
         {loading ? <ActivityIndicator /> : null}
         {classes.map((item) => <ClassTile key={item.id} role={role} item={item} onPress={() => setSelectedRosterClass(item)} actionLabel="View class" />)}
-        {!loading && !classes.length ? <Card role={role}><CardTitle>No classes yet</CardTitle><Muted>Requested batches will appear here after the tutor approves enrollment.</Muted></Card> : null}
+        {!loading && !classes.length ? <Card role={role}><CardTitle>{role === "parent" ? "No child classes yet" : "No classes yet"}</CardTitle><Muted>{role === "parent" ? "Approved classes for linked children will appear here." : "Requested batches will appear here after the tutor approves enrollment."}</Muted></Card> : null}
       </>
     );
   }
@@ -3821,11 +3825,11 @@ function StudentClassDetail({ role, item, requests, back }: { role: Role; item: 
         <Text style={styles.classMeta}>Tutor: {item.tutorName} • ★ {item.tutorRating}</Text>
         {item.tutorHeadline ? <Text style={styles.classMeta}>{item.tutorHeadline}</Text> : null}
       </View>
-      <SectionTitle>Joining details</SectionTitle>
+      <SectionTitle>{role === "parent" ? "Class visibility" : "Joining details"}</SectionTitle>
       <Card role={role}>
         <CardTitle>{item.mode === "online" ? "Online class" : item.mode === "offline" ? "Classroom" : "Hybrid class"}</CardTitle>
         <Muted>{item.classroomLocation ?? "Online session"}</Muted>
-        {item.onlineVideoLink ? <Text style={styles.classLink}>{item.onlineVideoLink}</Text> : <Text style={styles.classLocked}>Video link unlocks 5 minutes before class.</Text>}
+        {role === "parent" ? <Text style={styles.classLocked}>Parent view only. Joining actions stay with the student account.</Text> : item.onlineVideoLink ? <Text style={styles.classLink}>{item.onlineVideoLink}</Text> : <Text style={styles.classLocked}>Video link unlocks 5 minutes before class.</Text>}
       </Card>
       <SectionTitle>Classmates</SectionTitle>
       {classmates.map((student) => (
