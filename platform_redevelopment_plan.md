@@ -249,8 +249,10 @@ Status:
 - In progress.
 - Completed so far: student can accept a tutor-suggested alternate batch; original suggested request is dismissed and a pending request is created for the alternate batch.
 - Completed so far: tutor approval returns refreshed request/class data, creates enrollment, and refreshes tutor supply/class state in the app.
-- No Neon migration was needed for these slices. Current implementation uses `BatchRequest`, `BatchEnrollment`, `Reminder`, and tutor batch tables.
-- Remaining: richer student enrollment state timeline, suggested batch detail display, cancellation/withdrawal handling, paid order/payment intent, tutor roster drill-down, and notification surfaces.
+- Completed so far: student request cards show suggested batch detail and a compact enrollment request timeline.
+- Completed so far: students can withdraw pending/suggested batch requests; withdrawn requests move to `cancelled`.
+- Neon migration added in `202607140001_add_cancelled_batch_request_status` for the `BatchRequestStatus.cancelled` enum value.
+- Remaining: paid order/payment intent, tutor roster drill-down, notification surfaces, and stronger enrolled class lifecycle controls.
 
 ### Phase 6: Program Progress & Learning Activity Tracking
 
