@@ -262,6 +262,13 @@ function programOptionLabel(program: ProgramSummary) {
   return `${status.icon} ${program.title} • ${status.label}`;
 }
 
+function compactInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const first = parts[0]?.charAt(0) ?? "";
+  const second = parts.length > 1 ? parts[parts.length - 1]?.charAt(0) ?? "" : parts[0]?.charAt(1) ?? "";
+  return `${first}${second}`.toUpperCase() || "ST";
+}
+
 export default function Index() {
   const [role, setRole] = useState<Role>("student");
   const [screen, setScreen] = useState<AppScreen>("role");
@@ -427,8 +434,9 @@ export default function Index() {
     if (screen === "search" && role === "student") refreshTutorSearch({ subject: "Mathematics" });
     if (screen === "home" && role === "student") refreshStudentBatchRequests();
     if (screen === "roleHub") {
-      if (role === "student") refreshClasses();
+      if (role === "student") refreshClasses("student");
       if (role === "tutor") {
+        refreshClasses("tutor");
         refreshBatchRequests();
         refreshTutorSupply();
       }
@@ -734,10 +742,10 @@ export default function Index() {
     }
   }
 
-  async function refreshClasses() {
+  async function refreshClasses(targetRole: Role = role) {
     setClassHubLoading(true);
     try {
-      const response = await apiGet<{ data: BatchClass[] }>("/api/v1/usermanagement/classes?role=student", authSession?.accessToken);
+      const response = await apiGet<{ data: BatchClass[] }>(`/api/v1/usermanagement/classes?role=${targetRole}`, authSession?.accessToken);
       setBatchClasses(response.data);
       setApiNotice("");
     } catch {
@@ -864,7 +872,7 @@ export default function Index() {
       setApiNotice("Student enrolled in batch.");
       await refreshBatchRequests();
       await refreshTutorSupply();
-      await refreshClasses();
+      await refreshClasses("tutor");
     } catch {
       setApiNotice("Approval failed. Please check API deployment and login state.");
     } finally {
@@ -894,7 +902,7 @@ export default function Index() {
       await apiPost("/api/v1/usermanagement/batch-requests/" + requestId + "/accept-suggestion", {}, authSession?.accessToken);
       setApiNotice("Suggested batch accepted. Tutor approval is pending.");
       await refreshStudentBatchRequests();
-      await refreshClasses();
+      await refreshClasses("student");
     } catch {
       setApiNotice("Suggested batch could not be accepted. Please check API deployment and login state.");
     } finally {
@@ -3587,6 +3595,10 @@ function RoleHub({
   refreshSupply: () => void;
 }) {
   const title = role === "tutor" ? "Tutor supply" : role === "student" ? "Classes" : "Surveys";
+  const [selectedRosterClass, setSelectedRosterClass] = useState<BatchClass | null>(null);
+  if (role === "tutor" && selectedRosterClass) {
+    return <ClassRoster role={role} item={selectedRosterClass} back={() => setSelectedRosterClass(null)} />;
+  }
   if (role === "student") {
     return (
       <>
@@ -3616,6 +3628,9 @@ function RoleHub({
         <SectionTitle>Batch requests</SectionTitle>
         {requests.map((request) => <BatchRequestCard key={request.id} role={role} request={request} approveRequest={approveRequest} requestAction={requestAction} actionLoading={actionLoading} />)}
         {!loading && !requests.length ? <Card role={role}><CardTitle>No student requests yet</CardTitle><Muted>Batch requests from students will appear here for approval.</Muted></Card> : null}
+        <SectionTitle>Batch roster</SectionTitle>
+        {classes.map((item) => <ClassTile key={item.id} role={role} item={item} onPress={() => setSelectedRosterClass(item)} />)}
+        {!loading && !classes.length ? <Card role={role}><CardTitle>No active enrollments yet</CardTitle><Muted>Approved students will appear here by batch.</Muted></Card> : null}
       </>
     );
   }
@@ -3772,17 +3787,49 @@ function TutorSupplyPanel({
   );
 }
 
-function ClassTile({ role, item }: { role: Role; item: BatchClass }) {
+function ClassTile({ role, item, onPress }: { role: Role; item: BatchClass; onPress?: () => void }) {
   return (
-    <View style={styles.classTile}>
+    <Pressable style={({ pressed }) => [styles.classTile, pressed && styles.pressablePressed]} onPress={onPress} disabled={!onPress}>
       <Text style={styles.classTitle}>{item.title}</Text>
       <Text style={styles.classMeta}>{item.course} • {item.board} • {item.grade}</Text>
       <Text style={styles.classMeta}>{item.schedule} • {formatReminderDateTime(item.startsAt)}</Text>
       <Text style={styles.classMeta}>Tutor: {item.tutorName} • ★ {item.tutorRating}</Text>
       <Text style={styles.classMeta}>Classroom: {item.classroomLocation ?? "Online"}</Text>
       {item.enrolledStudents?.length ? <Text style={styles.classMeta}>Students: {item.enrolledStudents.map((student) => student.name).join(", ")}</Text> : null}
+      {typeof item.pendingRequests === "number" ? <Text style={styles.classMeta}>Pending requests: {item.pendingRequests}</Text> : null}
       {item.onlineVideoLink ? <Text style={styles.classLink}>{item.onlineVideoLink}</Text> : <Text style={styles.classLocked}>Video link unlocks 5 minutes before class.</Text>}
-    </View>
+      {onPress ? <Text style={styles.classActionText}>View roster</Text> : null}
+    </Pressable>
+  );
+}
+
+function ClassRoster({ role, item, back }: { role: Role; item: BatchClass; back: () => void }) {
+  const students = item.enrolledStudents ?? [];
+  return (
+    <>
+      <TopBar title="Batch roster" left="‹" onLeft={back} />
+      <View style={styles.classRosterHero}>
+        <Text style={styles.classTitle}>{item.title}</Text>
+        <Text style={styles.classMeta}>{item.course} • {item.board} • {item.grade}</Text>
+        <Text style={styles.classMeta}>{item.schedule} • {formatReminderDateTime(item.startsAt)}</Text>
+        <Text style={styles.classMeta}>{item.mode} • {item.classroomLocation ?? "Online"}</Text>
+        {typeof item.pendingRequests === "number" ? <Text style={styles.classRosterCount}>{students.length} enrolled • {item.pendingRequests} pending</Text> : <Text style={styles.classRosterCount}>{students.length} enrolled</Text>}
+      </View>
+      <SectionTitle>Students</SectionTitle>
+      {students.map((student) => (
+        <View key={student.id} style={styles.rosterStudentRow}>
+          <View style={styles.rosterAvatar}>
+            <Text style={styles.rosterAvatarText}>{compactInitials(student.name)}</Text>
+          </View>
+          <View style={styles.flex}>
+            <Text style={styles.parentRowName}>{student.name}</Text>
+            <Text style={styles.parentRowMeta}>{student.city ?? "City not added"}</Text>
+          </View>
+        </View>
+      ))}
+      {!students.length ? <Card role={role}><CardTitle>No students enrolled</CardTitle><Muted>Once a batch request is approved, the student will appear in this roster.</Muted></Card> : null}
+      {item.onlineVideoLink ? <Card role={role}><CardTitle>Class link</CardTitle><Text style={styles.classLink}>{item.onlineVideoLink}</Text></Card> : null}
+    </>
   );
 }
 
@@ -5219,6 +5266,7 @@ const styles = StyleSheet.create({
   supplyBatchCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 12, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
   supplyActionRow: { gap: 8 },
   batchRequestCard: { alignItems: "stretch", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12 },
+  pressablePressed: { opacity: 0.76, transform: [{ scale: 0.99 }] },
   accountInviteCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15 },
   activationCodeText: { color: "#202A35", fontSize: 30, fontWeight: "900", letterSpacing: 6, textAlign: "center" },
   parentRow: { backgroundColor: "rgba(255,255,255,0.92)", borderColor: "#DDE7EF", borderRadius: 14, borderWidth: 1, padding: 13 },
@@ -5236,11 +5284,17 @@ const styles = StyleSheet.create({
   timelineTextCurrent: { color: "#202A35" },
   alertClose: { alignItems: "center", backgroundColor: "#F8FAFC", borderRadius: 999, height: 30, justifyContent: "center", position: "absolute", right: 10, top: 10, width: 30, zIndex: 2 },
   alertCloseText: { color: "#111827", fontSize: 18, fontWeight: "900", lineHeight: 20 },
+  classRosterHero: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, gap: 7, padding: 16, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
+  classRosterCount: { color: "#075985", fontSize: 13, fontWeight: "900", lineHeight: 18, marginTop: 4 },
+  rosterStudentRow: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, padding: 13 },
+  rosterAvatar: { alignItems: "center", backgroundColor: "#ECFEFF", borderRadius: 999, height: 42, justifyContent: "center", width: 42 },
+  rosterAvatarText: { color: "#0F172A", fontSize: 13, fontWeight: "900" },
   classTile: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 17, borderWidth: 1, gap: 7, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
   classTitle: { color: "#111827", fontSize: 18, fontWeight: "900", lineHeight: 23 },
   classMeta: { color: "#465A74", fontSize: 13, fontWeight: "700", lineHeight: 19 },
   classLink: { color: "#035C67", fontSize: 13, fontWeight: "900", lineHeight: 19 },
   classLocked: { color: "#8B95A1", fontSize: 12, fontWeight: "800", lineHeight: 18 },
+  classActionText: { color: "#075985", fontSize: 13, fontWeight: "900", marginTop: 4 },
   nav: { backgroundColor: "#EDEBEB", alignItems: "center", borderColor: "rgba(255,255,255,0.08)", borderRadius: 30, borderWidth: 1, bottom: 18, flexDirection: "row", justifyContent: "space-between", left: 16, minHeight: 64, paddingHorizontal: 12, paddingVertical: 8, position: "absolute", right: 16, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 8 },
   navItem: { alignItems: "center", flex: 1, gap: 3, minWidth: 0 },
   navIcon: { fontSize: 24, fontWeight: "900", height: 25, lineHeight: 25, textAlign: "center", width: 25 },
