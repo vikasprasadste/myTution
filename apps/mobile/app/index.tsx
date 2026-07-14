@@ -434,7 +434,10 @@ export default function Index() {
     if (screen === "search" && role === "student") refreshTutorSearch({ subject: "Mathematics" });
     if (screen === "home" && role === "student") refreshStudentBatchRequests();
     if (screen === "roleHub") {
-      if (role === "student") refreshClasses("student");
+      if (role === "student") {
+        refreshClasses("student");
+        refreshStudentBatchRequests();
+      }
       if (role === "tutor") {
         refreshClasses("tutor");
         refreshBatchRequests();
@@ -3599,12 +3602,15 @@ function RoleHub({
   if (role === "tutor" && selectedRosterClass) {
     return <ClassRoster role={role} item={selectedRosterClass} back={() => setSelectedRosterClass(null)} />;
   }
+  if (role === "student" && selectedRosterClass) {
+    return <StudentClassDetail role={role} item={selectedRosterClass} requests={requests.filter((request) => request.batch.batchId === selectedRosterClass.batchId)} back={() => setSelectedRosterClass(null)} />;
+  }
   if (role === "student") {
     return (
       <>
         <TopBar title={title} left="‹" onLeft={back} />
         {loading ? <ActivityIndicator /> : null}
-        {classes.map((item) => <ClassTile key={item.id} role={role} item={item} />)}
+        {classes.map((item) => <ClassTile key={item.id} role={role} item={item} onPress={() => setSelectedRosterClass(item)} actionLabel="View class" />)}
         {!loading && !classes.length ? <Card role={role}><CardTitle>No classes yet</CardTitle><Muted>Requested batches will appear here after the tutor approves enrollment.</Muted></Card> : null}
       </>
     );
@@ -3629,7 +3635,7 @@ function RoleHub({
         {requests.map((request) => <BatchRequestCard key={request.id} role={role} request={request} approveRequest={approveRequest} requestAction={requestAction} actionLoading={actionLoading} />)}
         {!loading && !requests.length ? <Card role={role}><CardTitle>No student requests yet</CardTitle><Muted>Batch requests from students will appear here for approval.</Muted></Card> : null}
         <SectionTitle>Batch roster</SectionTitle>
-        {classes.map((item) => <ClassTile key={item.id} role={role} item={item} onPress={() => setSelectedRosterClass(item)} />)}
+        {classes.map((item) => <ClassTile key={item.id} role={role} item={item} onPress={() => setSelectedRosterClass(item)} actionLabel="View roster" />)}
         {!loading && !classes.length ? <Card role={role}><CardTitle>No active enrollments yet</CardTitle><Muted>Approved students will appear here by batch.</Muted></Card> : null}
       </>
     );
@@ -3787,7 +3793,7 @@ function TutorSupplyPanel({
   );
 }
 
-function ClassTile({ role, item, onPress }: { role: Role; item: BatchClass; onPress?: () => void }) {
+function ClassTile({ role, item, onPress, actionLabel }: { role: Role; item: BatchClass; onPress?: () => void; actionLabel?: string }) {
   return (
     <Pressable style={({ pressed }) => [styles.classTile, pressed && styles.pressablePressed]} onPress={onPress} disabled={!onPress}>
       <Text style={styles.classTitle}>{item.title}</Text>
@@ -3798,8 +3804,64 @@ function ClassTile({ role, item, onPress }: { role: Role; item: BatchClass; onPr
       {item.enrolledStudents?.length ? <Text style={styles.classMeta}>Students: {item.enrolledStudents.map((student) => student.name).join(", ")}</Text> : null}
       {typeof item.pendingRequests === "number" ? <Text style={styles.classMeta}>Pending requests: {item.pendingRequests}</Text> : null}
       {item.onlineVideoLink ? <Text style={styles.classLink}>{item.onlineVideoLink}</Text> : <Text style={styles.classLocked}>Video link unlocks 5 minutes before class.</Text>}
-      {onPress ? <Text style={styles.classActionText}>View roster</Text> : null}
+      {onPress ? <Text style={styles.classActionText}>{actionLabel ?? "View details"}</Text> : null}
     </Pressable>
+  );
+}
+
+function StudentClassDetail({ role, item, requests, back }: { role: Role; item: BatchClass; requests: BatchRequestSummary[]; back: () => void }) {
+  const classmates = item.enrolledStudents ?? [];
+  return (
+    <>
+      <TopBar title="Class details" left="‹" onLeft={back} />
+      <View style={styles.classRosterHero}>
+        <Text style={styles.classTitle}>{item.title}</Text>
+        <Text style={styles.classMeta}>{item.course} • {item.subject} • {item.board} • {item.grade}</Text>
+        <Text style={styles.classMeta}>{item.schedule} • {formatReminderDateTime(item.startsAt)}</Text>
+        <Text style={styles.classMeta}>Tutor: {item.tutorName} • ★ {item.tutorRating}</Text>
+        {item.tutorHeadline ? <Text style={styles.classMeta}>{item.tutorHeadline}</Text> : null}
+      </View>
+      <SectionTitle>Joining details</SectionTitle>
+      <Card role={role}>
+        <CardTitle>{item.mode === "online" ? "Online class" : item.mode === "offline" ? "Classroom" : "Hybrid class"}</CardTitle>
+        <Muted>{item.classroomLocation ?? "Online session"}</Muted>
+        {item.onlineVideoLink ? <Text style={styles.classLink}>{item.onlineVideoLink}</Text> : <Text style={styles.classLocked}>Video link unlocks 5 minutes before class.</Text>}
+      </Card>
+      <SectionTitle>Classmates</SectionTitle>
+      {classmates.map((student) => (
+        <View key={student.id} style={styles.rosterStudentRow}>
+          <View style={styles.rosterAvatar}>
+            <Text style={styles.rosterAvatarText}>{compactInitials(student.name)}</Text>
+          </View>
+          <View style={styles.flex}>
+            <Text style={styles.parentRowName}>{student.name}</Text>
+            <Text style={styles.parentRowMeta}>{student.city ?? "City not added"}</Text>
+          </View>
+        </View>
+      ))}
+      {!classmates.length ? <Card role={role}><CardTitle>No classmates listed yet</CardTitle><Muted>Roster details will appear after enrollments are synced.</Muted></Card> : null}
+      {requests.length ? (
+        <>
+          <SectionTitle>Request history</SectionTitle>
+          {requests.map((request) => (
+            <View key={request.id} style={styles.batchAlertCard}>
+              <Text style={styles.batchTitle}>{capitalize(request.status)}</Text>
+              <Text style={styles.batchMeta}>{request.tutorResponse ?? request.message ?? "Enrollment request recorded."}</Text>
+              {request.timeline?.length ? (
+                <View style={styles.requestTimeline}>
+                  {request.timeline.map((step) => (
+                    <View key={step.key} style={styles.timelineStep}>
+                      <View style={[styles.timelineDot, step.status === "complete" && styles.timelineDotDone, step.status === "current" && styles.timelineDotCurrent]} />
+                      <Text style={[styles.timelineText, step.status === "current" && styles.timelineTextCurrent]}>{step.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          ))}
+        </>
+      ) : null}
+    </>
   );
 }
 
