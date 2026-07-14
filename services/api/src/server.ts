@@ -2504,16 +2504,17 @@ app.post("/api/v1/education-plan/activities/:id/complete", async (req, res) => {
 app.get("/api/v1/dis/dashboard", async (req, res) => {
   const role = readRole(req.query.role);
   const userId = await readUserId(req);
-  const [reminders, plan, recommendations] = await Promise.all([
+  const [reminders, plan, recommendations, metrics] = await Promise.all([
     listReminders(role, userId),
     getEducationPlan(role, userId, stringOrNull(req.query.programId)),
-    prisma.recommendation.count({ where: { role } })
+    prisma.recommendation.count({ where: { role } }),
+    dashboardMetrics(role, userId)
   ]);
 
   res.json({
     data: {
       role,
-      cards: dashboardCards(role, reminders.length, plan?.completedMilestoneSequence ?? 0, recommendations),
+      cards: dashboardCards(role, reminders.length, plan?.completedMilestoneSequence ?? 0, recommendations, metrics),
       today: {
         title: role === "tutor" ? "Demo with Apoorv Gulati" : "Trial with Neha Verma",
         startsAt: "2026-06-24T12:30:00.000Z",
@@ -3299,25 +3300,64 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
   };
 }
 
-function dashboardCards(role: Role, reminderCount: number, completedMilestones: number, recommendationCount: number) {
+type DashboardMetrics = {
+  classCount: number;
+  studentCount: number;
+  leadCount: number;
+};
+
+async function dashboardMetrics(role: Role, userId?: string | null): Promise<DashboardMetrics> {
+  if (role === "tutor") {
+    const profile = await findProfile("tutor", userId);
+    const tutorProfile = profile ? await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } }) : null;
+    if (!tutorProfile) return { classCount: 0, studentCount: 0, leadCount: 0 };
+    const [studentEnrollments, leadCount, classCount] = await Promise.all([
+      prisma.batchEnrollment.findMany({
+        where: { status: "active", batch: { tutorProfileId: tutorProfile.id } },
+        distinct: ["studentProfileId"],
+        select: { studentProfileId: true }
+      }),
+      prisma.batchRequest.count({ where: { status: "pending", batch: { tutorProfileId: tutorProfile.id } } }),
+      prisma.tutorBatch.count({ where: { tutorProfileId: tutorProfile.id, status: { not: "archived" } } })
+    ]);
+    return { classCount, studentCount: studentEnrollments.length, leadCount };
+  }
+  if (role === "parent") {
+    const childProfileIds = await getParentChildProfileIds(userId);
+    const classCount = childProfileIds.length
+      ? await prisma.batchEnrollment.count({ where: { studentProfileId: { in: childProfileIds }, status: "active" } })
+      : 0;
+    return { classCount, studentCount: childProfileIds.length, leadCount: 0 };
+  }
+  const profile = await findProfile("student", userId);
+  const classCount = profile
+    ? await prisma.batchEnrollment.count({ where: { studentProfileId: profile.id, status: "active" } })
+    : 0;
+  const leadCount = profile
+    ? await prisma.batchRequest.count({ where: { studentProfileId: profile.id, status: "pending" } })
+    : 0;
+  return { classCount, studentCount: 0, leadCount };
+}
+
+function dashboardCards(role: Role, reminderCount: number, completedMilestones: number, recommendationCount: number, metrics: DashboardMetrics) {
   if (role === "tutor") {
     return [
-      { value: "18", label: "Students", target: "roleHub" },
-      { value: "7", label: "Leads", target: "roleHub" },
+      { value: String(metrics.studentCount), label: "Students", target: "roleHub" },
+      { value: String(metrics.leadCount), label: "Leads", target: "roleHub" },
       { value: "4.8", label: "Rating", target: "ratings" },
       { value: String(reminderCount), label: "Reminders", target: "events" }
     ];
   }
   if (role === "parent") {
     return [
-      { value: "3", label: "Surveys", target: "roleHub" },
-      { value: "64%", label: "Progress", target: "sessions" },
+      { value: String(metrics.classCount), label: "Classes", target: "roleHub" },
+      { value: String(completedMilestones), label: "Completed", target: "sessions" },
       { value: String(recommendationCount), label: "Smart picks", target: "home" },
       { value: String(reminderCount), label: "Reminders", target: "events" }
     ];
   }
   return [
-    { value: "4", label: "Classes", target: "roleHub" },
+    { value: String(metrics.classCount), label: "Classes", target: "roleHub" },
     { value: String(completedMilestones), label: "Completed", target: "sessions" },
     { value: String(recommendationCount), label: "Smart picks", target: "home" },
     { value: String(reminderCount), label: "Reminders", target: "events" }
