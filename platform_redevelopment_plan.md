@@ -304,6 +304,29 @@ Acceptance criteria:
 - Parent sees child progress in read-only mode.
 - Tutor sees student progress for own batches/programs.
 
+Status:
+
+- Complete.
+- Completed: per-user `ActivityProgress`, `ResourceProgress`, and `ProgramProgress` drive milestone unlock and completion state.
+- Completed: quiz attempts are persisted in `QuizAttempt` with score, total, percent, answers, and timestamp.
+- Completed: student quiz completion submits the attempt before marking the quiz activity complete.
+- Completed: `GET /api/v1/education-plan/progress-summary` returns role-scoped learner/program progress for student, parent, and tutor.
+- Completed: `GET /api/v1/education-plan/activity-timeline` returns role-scoped activity timeline entries.
+- Completed: tutor batch roster displays enrolled student progress and latest quiz score.
+- Completed: parent continues to see child program progress in read-only mode through the existing program view and parent-scoped progress APIs.
+- Neon migration added in `202607140002_add_quiz_attempts` for the `QuizAttempt` table.
+
+Phase 6 consolidated test matrix:
+
+- Student completes article/video/flashcard activity and progress remains scoped to that student.
+- Student completes a quiz; `QuizAttempt` stores score, percent, answers, and timestamp.
+- Completing all activities in a milestone unlocks the next milestone for that student only.
+- Parent logs in and sees the linked child program progress without completion actions.
+- Tutor opens a batch roster and sees enrolled student progress plus latest quiz score.
+- Tutor calls progress summary/timeline APIs and only sees students enrolled in their own batches.
+- Student activity timeline shows only that student profile.
+- Parent activity timeline shows only linked child profiles.
+
 ### Phase 7: Parent Monitoring Experience
 
 Goal: Make parent role useful while staying view-only.

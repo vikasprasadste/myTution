@@ -145,6 +145,52 @@ export interface ProgramMilestone {
   }>;
 }
 
+export interface QuizAttemptSummary {
+  id: string;
+  resourceId: string;
+  score: number;
+  total: number;
+  percent: number;
+  answers: number[];
+  createdAt: string;
+}
+
+export interface LearnerProgressProgramSummary {
+  programId: string;
+  title: string;
+  totalActivities: number;
+  completedActivities: number;
+  percent: number;
+  completedMilestoneSequence: number;
+  unlockedMilestoneSequence: number;
+  latestQuizPercent?: number | null;
+  lastActivityAt?: string | null;
+}
+
+export interface LearnerProgressSummary {
+  profileId: string;
+  name: string;
+  city: string | null;
+  programs: LearnerProgressProgramSummary[];
+}
+
+export interface ActivityTimelineItem {
+  id: string;
+  profileId: string;
+  learnerName: string;
+  programId: string;
+  programTitle: string;
+  milestoneId: string;
+  milestoneTitle: string;
+  activityId: string;
+  resourceId: string;
+  type: ResourceType;
+  title: string;
+  status: "pending" | "in_progress" | "complete";
+  completedAt: string | null;
+  updatedAt: string;
+}
+
 export interface ProgramSummary {
   id: string;
   role: Role;

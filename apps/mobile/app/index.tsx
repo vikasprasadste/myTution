@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, MarketplaceRecommendationResponse, Persona, ProgramMilestone, ProgramSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -337,6 +337,7 @@ export default function Index() {
   const [tutorFilterOptions, setTutorFilterOptions] = useState<TutorFilterOptions>({ subjects: [], locations: [], grades: [], boards: [], modes: [], languages: [], genders: [], experience: [], ratings: [] });
   const [batchClasses, setBatchClasses] = useState<BatchClass[]>([]);
   const [batchRequests, setBatchRequests] = useState<BatchRequestSummary[]>([]);
+  const [learnerProgress, setLearnerProgress] = useState<LearnerProgressSummary[]>([]);
   const [tutorSupply, setTutorSupply] = useState<TutorSupplyState | null>(null);
   const [tutorBatchDraft, setTutorBatchDraft] = useState<TutorBatchDraft>(defaultTutorBatchDraft);
   const [tutorSearchLoading, setTutorSearchLoading] = useState(false);
@@ -442,6 +443,7 @@ export default function Index() {
         refreshClasses("tutor");
         refreshBatchRequests();
         refreshTutorSupply();
+        refreshLearnerProgress("tutor");
       }
       if (role === "parent") refreshClasses("parent");
     }
@@ -770,6 +772,16 @@ export default function Index() {
     }
   }
 
+  async function refreshLearnerProgress(targetRole: Role = role) {
+    if (!authSession?.accessToken) return;
+    try {
+      const response = await apiGet<{ data: LearnerProgressSummary[] }>(`/api/v1/education-plan/progress-summary?role=${targetRole}${selectedProgramId ? "&programId=" + encodeURIComponent(selectedProgramId) : ""}`, authSession.accessToken);
+      if (targetRole === role) setLearnerProgress(response.data);
+    } catch {
+      if (targetRole === role) setLearnerProgress([]);
+    }
+  }
+
   async function refreshBatchRequests() {
     setClassHubLoading(true);
     try {
@@ -890,6 +902,7 @@ export default function Index() {
       await refreshTutorSupply();
       await refreshClasses("tutor");
       await refreshDashboardCards("tutor");
+      await refreshLearnerProgress("tutor");
     } catch {
       setApiNotice("Approval failed. Please check API deployment and login state.");
     } finally {
@@ -1166,6 +1179,21 @@ export default function Index() {
     } finally {
       setLoadingAction(null);
     }
+  }
+
+  async function submitQuizAttemptAndComplete() {
+    if (selectedResource?.type === "quiz" && quizPayload) {
+      const score = quizPayload.questions.reduce((total, question, index) => total + (quizAnswers[index] === question.answerIndex ? 1 : 0), 0);
+      await apiPost<{ data: QuizAttemptSummary }>(`/api/v1/resources/${selectedResource.id}/quiz-attempts`, {
+        role,
+        answers: quizAnswers,
+        score,
+        total: quizPayload.questions.length
+      }, authSession?.accessToken).catch(() => {
+        setApiNotice("Quiz score could not be saved. Completion will still continue.");
+      });
+    }
+    await markComplete();
   }
 
   function activityToResource(activity: NonNullable<ProgramMilestone["activities"]>[number], milestone: ProgramMilestone): SelectedActivity {
@@ -1608,7 +1636,7 @@ export default function Index() {
     if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} marketplaceTarget={marketplaceTarget} clearTargetTutor={() => setMarketplaceTarget(null)} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestProgramPurchase={requestProgramPurchase} requestLoading={loadingAction} search={refreshTutorSearch} back={() => { setMarketplaceTarget(null); setScreen("home"); }} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
-    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} refreshSupply={refreshTutorSupply} />;
+    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} refreshSupply={refreshTutorSupply} />;
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
@@ -1629,7 +1657,7 @@ export default function Index() {
     }
     if (screen === "quizIntro" && selectedResource) return <QuizIntro role={role} resource={resourceDetail ?? selectedResource} loading={loadingAction === "startQuiz"} start={() => startQuiz(selectedResource)} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
     if (screen === "quizPlay" && selectedResource && quizPayload) return <QuizPlay role={role} payload={quizPayload} index={quizIndex} answers={quizAnswers} setAnswer={(answer) => setQuizAnswers((items) => items.map((item, itemIndex) => itemIndex === quizIndex ? answer : item))} next={() => { if (quizIndex === quizPayload.questions.length - 1) setScreen("quizResult"); else setQuizIndex(quizIndex + 1); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
-    if (screen === "quizResult" && selectedResource && quizPayload) return <QuizResult role={role} payload={quizPayload} answers={quizAnswers} complete={markComplete} loading={loadingAction === "markComplete"} backToTopic={() => { refreshProgramFromApi(); setScreen("sessions"); }} />;
+    if (screen === "quizResult" && selectedResource && quizPayload) return <QuizResult role={role} payload={quizPayload} answers={quizAnswers} complete={submitQuizAttemptAndComplete} loading={loadingAction === "markComplete"} backToTopic={() => { refreshProgramFromApi(); setScreen("sessions"); }} />;
 
     return null;
   }
@@ -3583,6 +3611,7 @@ function RoleHub({
   role,
   classes,
   requests,
+  learnerProgress,
   loading,
   approveRequest,
   requestAction,
@@ -3599,6 +3628,7 @@ function RoleHub({
   role: Role;
   classes: BatchClass[];
   requests: BatchRequestSummary[];
+  learnerProgress: LearnerProgressSummary[];
   loading: boolean;
   approveRequest: (id: string) => void;
   requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void;
@@ -3615,7 +3645,7 @@ function RoleHub({
   const title = role === "tutor" ? "Tutor supply" : role === "student" ? "Classes" : "Child classes";
   const [selectedRosterClass, setSelectedRosterClass] = useState<BatchClass | null>(null);
   if (role === "tutor" && selectedRosterClass) {
-    return <ClassRoster role={role} item={selectedRosterClass} back={() => setSelectedRosterClass(null)} />;
+    return <ClassRoster role={role} item={selectedRosterClass} learnerProgress={learnerProgress} back={() => setSelectedRosterClass(null)} />;
   }
   if (role === "student" && selectedRosterClass) {
     return <StudentClassDetail role={role} item={selectedRosterClass} requests={requests.filter((request) => request.batch.batchId === selectedRosterClass.batchId)} back={() => setSelectedRosterClass(null)} />;
@@ -3883,7 +3913,7 @@ function StudentClassDetail({ role, item, requests, back }: { role: Role; item: 
   );
 }
 
-function ClassRoster({ role, item, back }: { role: Role; item: BatchClass; back: () => void }) {
+function ClassRoster({ role, item, learnerProgress, back }: { role: Role; item: BatchClass; learnerProgress: LearnerProgressSummary[]; back: () => void }) {
   const students = item.enrolledStudents ?? [];
   return (
     <>
@@ -3897,14 +3927,26 @@ function ClassRoster({ role, item, back }: { role: Role; item: BatchClass; back:
       </View>
       <SectionTitle>Students</SectionTitle>
       {students.map((student) => (
-        <View key={student.id} style={styles.rosterStudentRow}>
-          <View style={styles.rosterAvatar}>
-            <Text style={styles.rosterAvatarText}>{compactInitials(student.name)}</Text>
+        <View key={student.id} style={styles.rosterStudentCard}>
+          <View style={styles.rosterStudentRowInner}>
+            <View style={styles.rosterAvatar}>
+              <Text style={styles.rosterAvatarText}>{compactInitials(student.name)}</Text>
+            </View>
+            <View style={styles.flex}>
+              <Text style={styles.parentRowName}>{student.name}</Text>
+              <Text style={styles.parentRowMeta}>{student.city ?? "City not added"}</Text>
+            </View>
           </View>
-          <View style={styles.flex}>
-            <Text style={styles.parentRowName}>{student.name}</Text>
-            <Text style={styles.parentRowMeta}>{student.city ?? "City not added"}</Text>
-          </View>
+          {(learnerProgress.find((summary) => summary.profileId === student.id)?.programs ?? []).slice(0, 2).map((program) => (
+            <View key={program.programId} style={styles.learnerProgressBox}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.learnerProgressTitle}>{program.title}</Text>
+                <Text style={styles.learnerProgressPercent}>{program.percent}%</Text>
+              </View>
+              <View style={styles.learnerProgressTrack}><View style={[styles.learnerProgressFill, { width: (String(Math.max(4, program.percent)) + "%") as `${number}%` }]} /></View>
+              <Text style={styles.parentRowMeta}>{program.completedActivities}/{program.totalActivities} activities{program.latestQuizPercent !== null && program.latestQuizPercent !== undefined ? ` • Latest quiz ${program.latestQuizPercent}%` : ""}</Text>
+            </View>
+          ))}
         </View>
       ))}
       {!students.length ? <Card role={role}><CardTitle>No students enrolled</CardTitle><Muted>Once a batch request is approved, the student will appear in this roster.</Muted></Card> : null}
@@ -5367,8 +5409,15 @@ const styles = StyleSheet.create({
   classRosterHero: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, gap: 7, padding: 16, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
   classRosterCount: { color: "#075985", fontSize: 13, fontWeight: "900", lineHeight: 18, marginTop: 4 },
   rosterStudentRow: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, padding: 13 },
+  rosterStudentCard: { backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, gap: 10, padding: 13 },
+  rosterStudentRowInner: { alignItems: "center", flexDirection: "row", gap: 12 },
   rosterAvatar: { alignItems: "center", backgroundColor: "#ECFEFF", borderRadius: 999, height: 42, justifyContent: "center", width: 42 },
   rosterAvatarText: { color: "#0F172A", fontSize: 13, fontWeight: "900" },
+  learnerProgressBox: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 12, borderWidth: 1, gap: 6, padding: 10 },
+  learnerProgressTitle: { color: "#202A35", flex: 1, fontSize: 12, fontWeight: "900", lineHeight: 16 },
+  learnerProgressPercent: { color: "#075985", fontSize: 12, fontWeight: "900" },
+  learnerProgressTrack: { backgroundColor: "#E2E8F0", borderRadius: 999, height: 6, overflow: "hidden" },
+  learnerProgressFill: { backgroundColor: "#22C55E", borderRadius: 999, height: 6 },
   classTile: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 17, borderWidth: 1, gap: 7, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
   classTitle: { color: "#111827", fontSize: 18, fontWeight: "900", lineHeight: 23 },
   classMeta: { color: "#465A74", fontSize: 13, fontWeight: "700", lineHeight: 19 },

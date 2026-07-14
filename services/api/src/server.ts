@@ -1876,6 +1876,99 @@ app.get("/api/v1/education-plan/current", async (req, res) => {
   res.json({ data: plan });
 });
 
+app.get("/api/v1/education-plan/progress-summary", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await readUserId(req);
+  const requestedProgramId = stringOrNull(req.query.programId);
+  const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+
+  if (role === "tutor") {
+    const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+    if (!tutorProfile) {
+      res.json({ data: [] });
+      return;
+    }
+    const batches = await prisma.tutorBatch.findMany({
+      where: { tutorProfileId: tutorProfile.id, ...(requestedProgramId ? { programId: requestedProgramId } : {}) },
+      include: { enrollments: { where: { status: "active" }, include: { studentProfile: true } } }
+    });
+    const programIds = Array.from(new Set(batches.map((batch) => batch.programId).filter((id): id is string => Boolean(id))));
+    const profilesById = new Map<string, any>();
+    batches.forEach((batch) => batch.enrollments.forEach((enrollment) => profilesById.set(enrollment.studentProfile.id, enrollment.studentProfile)));
+    res.json({ data: await buildLearnerProgressSummaries(Array.from(profilesById.values()), programIds) });
+    return;
+  }
+
+  if (role === "parent") {
+    const childProfileIds = await getParentChildProfileIds(userId);
+    const children = childProfileIds.length ? await prisma.profile.findMany({ where: { id: { in: childProfileIds } } }) : [];
+    const selections = childProfileIds.length ? await prisma.studentProgramSelection.findMany({
+      where: { profileId: { in: childProfileIds }, status: "active", ...(requestedProgramId ? { programId: requestedProgramId } : {}) },
+      select: { programId: true }
+    }) : [];
+    const programIds = Array.from(new Set(selections.map((selection) => selection.programId)));
+    res.json({ data: await buildLearnerProgressSummaries(children, programIds) });
+    return;
+  }
+
+  const selections = await prisma.studentProgramSelection.findMany({
+    where: { profileId: profile.id, status: "active", ...(requestedProgramId ? { programId: requestedProgramId } : {}) },
+    select: { programId: true }
+  });
+  const programIds = Array.from(new Set(selections.map((selection) => selection.programId)));
+  res.json({ data: await buildLearnerProgressSummaries([profile], programIds) });
+});
+
+app.get("/api/v1/education-plan/activity-timeline", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await readUserId(req);
+  const requestedProgramId = stringOrNull(req.query.programId);
+  const requestedProfileId = stringOrNull(req.query.profileId);
+  const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+  let allowedProfileIds: string[] = [];
+
+  if (role === "student") {
+    allowedProfileIds = [profile.id];
+  } else if (role === "parent") {
+    allowedProfileIds = await getParentChildProfileIds(userId);
+  } else {
+    const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+    const enrollments = tutorProfile ? await prisma.batchEnrollment.findMany({
+      where: { status: "active", batch: { tutorProfileId: tutorProfile.id } },
+      select: { studentProfileId: true }
+    }) : [];
+    allowedProfileIds = Array.from(new Set(enrollments.map((enrollment) => enrollment.studentProfileId)));
+  }
+
+  if (requestedProfileId) allowedProfileIds = allowedProfileIds.filter((id) => id === requestedProfileId);
+  if (!allowedProfileIds.length) {
+    res.json({ data: [] });
+    return;
+  }
+
+  const progress = await prisma.activityProgress.findMany({
+    where: {
+      profileId: { in: allowedProfileIds },
+      ...(requestedProgramId ? { activity: { milestone: { programId: requestedProgramId } } } : {})
+    },
+    orderBy: { updatedAt: "desc" },
+    take: Math.min(Number(req.query.limit) || 50, 100),
+    include: {
+      profile: true,
+      activity: { include: { milestone: { include: { program: true } }, resource: true } }
+    }
+  });
+  res.json({ data: progress.map(toActivityTimelineItem) });
+});
+
 app.get("/api/v1/education-plan/programs", async (req, res) => {
   const role = readRole(req.query.role);
   if (role === "parent") {
@@ -2414,6 +2507,49 @@ app.post("/api/v1/resources/:id/complete", async (req, res) => {
     }
   });
   res.json({ data: progress });
+});
+
+app.post("/api/v1/resources/:id/quiz-attempts", async (req, res) => {
+  const role = readRole(req.body.role);
+  if (role !== "student") {
+    res.status(403).json({ error: "Only students can submit quiz attempts" });
+    return;
+  }
+  const userId = await readUserId(req);
+  const profile = await findProfile("student", userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+  const resource = await prisma.resource.findUnique({
+    where: { id: req.params.id },
+    include: { milestoneActivities: { include: { milestone: { include: { program: true } } } } }
+  });
+  if (!resource || resource.type !== "quiz") {
+    res.status(404).json({ error: "Quiz resource not found" });
+    return;
+  }
+  const entitlement = await resolveResourceEntitlement(req, resource);
+  if (!entitlement.entitled || entitlement.readonly) {
+    res.status(403).json({ error: "Quiz is not available for this profile" });
+    return;
+  }
+  const answers = Array.isArray(req.body.answers) ? req.body.answers.map((answer: unknown) => Number(answer)) : [];
+  const total = Math.max(0, Number(req.body.total) || answers.length);
+  const score = Math.max(0, Math.min(total, Number(req.body.score) || 0));
+  const percent = total ? Math.round((score / total) * 100) : 0;
+  const attempt = await prisma.quizAttempt.create({
+    data: {
+      profileId: profile.id,
+      resourceId: resource.id,
+      score,
+      total,
+      percent,
+      answers,
+      sourceTag: "app"
+    }
+  });
+  res.status(201).json({ data: toQuizAttemptSummary(attempt) });
 });
 
 app.post("/api/v1/education-plan/activities/:id/complete", async (req, res) => {
@@ -3346,6 +3482,86 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
   };
 }
 
+async function buildLearnerProgressSummaries(profiles: any[], programIds: string[]) {
+  const uniqueProfiles = Array.from(new Map(profiles.map((profile) => [profile.id, profile])).values());
+  const uniqueProgramIds = Array.from(new Set(programIds)).filter(Boolean);
+  if (!uniqueProfiles.length || !uniqueProgramIds.length) return [];
+
+  const programs = await prisma.program.findMany({
+    where: { id: { in: uniqueProgramIds } },
+    orderBy: { title: "asc" },
+    include: { milestones: { include: { activities: true } } }
+  });
+  const profileIds = uniqueProfiles.map((profile) => profile.id);
+  const activityIds = programs.flatMap((program) => program.milestones.flatMap((milestone) => milestone.activities.map((activity) => activity.id)));
+  const quizResourceIdsByProgram = new Map<string, Set<string>>();
+  programs.forEach((program) => {
+    quizResourceIdsByProgram.set(program.id, new Set(program.milestones.flatMap((milestone) => milestone.activities.filter((activity) => activity.type === "quiz").map((activity) => activity.resourceId))));
+  });
+  const quizResourceIds = Array.from(new Set(Array.from(quizResourceIdsByProgram.values()).flatMap((ids) => Array.from(ids))));
+
+  const [activityProgress, programProgress, quizAttempts] = await Promise.all([
+    activityIds.length ? prisma.activityProgress.findMany({
+      where: { profileId: { in: profileIds }, activityId: { in: activityIds }, status: "complete" },
+      select: { profileId: true, activityId: true, completedAt: true }
+    }) : Promise.resolve([]),
+    prisma.programProgress.findMany({
+      where: { profileId: { in: profileIds }, programId: { in: uniqueProgramIds } }
+    }),
+    quizResourceIds.length ? prisma.quizAttempt.findMany({
+      where: { profileId: { in: profileIds }, resourceId: { in: quizResourceIds } },
+      orderBy: { createdAt: "desc" },
+      select: { profileId: true, resourceId: true, percent: true, createdAt: true }
+    }) : Promise.resolve([])
+  ]);
+
+  const completedByProfile = new Map<string, Set<string>>();
+  const lastActivityByProfileProgram = new Map<string, Date>();
+  const progressByProfileProgram = new Map(programProgress.map((item) => [`${item.profileId}:${item.programId}`, item]));
+  const latestQuizByProfileProgram = new Map<string, number>();
+
+  activityProgress.forEach((item) => {
+    if (!completedByProfile.has(item.profileId)) completedByProfile.set(item.profileId, new Set());
+    completedByProfile.get(item.profileId)?.add(item.activityId);
+  });
+
+  uniqueProfiles.forEach((profile) => {
+    programs.forEach((program) => {
+      const programActivityIds = program.milestones.flatMap((milestone) => milestone.activities.map((activity) => activity.id));
+      const completedItems = activityProgress.filter((item) => item.profileId === profile.id && programActivityIds.includes(item.activityId));
+      const lastCompletedAt = completedItems.map((item) => item.completedAt).filter((value): value is Date => Boolean(value)).sort((a, b) => b.getTime() - a.getTime())[0];
+      if (lastCompletedAt) lastActivityByProfileProgram.set(`${profile.id}:${program.id}`, lastCompletedAt);
+      const quizIds = quizResourceIdsByProgram.get(program.id) ?? new Set<string>();
+      const latestQuiz = quizAttempts.find((attempt) => attempt.profileId === profile.id && quizIds.has(attempt.resourceId));
+      if (latestQuiz) latestQuizByProfileProgram.set(`${profile.id}:${program.id}`, latestQuiz.percent);
+    });
+  });
+
+  return uniqueProfiles.map((profile) => ({
+    profileId: profile.id,
+    name: `${profile.firstName} ${profile.lastName}`.trim(),
+    city: profile.city,
+    programs: programs.map((program) => {
+      const programActivityIds = program.milestones.flatMap((milestone) => milestone.activities.map((activity) => activity.id));
+      const completedSet = completedByProfile.get(profile.id) ?? new Set<string>();
+      const completedActivities = programActivityIds.filter((id) => completedSet.has(id)).length;
+      const progress = progressByProfileProgram.get(`${profile.id}:${program.id}`);
+      const lastActivityAt = lastActivityByProfileProgram.get(`${profile.id}:${program.id}`);
+      return {
+        programId: program.id,
+        title: program.title,
+        totalActivities: programActivityIds.length,
+        completedActivities,
+        percent: programActivityIds.length ? Math.round((completedActivities / programActivityIds.length) * 100) : 0,
+        completedMilestoneSequence: progress?.completedMilestoneSequence ?? 0,
+        unlockedMilestoneSequence: progress?.unlockedMilestoneSequence ?? 1,
+        latestQuizPercent: latestQuizByProfileProgram.get(`${profile.id}:${program.id}`) ?? null,
+        lastActivityAt: lastActivityAt ? lastActivityAt.toISOString() : null
+      };
+    })
+  }));
+}
+
 type DashboardMetrics = {
   classCount: number;
   studentCount: number;
@@ -4025,6 +4241,45 @@ function toReminder(item: {
     title: item.title,
     startsAt: item.startsAt.toISOString(),
     status: item.status
+  };
+}
+
+function toQuizAttemptSummary(item: {
+  id: string;
+  resourceId: string;
+  score: number;
+  total: number;
+  percent: number;
+  answers: any;
+  createdAt: Date;
+}) {
+  return {
+    id: item.id,
+    resourceId: item.resourceId,
+    score: item.score,
+    total: item.total,
+    percent: item.percent,
+    answers: Array.isArray(item.answers) ? item.answers.map((answer: unknown) => Number(answer)) : [],
+    createdAt: item.createdAt.toISOString()
+  };
+}
+
+function toActivityTimelineItem(item: any) {
+  return {
+    id: item.id,
+    profileId: item.profileId,
+    learnerName: `${item.profile.firstName} ${item.profile.lastName}`.trim(),
+    programId: item.activity.milestone.programId,
+    programTitle: item.activity.milestone.program.title,
+    milestoneId: item.activity.milestoneId,
+    milestoneTitle: item.activity.milestone.title,
+    activityId: item.activityId,
+    resourceId: item.activity.resourceId,
+    type: item.activity.type,
+    title: item.activity.title,
+    status: item.status,
+    completedAt: item.completedAt ? item.completedAt.toISOString() : null,
+    updatedAt: item.updatedAt.toISOString()
   };
 }
 

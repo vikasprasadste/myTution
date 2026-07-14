@@ -128,6 +128,7 @@ model Profile {
   programProgress    ProgramProgress[]
   resourceProgress   ResourceProgress[]
   activityProgress   ActivityProgress[]
+  quizAttempts       QuizAttempt[]
   studentProgramSelections StudentProgramSelection[]
   authoredPrograms  Program[]          @relation("ProgramCreator")
   authoredResources Resource[]         @relation("ResourceCreator")
@@ -398,6 +399,7 @@ model Resource {
   flashcards       Flashcard[]
   milestoneActivities MilestoneActivity[]
   progress         ResourceProgress[]
+  quizAttempts     QuizAttempt[]
   creatorProfile   Profile?           @relation("ResourceCreator", fields: [creatorProfileId], references: [id], onDelete: SetNull)
   sourceTag        String             @default("app")
   createdAt        DateTime           @default(now())
@@ -539,6 +541,23 @@ model ActivityProgress {
 
   @@unique([profileId, activityId])
   @@index([profileId, status])
+}
+
+model QuizAttempt {
+  id          String   @id @default(cuid())
+  profileId   String
+  resourceId  String
+  score       Int
+  total       Int
+  percent     Int
+  answers     Json
+  sourceTag   String   @default("app")
+  profile     Profile  @relation(fields: [profileId], references: [id])
+  resource    Resource @relation(fields: [resourceId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([profileId, resourceId, createdAt])
+  @@index([resourceId, createdAt])
 }
 
 model AuditLog {
