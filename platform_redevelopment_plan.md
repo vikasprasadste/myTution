@@ -246,13 +246,32 @@ Acceptance criteria:
 
 Status:
 
-- In progress.
-- Completed so far: student can accept a tutor-suggested alternate batch; original suggested request is dismissed and a pending request is created for the alternate batch.
-- Completed so far: tutor approval returns refreshed request/class data, creates enrollment, and refreshes tutor supply/class state in the app.
-- Completed so far: student request cards show suggested batch detail and a compact enrollment request timeline.
-- Completed so far: students can withdraw pending/suggested batch requests; withdrawn requests move to `cancelled`.
+- Core workflow complete.
+- Completed: students can request a batch from tutor discovery/tutor detail.
+- Completed: tutors can approve, deny, defer, or suggest another batch.
+- Completed: student can accept a tutor-suggested alternate batch; original suggested request is dismissed and a pending request is created for the alternate batch.
+- Completed: students can withdraw pending/suggested batch requests; withdrawn requests move to `cancelled`.
+- Completed: tutor approval creates active enrollment, refreshes request/class/tutor supply state, and updates dashboard class metrics.
+- Completed: student request cards show suggested batch detail and a compact enrollment request timeline.
+- Completed: student class cards open to a detail screen with tutor, timing, joining state, classmates, and request history.
+- Completed: tutor batch roster drill-down shows enrolled students and pending request count.
+- Completed: parent class hub shows linked child classes in view-only mode.
+- Completed: DIS dashboard cards use live enrollment/request counts instead of static mock values.
 - Neon migration added in `202607140001_add_cancelled_batch_request_status` for the `BatchRequestStatus.cancelled` enum value.
-- Remaining: paid order/payment intent, tutor roster drill-down, notification surfaces, and stronger enrolled class lifecycle controls.
+- Remaining outside the core workflow: paid order/payment intent, push/in-app notification delivery, and automatic calendar/reminder generation from approved batch schedules.
+
+Phase 5 consolidated test matrix:
+
+- Student requests an available tutor batch.
+- Tutor sees the request under batch requests.
+- Tutor denies, defers, and suggests another batch; student sees the correct status card.
+- Student accepts a suggested batch and sees a new pending request.
+- Student withdraws a pending request and it moves to `cancelled`.
+- Tutor approves a pending request; an active enrollment is created.
+- Student sees the approved class in `Classes` and can open class details.
+- Tutor sees the approved student in batch roster drill-down.
+- Parent linked to the student sees the child class in view-only mode.
+- Dashboard cards update with live class/student/lead counts after Render deploy.
 
 ### Phase 6: Program Progress & Learning Activity Tracking
 
