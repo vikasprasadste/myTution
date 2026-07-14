@@ -760,6 +760,16 @@ export default function Index() {
     }
   }
 
+  async function refreshDashboardCards(targetRole: Role = role) {
+    if (!authSession?.accessToken) return;
+    try {
+      const response = await apiGet<{ data: { cards: DashboardCard[] } }>(`/api/v1/dis/dashboard?role=${targetRole}`, authSession.accessToken);
+      if (targetRole === role) setDashboardCards(response.data.cards);
+    } catch {
+      // Dashboard cards are secondary to the action that triggered them.
+    }
+  }
+
   async function refreshBatchRequests() {
     setClassHubLoading(true);
     try {
@@ -819,6 +829,7 @@ export default function Index() {
       }
       setTutorBatchDraft({ ...defaultTutorBatchDraft, programId, course: payload.course });
       await refreshTutorSupply();
+      await refreshDashboardCards("tutor");
     } catch {
       setApiNotice("Batch could not be saved. Please check required fields and API deployment.");
     } finally {
@@ -832,6 +843,7 @@ export default function Index() {
       await apiPost(`/api/v1/tutor/batches/${batchId}/archive`, {}, authSession?.accessToken);
       setApiNotice("Batch archived.");
       await refreshTutorSupply();
+      await refreshDashboardCards("tutor");
     } catch {
       setApiNotice("Batch could not be archived.");
     } finally {
@@ -877,6 +889,7 @@ export default function Index() {
       await refreshBatchRequests();
       await refreshTutorSupply();
       await refreshClasses("tutor");
+      await refreshDashboardCards("tutor");
     } catch {
       setApiNotice("Approval failed. Please check API deployment and login state.");
     } finally {
@@ -893,6 +906,7 @@ export default function Index() {
       }, authSession?.accessToken);
       if (role === "tutor") await refreshBatchRequests();
       if (role === "student") await refreshStudentBatchRequests();
+      await refreshDashboardCards(role);
     } catch {
       setApiNotice("Batch request action failed. Please check API deployment and login state.");
     } finally {
