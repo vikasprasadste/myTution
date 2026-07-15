@@ -1152,23 +1152,34 @@ app.get("/api/v1/community/threads", async (req, res) => {
   const userId = await readUserId(req);
   const status = stringOrNull(req.query.status);
   const search = stringOrNull(req.query.search)?.toLowerCase();
-  const childProfileIds = role === "parent" ? await getParentChildProfileIds(userId) : [];
-  if (role === "parent" && childProfileIds.length === 0) {
+  const context = await getCommunityAccessContext(role, userId);
+  if (!context.profile && role !== "parent") {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+  if (role === "parent" && context.childProfileIds.length === 0) {
     res.json({ data: [] });
     return;
   }
-  const where: Record<string, unknown> = {
-    role: role === "parent" ? "student" : role,
-    ...(role === "parent" ? { ownerProfileId: { in: childProfileIds } } : {}),
-    ...(status && status !== "all" ? { status } : {}),
-    ...(search ? {
+  const filters: any[] = [
+    communityThreadVisibilityWhere(context),
+    { moderatedStatus: "active" }
+  ];
+  if (status && status !== "all") filters.push({ status });
+  if (search) {
+    filters.push({
       OR: [
         { title: { contains: search, mode: "insensitive" } },
         { body: { contains: search, mode: "insensitive" } },
         { subject: { contains: search, mode: "insensitive" } },
         { milestoneTitle: { contains: search, mode: "insensitive" } }
       ]
-    } : {})
+    });
+  }
+  const where: any = {
+    AND: [
+      ...filters
+    ]
   };
   const threads = await prisma.communityThread.findMany({
     where,
@@ -1176,7 +1187,7 @@ app.get("/api/v1/community/threads", async (req, res) => {
     take: Math.min(Number(req.query.limit) || 50, 100),
     include: communityThreadInclude(userId)
   });
-  res.json({ data: threads.map((thread) => toCommunityThread(thread, userId)) });
+  res.json({ data: threads.map((thread) => toCommunityThread(thread, userId, false, context)) });
 });
 
 app.post("/api/v1/community/threads", async (req, res) => {
@@ -1188,17 +1199,32 @@ app.post("/api/v1/community/threads", async (req, res) => {
   const userId = await requireUserId(req, res);
   if (!userId) return;
   const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
   const title = String(req.body.title ?? "").trim();
   const body = String(req.body.body ?? "").trim();
   if (!title || !body) {
     res.status(400).json({ error: "Title and body are required" });
     return;
   }
+  const programId = stringOrNull(req.body.programId);
+  const batchId = stringOrNull(req.body.batchId);
+  const visibility = readCommunityVisibility(req.body.visibility, programId, batchId);
+  const context = await getCommunityAccessContext(role, userId);
+  if (!(await canCreateScopedCommunityThread(context, visibility, programId, batchId))) {
+    res.status(403).json({ error: "You cannot create a thread in this program or batch" });
+    return;
+  }
   const thread = await prisma.communityThread.create({
     data: {
       ownerUserId: userId,
       ownerProfileId: profile?.id,
+      programId: visibility === "program" ? programId : null,
+      batchId: visibility === "batch" ? batchId : null,
       role,
+      visibility,
       title,
       body,
       subject: stringOrNull(req.body.subject),
@@ -1209,7 +1235,7 @@ app.post("/api/v1/community/threads", async (req, res) => {
     },
     include: communityThreadInclude(userId)
   });
-  res.status(201).json({ data: toCommunityThread(thread, userId) });
+  res.status(201).json({ data: toCommunityThread(thread, userId, false, context) });
 });
 
 app.get("/api/v1/community/threads/:id", async (req, res) => {
@@ -1223,12 +1249,14 @@ app.get("/api/v1/community/threads/:id", async (req, res) => {
     res.status(404).json({ error: "Thread not found" });
     return;
   }
-  if (role === "parent") {
-    const childProfileIds = await getParentChildProfileIds(userId);
-    if (!thread.ownerProfileId || !childProfileIds.includes(thread.ownerProfileId)) {
+  if (role) {
+    const context = await getCommunityAccessContext(role, userId);
+    if (!(await canViewCommunityThread(context, thread))) {
       res.status(404).json({ error: "Thread not found" });
       return;
     }
+    res.json({ data: toCommunityThread(thread, userId, true, context) });
+    return;
   }
   res.json({ data: toCommunityThread(thread, userId, true) });
 });
@@ -1255,7 +1283,8 @@ app.patch("/api/v1/community/threads/:id", async (req, res) => {
     },
     include: communityThreadInclude(userId)
   });
-  res.json({ data: toCommunityThread(thread, userId) });
+  const context = await getCommunityAccessContext(readRole(current.role), userId);
+  res.json({ data: toCommunityThread(thread, userId, false, context) });
 });
 
 app.post("/api/v1/community/threads/:id/comments", async (req, res) => {
@@ -1271,12 +1300,25 @@ app.post("/api/v1/community/threads/:id/comments", async (req, res) => {
     res.status(404).json({ error: "Thread not found" });
     return;
   }
+  const context = await getCommunityAccessContext(role, userId);
+  if (!(await canViewCommunityThread(context, thread))) {
+    res.status(404).json({ error: "Thread not found" });
+    return;
+  }
+  if (thread.status === "archived" || thread.moderatedStatus !== "active") {
+    res.status(403).json({ error: "This thread is closed for comments" });
+    return;
+  }
   const body = String(req.body.body ?? "").trim();
   if (!body) {
     res.status(400).json({ error: "Comment body is required" });
     return;
   }
   const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
   const comment = await prisma.communityComment.create({
     data: {
       threadId: req.params.id,
@@ -1289,7 +1331,7 @@ app.post("/api/v1/community/threads/:id/comments", async (req, res) => {
     },
     include: communityCommentInclude(userId)
   });
-  res.status(201).json({ data: toCommunityComment(comment, userId) });
+  res.status(201).json({ data: toCommunityComment(comment, userId, context) });
 });
 
 app.put("/api/v1/community/reactions", async (req, res) => {
@@ -1313,10 +1355,20 @@ app.put("/api/v1/community/reactions", async (req, res) => {
       res.status(404).json({ error: "Thread not found" });
       return;
     }
+    const context = role ? await getCommunityAccessContext(role, userId) : null;
+    if (context && !(await canViewCommunityThread(context, thread))) {
+      res.status(404).json({ error: "Thread not found" });
+      return;
+    }
   }
   if (commentId) {
-    const comment = await prisma.communityComment.findUnique({ where: { id: commentId } });
+    const comment = await prisma.communityComment.findUnique({ where: { id: commentId }, include: { thread: true } });
     if (!comment) {
+      res.status(404).json({ error: "Comment not found" });
+      return;
+    }
+    const context = role ? await getCommunityAccessContext(role, userId) : null;
+    if (context && !(await canViewCommunityThread(context, comment.thread))) {
       res.status(404).json({ error: "Comment not found" });
       return;
     }
@@ -1333,6 +1385,73 @@ app.put("/api/v1/community/reactions", async (req, res) => {
     data: { userId, type, threadId, commentId, sourceTag: "app" }
   });
   res.status(201).json({ data: { active: true, type, threadId, commentId } });
+});
+
+app.post("/api/v1/community/reports", async (req, res) => {
+  const role = readRole(req.body.role ?? req.query.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const context = await getCommunityAccessContext(role, userId);
+  const threadId = stringOrNull(req.body.threadId);
+  const commentId = stringOrNull(req.body.commentId);
+  const reason = String(req.body.reason ?? "inappropriate").trim().slice(0, 80) || "inappropriate";
+  const details = stringOrNull(req.body.details);
+  if ((!threadId && !commentId) || (threadId && commentId)) {
+    res.status(400).json({ error: "Provide exactly one report target" });
+    return;
+  }
+  const targetThread = threadId
+    ? await prisma.communityThread.findUnique({ where: { id: threadId } })
+    : null;
+  const targetComment = commentId
+    ? await prisma.communityComment.findUnique({ where: { id: commentId }, include: { thread: true } })
+    : null;
+  const thread = targetThread ?? targetComment?.thread ?? null;
+  if (!thread || !(await canViewCommunityThread(context, thread))) {
+    res.status(404).json({ error: "Report target not found" });
+    return;
+  }
+  const report = await prisma.communityReport.upsert({
+    where: threadId
+      ? { reporterUserId_threadId_reason: { reporterUserId: userId, threadId, reason } }
+      : { reporterUserId_commentId_reason: { reporterUserId: userId, commentId: commentId as string, reason } },
+    update: { details, status: "open" },
+    create: {
+      reporterUserId: userId,
+      reporterProfileId: context.profile?.id ?? null,
+      threadId,
+      commentId,
+      reason,
+      details,
+      sourceTag: "app"
+    }
+  });
+  const openReports = await prisma.communityReport.count({
+    where: {
+      status: "open",
+      OR: [
+        { threadId: thread.id },
+        { comment: { threadId: thread.id } }
+      ]
+    }
+  });
+  await prisma.communityThread.update({
+    where: { id: thread.id },
+    data: {
+      reportedCount: openReports,
+      ...(openReports >= 3 ? { moderatedStatus: "under_review", moderatedReason: "Multiple community reports" } : {})
+    }
+  });
+  res.status(201).json({
+    data: {
+      id: report.id,
+      threadId: report.threadId,
+      commentId: report.commentId,
+      reason: report.reason,
+      status: report.status,
+      createdAt: report.createdAt.toISOString()
+    }
+  });
 });
 
 app.get("/api/v1/usermanagement/profile", async (req, res) => {
@@ -3101,6 +3220,156 @@ function readCommunityReactionType(value: unknown): CommunityReactionType {
   return "upvote";
 }
 
+function readCommunityVisibility(value: unknown, programId?: string | null, batchId?: string | null) {
+  const raw = String(value ?? "").trim();
+  if (raw === "batch" || batchId) return "batch";
+  if (raw === "program" || programId) return "program";
+  return "public";
+}
+
+type CommunityAccessContext = Awaited<ReturnType<typeof getCommunityAccessContext>>;
+
+async function getCommunityAccessContext(role: Role, userId?: string | null) {
+  const profile = userId ? await findProfile(role, userId) : null;
+  const childProfileIds = role === "parent" ? await getParentChildProfileIds(userId) : [];
+  const childProgramSelections = childProfileIds.length ? await prisma.studentProgramSelection.findMany({
+    where: { profileId: { in: childProfileIds }, status: "active" },
+    select: { programId: true }
+  }) : [];
+  const childBatchEnrollments = childProfileIds.length ? await prisma.batchEnrollment.findMany({
+    where: { studentProfileId: { in: childProfileIds }, status: "active" },
+    select: { batchId: true }
+  }) : [];
+
+  const studentProgramSelections = role === "student" && profile ? await prisma.studentProgramSelection.findMany({
+    where: { profileId: profile.id, status: "active" },
+    select: { programId: true }
+  }) : [];
+  const studentBatchEnrollments = role === "student" && profile ? await prisma.batchEnrollment.findMany({
+    where: { studentProfileId: profile.id, status: "active" },
+    select: { batchId: true, batch: { select: { programId: true } } }
+  }) : [];
+
+  const tutorProfile = role === "tutor" && profile ? await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } }) : null;
+  const tutorBatches = tutorProfile ? await prisma.tutorBatch.findMany({
+    where: { tutorProfileId: tutorProfile.id, status: { not: "archived" } },
+    select: { id: true, programId: true }
+  }) : [];
+  const tutorPrograms = role === "tutor" && profile ? await prisma.program.findMany({
+    where: { creatorProfileId: profile.id, status: { not: "archived" } },
+    select: { id: true }
+  }) : [];
+
+  const selectedProgramIds = Array.from(new Set([
+    ...studentProgramSelections.map((item) => item.programId),
+    ...studentBatchEnrollments.map((item) => item.batch.programId).filter((id): id is string => Boolean(id))
+  ]));
+  const enrolledBatchIds = studentBatchEnrollments.map((item) => item.batchId);
+  const childProgramIds = Array.from(new Set(childProgramSelections.map((item) => item.programId)));
+  const childBatchIds = childBatchEnrollments.map((item) => item.batchId);
+  const tutorProgramIds = Array.from(new Set([
+    ...tutorPrograms.map((item) => item.id),
+    ...tutorBatches.map((item) => item.programId).filter((id): id is string => Boolean(id))
+  ]));
+  const tutorBatchIds = tutorBatches.map((item) => item.id);
+
+  return {
+    role,
+    userId: userId ?? null,
+    profile,
+    profileId: profile?.id ?? null,
+    childProfileIds,
+    childProgramIds,
+    childBatchIds,
+    selectedProgramIds,
+    enrolledBatchIds,
+    tutorProgramIds,
+    tutorBatchIds
+  };
+}
+
+function communityThreadVisibilityWhere(context: CommunityAccessContext) {
+  if (context.role === "parent") {
+    return {
+      role: "student",
+      OR: [
+        { ownerProfileId: { in: context.childProfileIds } },
+        ...(context.childProgramIds.length ? [{ visibility: "program", programId: { in: context.childProgramIds } }] : []),
+        ...(context.childBatchIds.length ? [{ visibility: "batch", batchId: { in: context.childBatchIds } }] : [])
+      ]
+    };
+  }
+  if (context.role === "tutor") {
+    return {
+      OR: [
+        { role: "tutor", visibility: "public" },
+        { ownerProfileId: context.profileId },
+        ...(context.tutorProgramIds.length ? [{ visibility: "program", programId: { in: context.tutorProgramIds } }] : []),
+        ...(context.tutorBatchIds.length ? [{ visibility: "batch", batchId: { in: context.tutorBatchIds } }] : [])
+      ]
+    };
+  }
+  return {
+    OR: [
+      { role: "student", visibility: "public" },
+      { ownerProfileId: context.profileId },
+      ...(context.selectedProgramIds.length ? [{ visibility: "program", programId: { in: context.selectedProgramIds } }] : []),
+      ...(context.enrolledBatchIds.length ? [{ visibility: "batch", batchId: { in: context.enrolledBatchIds } }] : [])
+    ]
+  };
+}
+
+async function canCreateScopedCommunityThread(context: CommunityAccessContext, visibility: string, programId?: string | null, batchId?: string | null) {
+  if (context.role === "parent") return false;
+  if (visibility === "public") return true;
+  if (visibility === "program") {
+    if (!programId) return false;
+    return context.role === "tutor"
+      ? context.tutorProgramIds.includes(programId)
+      : context.selectedProgramIds.includes(programId);
+  }
+  if (visibility === "batch") {
+    if (!batchId) return false;
+    return context.role === "tutor"
+      ? context.tutorBatchIds.includes(batchId)
+      : context.enrolledBatchIds.includes(batchId);
+  }
+  return false;
+}
+
+async function canViewCommunityThread(context: CommunityAccessContext, thread: {
+  ownerProfileId?: string | null;
+  role: Role | string;
+  visibility?: string | null;
+  programId?: string | null;
+  batchId?: string | null;
+  moderatedStatus?: string | null;
+}) {
+  if (thread.moderatedStatus && thread.moderatedStatus !== "active") {
+    return thread.ownerProfileId === context.profileId;
+  }
+  if (context.role === "parent") {
+    if (thread.role !== "student") return false;
+    return Boolean(
+      thread.ownerProfileId && context.childProfileIds.includes(thread.ownerProfileId)
+      || thread.visibility === "program" && thread.programId && context.childProgramIds.includes(thread.programId)
+      || thread.visibility === "batch" && thread.batchId && context.childBatchIds.includes(thread.batchId)
+    );
+  }
+  if (thread.ownerProfileId && thread.ownerProfileId === context.profileId) return true;
+  if (thread.visibility === "public") return thread.role === context.role;
+  if (context.role === "tutor") {
+    return Boolean(
+      thread.visibility === "program" && thread.programId && context.tutorProgramIds.includes(thread.programId)
+      || thread.visibility === "batch" && thread.batchId && context.tutorBatchIds.includes(thread.batchId)
+    );
+  }
+  return Boolean(
+    thread.visibility === "program" && thread.programId && context.selectedProgramIds.includes(thread.programId)
+    || thread.visibility === "batch" && thread.batchId && context.enrolledBatchIds.includes(thread.batchId)
+  );
+}
+
 function communityThreadInclude(userId?: string | null) {
   return {
     ownerProfile: true,
@@ -3124,7 +3393,8 @@ function communityCommentInclude(_userId?: string | null) {
   return {
     ownerProfile: true,
     ownerUser: { include: { profiles: { take: 1, orderBy: { createdAt: "asc" as const } } } },
-    reactions: true
+    reactions: true,
+    reports: { where: { status: "open" }, select: { id: true } }
   };
 }
 
@@ -3175,14 +3445,18 @@ function communityAuthor(item: any, anonymous: boolean) {
   };
 }
 
-function toCommunityThread(thread: any, userId?: string | null, includeComments = false) {
+function toCommunityThread(thread: any, userId?: string | null, includeComments = false, context?: CommunityAccessContext | null) {
   const comments = includeComments && Array.isArray(thread.comments)
-    ? thread.comments.map((comment: any) => toCommunityComment(comment, userId))
+    ? thread.comments.map((comment: any) => toCommunityComment(comment, userId, context))
     : undefined;
+  const canMutate = Boolean(context && context.role !== "parent" && thread.status !== "archived" && thread.moderatedStatus === "active");
   return {
     id: thread.id,
     author: communityAuthor(thread, thread.anonymous),
     role: thread.role,
+    visibility: thread.visibility ?? "public",
+    programId: thread.programId ?? null,
+    batchId: thread.batchId ?? null,
     title: thread.title,
     body: thread.body,
     subject: thread.subject,
@@ -3191,6 +3465,12 @@ function toCommunityThread(thread: any, userId?: string | null, includeComments 
     pinned: thread.pinned,
     anonymous: thread.anonymous,
     attachmentUrl: thread.attachmentUrl,
+    reportCount: thread.reportedCount ?? 0,
+    moderatedStatus: thread.moderatedStatus ?? "active",
+    moderatedReason: thread.moderatedReason ?? null,
+    canComment: canMutate,
+    canReact: canMutate,
+    canReport: Boolean(userId && context),
     commentCount: includeComments ? comments?.length ?? 0 : thread.comments?.length ?? 0,
     reactionCounts: reactionCounts(thread.reactions ?? []),
     myReactions: myReactions(thread.reactions ?? [], userId),
@@ -3199,7 +3479,7 @@ function toCommunityThread(thread: any, userId?: string | null, includeComments 
   };
 }
 
-function toCommunityComment(comment: any, userId?: string | null) {
+function toCommunityComment(comment: any, userId?: string | null, context?: CommunityAccessContext | null) {
   return {
     id: comment.id,
     threadId: comment.threadId,
@@ -3207,6 +3487,9 @@ function toCommunityComment(comment: any, userId?: string | null) {
     body: comment.body,
     verified: comment.verified,
     anonymous: comment.anonymous,
+    reportCount: comment.reports?.length ?? 0,
+    moderatedStatus: comment.thread?.moderatedStatus ?? "active",
+    canReport: Boolean(userId && context),
     reactionCounts: reactionCounts(comment.reactions ?? []),
     myReactions: myReactions(comment.reactions ?? [], userId),
     createdAt: comment.createdAt.toISOString()

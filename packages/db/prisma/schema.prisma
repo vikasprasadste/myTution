@@ -75,6 +75,7 @@ model User {
   communityThreads CommunityThread[] @relation("CommunityThreadOwner")
   communityComments CommunityComment[] @relation("CommunityCommentOwner")
   communityReactions CommunityReaction[] @relation("CommunityReactionUser")
+  communityReports CommunityReport[] @relation("CommunityReportUser")
   parentActivationCodes ParentActivationCode[] @relation("StudentActivationCodes")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -137,6 +138,7 @@ model Profile {
   studentBatchEnrollments BatchEnrollment[] @relation("StudentBatchEnrollments")
   communityThreads CommunityThread[] @relation("CommunityThreadProfile")
   communityComments CommunityComment[] @relation("CommunityCommentProfile")
+  communityReports CommunityReport[] @relation("CommunityReportProfile")
   studentParentLinks ParentStudentLink[] @relation("StudentParentLinks")
   parentStudentLinks ParentStudentLink[] @relation("ParentStudentLinks")
   issuedParentActivationCodes ParentActivationCode[] @relation("StudentProfileActivationCodes")
@@ -188,7 +190,10 @@ model CommunityThread {
   id             String                @id @default(cuid())
   ownerUserId    String
   ownerProfileId String?
+  programId      String?
+  batchId        String?
   role           Role
+  visibility     String                @default("public")
   title          String
   body           String
   subject        String?
@@ -197,16 +202,24 @@ model CommunityThread {
   pinned         Boolean               @default(false)
   anonymous      Boolean               @default(false)
   attachmentUrl  String?
+  reportedCount  Int                   @default(0)
+  moderatedStatus String               @default("active")
+  moderatedReason String?
   sourceTag      String                @default("app")
   ownerUser      User                  @relation("CommunityThreadOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
   ownerProfile   Profile?              @relation("CommunityThreadProfile", fields: [ownerProfileId], references: [id], onDelete: SetNull)
+  program        Program?              @relation(fields: [programId], references: [id], onDelete: SetNull)
+  batch          TutorBatch?           @relation(fields: [batchId], references: [id], onDelete: SetNull)
   comments       CommunityComment[]
   reactions      CommunityReaction[]
+  reports        CommunityReport[]
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
 
   @@index([role, status, pinned, createdAt])
   @@index([ownerUserId, createdAt])
+  @@index([visibility, programId, batchId])
+  @@index([moderatedStatus, reportedCount])
 }
 
 model CommunityComment {
@@ -222,6 +235,7 @@ model CommunityComment {
   ownerUser      User              @relation("CommunityCommentOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
   ownerProfile   Profile?          @relation("CommunityCommentProfile", fields: [ownerProfileId], references: [id], onDelete: SetNull)
   reactions      CommunityReaction[]
+  reports        CommunityReport[]
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
@@ -241,9 +255,35 @@ model CommunityReaction {
   comment   CommunityComment?     @relation(fields: [commentId], references: [id], onDelete: Cascade)
   createdAt DateTime              @default(now())
 
+  @@unique([userId, type, threadId])
+  @@unique([userId, type, commentId])
   @@index([threadId, type])
   @@index([commentId, type])
   @@index([userId, type])
+}
+
+model CommunityReport {
+  id             String   @id @default(cuid())
+  reporterUserId String
+  reporterProfileId String?
+  threadId       String?
+  commentId      String?
+  reason         String
+  details        String?
+  status         String   @default("open")
+  sourceTag      String   @default("app")
+  reporterUser   User     @relation("CommunityReportUser", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  reporterProfile Profile? @relation("CommunityReportProfile", fields: [reporterProfileId], references: [id], onDelete: SetNull)
+  thread         CommunityThread? @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  comment        CommunityComment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([reporterUserId, threadId, reason])
+  @@unique([reporterUserId, commentId, reason])
+  @@index([threadId, status])
+  @@index([commentId, status])
+  @@index([status, createdAt])
 }
 
 model UserManagement {
@@ -318,6 +358,7 @@ model TutorBatch {
   program           Program?          @relation(fields: [programId], references: [id], onDelete: SetNull)
   requests          BatchRequest[]
   enrollments       BatchEnrollment[]
+  communityThreads  CommunityThread[]
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
@@ -451,6 +492,7 @@ model Program {
   milestones  ProgramMilestone[]
   progress    ProgramProgress[]
   studentSelections StudentProgramSelection[]
+  communityThreads CommunityThread[]
 
   @@index([creatorProfileId, status])
 }

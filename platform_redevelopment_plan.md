@@ -373,31 +373,48 @@ Phase 7 test matrix:
 - Parent cannot complete activities, comment/react in community, or mutate child learning state.
 - API `GET /api/v1/parent/monitoring?role=parent` returns only linked children for the authenticated parent.
 
-### Phase 8: Trust, Reviews & Marketplace Quality
+### Phase 8: Community / Doubts
 
-Goal: Build confidence in tutor discovery and enrollment.
+Goal: Make Doubts a production-grade community layer with real ownership, safe visibility, and moderation groundwork.
 
 Build:
 
-- Verified tutor status
-- Reviews linked to enrollment
-- Rating aggregation
-- Review dimensions
-- Report/moderation hooks
-- Tutor profile quality score
-
-Review dimensions:
-
-- Teaching quality
-- Punctuality
-- Communication
-- Value for money
+- Production-grade thread ownership
+- Comments and reactions fully scoped to users
+- Parent read-only community view
+- Tutor/student interaction rules
+- Moderation/reporting groundwork
+- Thread visibility rules by class, program, and batch
 
 Acceptance criteria:
 
-- Only enrolled students/parents can review.
-- Tutor rating is calculated from real reviews.
-- Reviews are visible on tutor detail.
+- Threads include owner user/profile, visibility, program scope, and batch scope.
+- Students can create/interact with public, enrolled-batch, and selected-program threads only.
+- Tutors can create/interact with own public, owned-program, and owned-batch threads only.
+- Parents can view linked-child community context but cannot comment or react.
+- Reports can be submitted against visible threads/comments and update moderation counters.
+- Reactions are unique per user, target, and reaction type.
+
+Status:
+
+- Complete.
+- Completed: `CommunityThread` now supports `visibility`, `programId`, `batchId`, `reportedCount`, `moderatedStatus`, and `moderatedReason`.
+- Completed: `CommunityReport` stores thread/comment reports with reporter user/profile and status.
+- Completed: reaction uniqueness is enforced for each user/target/type combination.
+- Completed: community list/detail/comment/reaction/report APIs use the same role-aware visibility checks.
+- Completed: parent role remains read-only for comments/reactions while retaining safe report capability.
+- Completed: mobile Doubts detail shows scope/moderation metadata and exposes a report action.
+- Neon migration added in `202607150001_add_community_visibility_reports`.
+
+Phase 8 test matrix:
+
+- Student can list and open public student threads.
+- Student cannot create a program/batch-scoped thread unless enrolled or program-selected.
+- Tutor can see and reply to threads scoped to their own batches/programs.
+- Tutor cannot interact with unrelated batch/program community threads.
+- Parent can view linked child community context but cannot reply or react.
+- Any authenticated viewer can report a visible thread; repeated reports increment moderation counters only once per reporter/reason.
+- Duplicate reactions from the same user/type/target toggle instead of creating duplicates.
 
 ### Phase 9: Payments & Monetization
 

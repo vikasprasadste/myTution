@@ -4232,6 +4232,11 @@ type DoubtItem = {
   anonymous?: boolean;
   attachment?: boolean;
   verified?: boolean;
+  visibility?: string;
+  reportCount?: number;
+  moderatedStatus?: string;
+  canComment?: boolean;
+  canReport?: boolean;
   comments?: CommunityComment[];
 };
 
@@ -4290,6 +4295,11 @@ function communityThreadToDoubt(thread: CommunityThread): DoubtItem {
     anonymous: thread.anonymous,
     attachment: !!thread.attachmentUrl,
     verified: thread.comments?.some((comment) => comment.verified),
+    visibility: thread.visibility,
+    reportCount: thread.reportCount,
+    moderatedStatus: thread.moderatedStatus,
+    canComment: thread.canComment,
+    canReport: thread.canReport,
     comments: thread.comments
   };
 }
@@ -4379,7 +4389,7 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
   }
 
   async function submitReply() {
-    if (readOnly) return;
+    if (readOnly || selectedDoubt?.canComment === false) return;
     if (!selectedDoubt || !replyText.trim()) return;
     try {
       await apiPost<{ data: CommunityComment }>(`/api/v1/community/threads/${selectedDoubt.id}/comments`, {
@@ -4391,6 +4401,22 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
       await refreshDoubts();
     } catch {
       setDoubtNotice("Reply could not be posted. Please check login/API.");
+    }
+  }
+
+  async function reportThread(item: DoubtItem) {
+    if (!item.canReport) return;
+    try {
+      await apiPost("/api/v1/community/reports", {
+        role,
+        threadId: item.id,
+        reason: "inappropriate",
+        details: "Reported from mobile community detail."
+      }, accessToken);
+      setDoubtNotice("Thanks. This thread has been sent for review.");
+      await openDoubt(item);
+    } catch {
+      setDoubtNotice("Report could not be submitted. Please check login/API.");
     }
   }
 
@@ -4453,7 +4479,9 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
             <DoubtStatus status={selectedDoubt.status} />
           </View>
           <Text style={styles.doubtDetailTitle}>{selectedDoubt.title}</Text>
+          <Text style={styles.doubtScopeText}>{selectedDoubt.visibility === "batch" ? "Batch discussion" : selectedDoubt.visibility === "program" ? "Program discussion" : "Community discussion"}{selectedDoubt.reportCount ? ` • ${selectedDoubt.reportCount} report${selectedDoubt.reportCount === 1 ? "" : "s"}` : ""}</Text>
           <Text style={styles.doubtDetailBody}>{selectedDoubt.body}</Text>
+          {selectedDoubt.moderatedStatus && selectedDoubt.moderatedStatus !== "active" ? <Text style={styles.doubtModerationText}>This thread is under moderation review.</Text> : null}
           {selectedDoubt.verified ? (
             <View style={styles.teacherSolutionBox}>
               <Text style={styles.teacherBadge}>TEACHER VERIFIED SOLUTION</Text>
@@ -4476,7 +4504,14 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
             </View>
           )}
         </View>
-        {!readOnly ? (
+        <View style={styles.communityDetailActions}>
+          {selectedDoubt.canReport ? (
+            <Pressable style={({ pressed }) => [styles.communityReportButton, pressed && styles.pressed]} onPress={() => reportThread(selectedDoubt)}>
+              <Text style={styles.communityReportText}>Report</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {!readOnly && selectedDoubt.canComment !== false ? (
           <View style={styles.replyBar}>
             <Text style={[styles.replyAttach, { color: theme.text }]}>▧</Text>
             <TextInput value={replyText} onChangeText={setReplyText} placeholder="Type your helpful reply..." placeholderTextColor="#8D7BA0" style={styles.replyInput} />
@@ -5042,7 +5077,9 @@ const styles = StyleSheet.create({
   askFabText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
   doubtDetailCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 14, padding: 16 },
   doubtDetailTitle: { color: "#1E1030", fontSize: 19, fontWeight: "900", lineHeight: 24 },
+  doubtScopeText: { color: "#7C5C9E", fontSize: 12, fontWeight: "900", lineHeight: 17, textTransform: "uppercase" },
   doubtDetailBody: { color: "#1E1030", fontSize: 15, fontWeight: "600", lineHeight: 23 },
+  doubtModerationText: { backgroundColor: "#FEF3C7", borderRadius: 12, color: "#92400E", fontSize: 12, fontWeight: "800", lineHeight: 17, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 8 },
   teacherSolutionBox: { backgroundColor: "#F9F3FC", borderColor: "#5A3284", borderRadius: 18, borderWidth: 1.5, gap: 10, padding: 15 },
   teacherBadge: { alignSelf: "flex-start", backgroundColor: "#5A3284", borderRadius: 6, color: "#FFFFFF", fontSize: 10, fontWeight: "900", overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4 },
   teacherSolutionText: { color: "#1E1030", fontSize: 14, fontWeight: "600", lineHeight: 21 },
@@ -5051,6 +5088,9 @@ const styles = StyleSheet.create({
   peerTutorLabel: { color: "#148087", fontSize: 12, fontWeight: "900" },
   noAnswerCard: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 16, borderWidth: 1, gap: 4, padding: 24 },
   noAnswerTitle: { color: "#1E1030", fontSize: 15, fontWeight: "900" },
+  communityDetailActions: { alignItems: "flex-end", minHeight: 34 },
+  communityReportButton: { backgroundColor: "#F8FAFC", borderColor: "#E5E7EB", borderRadius: 999, borderWidth: 1, paddingHorizontal: 13, paddingVertical: 8 },
+  communityReportText: { color: "#64748B", fontSize: 12, fontWeight: "900" },
   replyBar: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, flexDirection: "row", gap: 10, padding: 10 },
   replyAttach: { fontSize: 20, fontWeight: "900" },
   replyInput: { backgroundColor: "#F5EEF6", borderRadius: 999, color: "#1E1030", flex: 1, fontSize: 14, fontWeight: "700", minHeight: 40, paddingHorizontal: 14 },

@@ -538,6 +538,9 @@ export interface CommunityComment {
   body: string;
   verified: boolean;
   anonymous: boolean;
+  reportCount?: number;
+  moderatedStatus?: string;
+  canReport?: boolean;
   reactionCounts: CommunityReactionCounts;
   myReactions: CommunityReactionType[];
   createdAt: string;
@@ -547,6 +550,9 @@ export interface CommunityThread {
   id: string;
   author: CommunityAuthor;
   role: Role;
+  visibility: "public" | "program" | "batch" | string;
+  programId: string | null;
+  batchId: string | null;
   title: string;
   body: string;
   subject: string | null;
@@ -555,9 +561,24 @@ export interface CommunityThread {
   pinned: boolean;
   anonymous: boolean;
   attachmentUrl: string | null;
+  reportCount?: number;
+  moderatedStatus?: string;
+  moderatedReason?: string | null;
+  canComment?: boolean;
+  canReact?: boolean;
+  canReport?: boolean;
   commentCount: number;
   reactionCounts: CommunityReactionCounts;
   myReactions: CommunityReactionType[];
   createdAt: string;
   comments?: CommunityComment[];
+}
+
+export interface CommunityReportSummary {
+  id: string;
+  threadId: string | null;
+  commentId: string | null;
+  reason: string;
+  status: string;
+  createdAt: string;
 }
