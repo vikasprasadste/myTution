@@ -531,6 +531,33 @@ Acceptance criteria:
 - Risky actions are audit logged.
 - Marketplace quality can be monitored.
 
+Status:
+
+- Complete for MVP admin operations foundation.
+- Completed: `AdminReview` supports tutor verification, program review, content/community moderation, and batch review queues.
+- Completed: `AdminConfig` supports feature flag/config overrides by scoped key.
+- Completed: admin user search returns profiles and platform activity counts.
+- Completed: admin user status update supports suspension/deletion and revokes sessions.
+- Completed: admin delete supports soft mode and expanded hard-delete cleanup across newer platform tables.
+- Completed: tutor verification workflow updates tutor profile status and creates/closes review rows.
+- Completed: admin review queue can create manual reviews and apply decisions to programs, batches, community threads, and comments.
+- Completed: audit log API exposes filtered operational history.
+- Completed: feature flag config API returns defaults plus admin overrides.
+- Neon migration added in `202607150004_add_admin_operations`.
+
+Phase 11 test matrix:
+
+- Admin searches users by phone/name/city/role/status.
+- Admin soft-deletes a user and confirms sessions are revoked.
+- Admin hard-deletes a test user and verifies related notifications, reminders, progress, payments, community, and profile records are cleaned.
+- Admin lists tutor verification queue and updates a tutor to `verified`, `rejected`, or `suspended`.
+- Admin creates a program/content/batch/community review and closes it with a decision.
+- Program review decision `published` makes a program visible; `archived` removes it from marketplace flow.
+- Batch review decision `archived` hides the batch.
+- Community review decision `removed` marks thread/comment moderation status.
+- Admin reads audit logs filtered by action/entity.
+- Admin writes a feature flag override and reads it back.
+
 ## 5. API Service Domains
 
 Recommended service boundaries:

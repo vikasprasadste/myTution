@@ -767,3 +767,38 @@ model AuditLog {
   @@index([profileId, createdAt])
   @@index([action, createdAt])
 }
+
+model AdminReview {
+  id             String   @id @default(cuid())
+  entityType     String
+  entityId       String
+  reviewType     String
+  status         String   @default("pending")
+  priority       String   @default("normal")
+  assignedTo     String?
+  decision       String?
+  reason         String?
+  metadata       Json?
+  sourceTag      String   @default("app")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  decidedAt      DateTime?
+
+  @@unique([entityType, entityId, reviewType])
+  @@index([status, reviewType, createdAt])
+  @@index([entityType, entityId])
+}
+
+model AdminConfig {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  scope       String   @default("global")
+  value       Json
+  status      String   @default("active")
+  updatedBy   String?
+  sourceTag   String   @default("app")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([scope, status])
+}

@@ -664,3 +664,70 @@ export interface CommunityReportSummary {
   status: string;
   createdAt: string;
 }
+
+export interface AdminUserSearchResult {
+  id: string;
+  phone: string;
+  status: string;
+  sourceTag: string;
+  createdAt: string;
+  updatedAt: string;
+  profiles: Array<{
+    id: string;
+    role: Role | "admin";
+    name: string;
+    city: string | null;
+    stream: string | null;
+    specialization: string | null;
+    profileStatus?: string | null;
+    verificationStatus?: string | null;
+  }>;
+  counts: {
+    programs: number;
+    batches: number;
+    batchRequests: number;
+    enrollments: number;
+    reminders: number;
+    payments: number;
+    threads: number;
+  };
+}
+
+export interface AdminReviewSummary {
+  id: string;
+  entityType: string;
+  entityId: string;
+  reviewType: string;
+  status: string;
+  priority: string;
+  assignedTo: string | null;
+  decision: string | null;
+  reason: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt: string | null;
+}
+
+export interface AdminConfigSummary {
+  id: string;
+  key: string;
+  scope: string;
+  value: Record<string, unknown>;
+  status: string;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminAuditSummary {
+  id: string;
+  userId: string | null;
+  profileId: string | null;
+  role: Role | "admin" | null;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}

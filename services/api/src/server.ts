@@ -1031,14 +1031,364 @@ app.delete("/api/v1/admin/users/by-phone", async (req, res) => {
     return;
   }
 
+  const mode = String(req.body.mode ?? req.query.mode ?? "hard");
+  const result = mode === "soft"
+    ? await softDeleteUser(user.id, "admin.user.soft_delete.by_phone", adminActor(req))
+    : await hardDeleteUser(user.id, "admin.user.hard_delete.by_phone", adminActor(req));
+
+  res.json({ data: result });
+});
+
+app.get("/api/v1/admin/users", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const query = String(req.query.query ?? "").trim();
+  const role = req.query.role ? readRole(req.query.role) : null;
+  const status = stringOrNull(req.query.status);
+  const users = await prisma.user.findMany({
+    where: {
+      ...(status ? { status } : {}),
+      ...(query ? {
+        OR: [
+          { phone: textContains(query) },
+          { profiles: { some: { firstName: textContains(query) } } },
+          { profiles: { some: { lastName: textContains(query) } } },
+          { profiles: { some: { city: textContains(query) } } }
+        ]
+      } : {}),
+      ...(role ? { profiles: { some: { role } } } : {})
+    },
+    include: { profiles: { include: { tutorProfile: true } } },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(Number(req.query.limit ?? 25) || 25, 100)
+  });
+  res.json({ data: await Promise.all(users.map(toAdminUserSearchResult)) });
+});
+
+app.get("/api/v1/admin/users/:id", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: req.params.id },
+    include: { profiles: { include: { tutorProfile: true } } }
+  });
+  if (!user) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+  res.json({ data: await toAdminUserSearchResult(user) });
+});
+
+app.patch("/api/v1/admin/users/:id/status", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const status = String(req.body.status ?? "").trim();
+  if (!["active", "suspended", "deleted"].includes(status)) {
+    res.status(400).json({ error: "Unsupported user status" });
+    return;
+  }
+  const user = await prisma.user.update({ where: { id: req.params.id }, data: { status } });
+  await prisma.authSession.updateMany({ where: { userId: user.id }, data: { revokedAt: new Date() } });
+  await logAudit({
+    action: "admin.user.status_update",
+    entityType: "User",
+    entityId: user.id,
+    metadata: { status, reason: stringOrNull(req.body.reason), adminActor: adminActor(req) }
+  });
+  res.json({ data: { id: user.id, phone: user.phone, status: user.status } });
+});
+
+app.delete("/api/v1/admin/users/:id", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const mode = String(req.body.mode ?? req.query.mode ?? "soft");
+  const result = mode === "hard"
+    ? await hardDeleteUser(req.params.id, "admin.user.hard_delete", adminActor(req))
+    : await softDeleteUser(req.params.id, "admin.user.soft_delete", adminActor(req));
+  res.json({ data: result });
+});
+
+app.get("/api/v1/admin/tutors/verification", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const status = stringOrNull(req.query.status);
+  const tutors = await prisma.tutorProfile.findMany({
+    where: status ? { verificationStatus: status } : {},
+    include: { profile: { include: { user: true } } },
+    orderBy: { updatedAt: "desc" },
+    take: Math.min(Number(req.query.limit ?? 50) || 50, 100)
+  });
+  res.json({ data: tutors.map(toAdminTutorVerificationSummary) });
+});
+
+app.patch("/api/v1/admin/tutors/:id/verification", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const verificationStatus = String(req.body.status ?? "").trim();
+  if (!["unverified", "pending", "verified", "rejected", "suspended"].includes(verificationStatus)) {
+    res.status(400).json({ error: "Unsupported verification status" });
+    return;
+  }
+  const tutor = await prisma.tutorProfile.update({
+    where: { id: req.params.id },
+    data: { verificationStatus, profileStatus: verificationStatus === "suspended" ? "suspended" : undefined },
+    include: { profile: { include: { user: true } } }
+  });
+  await prisma.adminReview.upsert({
+    where: { entityType_entityId_reviewType: { entityType: "TutorProfile", entityId: tutor.id, reviewType: "tutor_verification" } },
+    update: {
+      status: ["verified", "rejected", "suspended"].includes(verificationStatus) ? "closed" : "pending",
+      decision: verificationStatus,
+      reason: stringOrNull(req.body.reason),
+      assignedTo: adminActor(req),
+      decidedAt: ["verified", "rejected", "suspended"].includes(verificationStatus) ? new Date() : null,
+      metadata: { profileId: tutor.profileId }
+    },
+    create: {
+      entityType: "TutorProfile",
+      entityId: tutor.id,
+      reviewType: "tutor_verification",
+      status: ["verified", "rejected", "suspended"].includes(verificationStatus) ? "closed" : "pending",
+      decision: verificationStatus,
+      reason: stringOrNull(req.body.reason),
+      assignedTo: adminActor(req),
+      decidedAt: ["verified", "rejected", "suspended"].includes(verificationStatus) ? new Date() : null,
+      metadata: { profileId: tutor.profileId },
+      sourceTag: "app"
+    }
+  });
+  await logAudit({
+    action: "admin.tutor.verification_update",
+    entityType: "TutorProfile",
+    entityId: tutor.id,
+    metadata: { verificationStatus, reason: stringOrNull(req.body.reason), adminActor: adminActor(req) }
+  });
+  res.json({ data: toAdminTutorVerificationSummary(tutor) });
+});
+
+app.get("/api/v1/admin/reviews", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const reviews = await prisma.adminReview.findMany({
+    where: {
+      ...(req.query.status ? { status: String(req.query.status) } : {}),
+      ...(req.query.reviewType ? { reviewType: String(req.query.reviewType) } : {}),
+      ...(req.query.entityType ? { entityType: String(req.query.entityType) } : {})
+    },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(Number(req.query.limit ?? 50) || 50, 100)
+  });
+  res.json({ data: reviews.map(toAdminReviewSummary) });
+});
+
+app.post("/api/v1/admin/reviews", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const entityType = String(req.body.entityType ?? "").trim();
+  const entityId = String(req.body.entityId ?? "").trim();
+  const reviewType = String(req.body.reviewType ?? "manual_review").trim();
+  if (!entityType || !entityId) {
+    res.status(400).json({ error: "entityType and entityId are required" });
+    return;
+  }
+  const review = await prisma.adminReview.upsert({
+    where: { entityType_entityId_reviewType: { entityType, entityId, reviewType } },
+    update: {
+      status: String(req.body.status ?? "pending"),
+      priority: String(req.body.priority ?? "normal"),
+      reason: stringOrNull(req.body.reason),
+      metadata: req.body.metadata ?? undefined
+    },
+    create: {
+      entityType,
+      entityId,
+      reviewType,
+      status: String(req.body.status ?? "pending"),
+      priority: String(req.body.priority ?? "normal"),
+      reason: stringOrNull(req.body.reason),
+      metadata: req.body.metadata ?? undefined,
+      sourceTag: "app"
+    }
+  });
+  await logAudit({
+    action: "admin.review.queue",
+    entityType,
+    entityId,
+    metadata: { reviewType, priority: review.priority, adminActor: adminActor(req) }
+  });
+  res.status(201).json({ data: toAdminReviewSummary(review) });
+});
+
+app.post("/api/v1/admin/reviews/:id/decision", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const decision = String(req.body.decision ?? "").trim();
+  if (!decision) {
+    res.status(400).json({ error: "Decision is required" });
+    return;
+  }
+  const review = await prisma.adminReview.update({
+    where: { id: req.params.id },
+    data: {
+      status: String(req.body.status ?? "closed"),
+      decision,
+      reason: stringOrNull(req.body.reason),
+      assignedTo: adminActor(req),
+      decidedAt: new Date()
+    }
+  });
+  await applyAdminReviewDecision(review);
+  await logAudit({
+    action: "admin.review.decision",
+    entityType: review.entityType,
+    entityId: review.entityId,
+    metadata: { reviewType: review.reviewType, decision, reason: review.reason, adminActor: adminActor(req) }
+  });
+  res.json({ data: toAdminReviewSummary(review) });
+});
+
+app.get("/api/v1/admin/audit", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      ...(req.query.action ? { action: textContains(req.query.action) } : {}),
+      ...(req.query.entityType ? { entityType: String(req.query.entityType) } : {}),
+      ...(req.query.entityId ? { entityId: String(req.query.entityId) } : {})
+    },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(Number(req.query.limit ?? 100) || 100, 250)
+  });
+  res.json({ data: logs.map(toAdminAuditSummary) });
+});
+
+app.get("/api/v1/admin/config/features", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const overrides = await prisma.adminConfig.findMany({
+    where: { scope: "feature_flags", status: "active" },
+    orderBy: { key: "asc" }
+  });
+  res.json({ data: { defaults: featureFlags, overrides: overrides.map(toAdminConfigSummary) } });
+});
+
+app.put("/api/v1/admin/config/features/:key", async (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const key = String(req.params.key).trim();
+  const config = await prisma.adminConfig.upsert({
+    where: { key: `feature_flags.${key}` },
+    update: {
+      value: req.body.value ?? {},
+      status: String(req.body.status ?? "active"),
+      updatedBy: adminActor(req)
+    },
+    create: {
+      key: `feature_flags.${key}`,
+      scope: "feature_flags",
+      value: req.body.value ?? {},
+      status: String(req.body.status ?? "active"),
+      updatedBy: adminActor(req),
+      sourceTag: "app"
+    }
+  });
+  await logAudit({
+    action: "admin.config.feature_update",
+    entityType: "AdminConfig",
+    entityId: config.id,
+    metadata: { key: config.key, value: config.value as any, status: config.status, adminActor: adminActor(req) }
+  });
+  res.json({ data: toAdminConfigSummary(config) });
+});
+
+function adminActor(req: express.Request) {
+  return String(req.header("x-admin-actor") ?? req.header("x-admin-email") ?? "admin_api").trim() || "admin_api";
+}
+
+async function softDeleteUser(userId: string, action: string, actor: string) {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { status: "deleted" },
+    include: { profiles: true }
+  });
+  await prisma.authSession.updateMany({ where: { userId }, data: { revokedAt: new Date() } });
+  await prisma.userManagement.updateMany({ where: { userId }, data: { sourceTag: "admin_deleted" } });
+  await prisma.tutorProfile.updateMany({
+    where: { profileId: { in: user.profiles.map((profile) => profile.id) } },
+    data: { profileStatus: "deleted" }
+  });
+  await logAudit({
+    action,
+    entityType: "User",
+    entityId: userId,
+    metadata: { phone: user.phone, adminActor: actor, mode: "soft" }
+  });
+  return { userId, phone: user.phone, mode: "soft", status: "deleted", revokedSessions: true };
+}
+
+async function hardDeleteUser(userId: string, action: string, actor: string) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, include: { profiles: true } });
+  if (!user) throw new Error("User not found");
   const profileIds = user.profiles.map((profile) => profile.id);
+  const tutorProfiles = await prisma.tutorProfile.findMany({ where: { profileId: { in: profileIds } }, select: { id: true } });
+  const tutorProfileIds = tutorProfiles.map((profile) => profile.id);
+  const batchIds = (await prisma.tutorBatch.findMany({ where: { tutorProfileId: { in: tutorProfileIds } }, select: { id: true } })).map((batch) => batch.id);
+  const programIds = (await prisma.program.findMany({ where: { creatorProfileId: { in: profileIds } }, select: { id: true } })).map((program) => program.id);
+  const resourceIds = (await prisma.resource.findMany({ where: { creatorProfileId: { in: profileIds } }, select: { id: true } })).map((resource) => resource.id);
   const result = await prisma.$transaction(async (tx) => {
+    const audit = await tx.auditLog.create({
+      data: { action, entityType: "User", entityId: user.id, metadata: { phone: user.phone, adminActor: actor, mode: "hard" }, sourceTag: "app" }
+    });
+    const communityReports = await tx.communityReport.deleteMany({ where: { OR: [{ reporterUserId: user.id }, { reporterProfileId: { in: profileIds } }] } });
     const communityReactions = await tx.communityReaction.deleteMany({ where: { userId: user.id } });
-    const communityComments = await tx.communityComment.deleteMany({ where: { ownerUserId: user.id } });
-    const communityThreads = await tx.communityThread.deleteMany({ where: { ownerUserId: user.id } });
+    const communityComments = await tx.communityComment.deleteMany({ where: { OR: [{ ownerUserId: user.id }, { ownerProfileId: { in: profileIds } }] } });
+    const communityThreads = await tx.communityThread.deleteMany({ where: { OR: [{ ownerUserId: user.id }, { ownerProfileId: { in: profileIds } }] } });
+    const notifications = await tx.notification.deleteMany({ where: { userId: user.id } });
+    const devices = await tx.deviceRegistration.deleteMany({ where: { userId: user.id } });
+    const parentCodes = await tx.parentActivationCode.deleteMany({ where: { OR: [{ studentUserId: user.id }, { studentProfileId: { in: profileIds } }, { parentProfileId: { in: profileIds } }] } });
+    const parentLinks = await tx.parentStudentLink.deleteMany({ where: { OR: [{ studentProfileId: { in: profileIds } }, { parentProfileId: { in: profileIds } }] } });
+    const quizAttempts = await tx.quizAttempt.deleteMany({ where: { profileId: { in: profileIds } } });
+    const activityProgress = await tx.activityProgress.deleteMany({ where: { profileId: { in: profileIds } } });
     const resourceProgress = await tx.resourceProgress.deleteMany({ where: { profileId: { in: profileIds } } });
-    const studentProgramSelections = await tx.studentProgramSelection.deleteMany({ where: { profileId: { in: profileIds } } });
     const programProgress = await tx.programProgress.deleteMany({ where: { profileId: { in: profileIds } } });
+    const studentProgramSelections = await tx.studentProgramSelection.deleteMany({ where: { profileId: { in: profileIds } } });
+    const batchEnrollments = await tx.batchEnrollment.deleteMany({ where: { OR: [{ studentProfileId: { in: profileIds } }, { batchId: { in: batchIds } }] } });
+    const batchRequests = await tx.batchRequest.deleteMany({ where: { OR: [{ studentProfileId: { in: profileIds } }, { batchId: { in: batchIds } }] } });
+    const accounting = await tx.tutorAccountingEntry.deleteMany({ where: { tutorProfileId: { in: tutorProfileIds } } });
+    const purchases = await tx.programPurchase.deleteMany({ where: { OR: [{ studentProfileId: { in: profileIds } }, { programId: { in: programIds } }] } });
+    const paymentOrders = await tx.paymentOrder.deleteMany({ where: { OR: [{ userId: user.id }, { profileId: { in: profileIds } }, { tutorProfileId: { in: tutorProfileIds } }] } });
+    const milestoneActivities = await tx.milestoneActivity.deleteMany({ where: { milestone: { programId: { in: programIds } } } });
+    const milestones = await tx.programMilestone.deleteMany({ where: { programId: { in: programIds } } });
+    const recommendations = await tx.recommendation.deleteMany({ where: { resourceId: { in: resourceIds } } });
+    const flashcards = await tx.flashcard.deleteMany({ where: { resource: { creatorProfileId: { in: profileIds } } } });
+    const resources = await tx.resource.deleteMany({ where: { creatorProfileId: { in: profileIds } } });
+    const batches = await tx.tutorBatch.deleteMany({ where: { tutorProfileId: { in: tutorProfileIds } } });
+    const programs = await tx.program.deleteMany({ where: { id: { in: programIds } } });
+    const tutorProfilesDeleted = await tx.tutorProfile.deleteMany({ where: { id: { in: tutorProfileIds } } });
     const reminders = await tx.reminder.deleteMany({ where: { userId: user.id } });
     const userManagement = await tx.userManagement.deleteMany({ where: { userId: user.id } });
     const authSessions = await tx.authSession.deleteMany({ where: { userId: user.id } });
@@ -1046,25 +1396,169 @@ app.delete("/api/v1/admin/users/by-phone", async (req, res) => {
     await tx.user.delete({ where: { id: user.id } });
     return {
       userId: user.id,
-      phone,
+      phone: user.phone,
+      mode: "hard",
+      auditId: audit.id,
       deleted: {
         authSessions: authSessions.count,
         reminders: reminders.count,
+        notifications: notifications.count,
+        devices: devices.count,
         userManagement: userManagement.count,
+        parentCodes: parentCodes.count,
+        parentLinks: parentLinks.count,
+        communityReports: communityReports.count,
         communityReactions: communityReactions.count,
         communityComments: communityComments.count,
         communityThreads: communityThreads.count,
+        quizAttempts: quizAttempts.count,
+        activityProgress: activityProgress.count,
         resourceProgress: resourceProgress.count,
         studentProgramSelections: studentProgramSelections.count,
         programProgress: programProgress.count,
+        batchEnrollments: batchEnrollments.count,
+        batchRequests: batchRequests.count,
+        paymentOrders: paymentOrders.count,
+        purchases: purchases.count,
+        accounting: accounting.count,
+        recommendations: recommendations.count,
+        flashcards: flashcards.count,
+        resources: resources.count,
+        milestoneActivities: milestoneActivities.count,
+        milestones: milestones.count,
+        programs: programs.count,
+        batches: batches.count,
+        tutorProfiles: tutorProfilesDeleted.count,
         profiles: profiles.count,
         users: 1
       }
     };
   });
+  return result;
+}
 
-  res.json({ data: result });
-});
+async function toAdminUserSearchResult(user: any) {
+  const profileIds = user.profiles.map((profile: any) => profile.id);
+  const tutorProfileIds = user.profiles.map((profile: any) => profile.tutorProfile?.id).filter(Boolean);
+  const [programs, batches, batchRequests, enrollments, reminders, payments, threads] = await Promise.all([
+    prisma.program.count({ where: { creatorProfileId: { in: profileIds } } }),
+    prisma.tutorBatch.count({ where: { tutorProfileId: { in: tutorProfileIds } } }),
+    prisma.batchRequest.count({ where: { studentProfileId: { in: profileIds } } }),
+    prisma.batchEnrollment.count({ where: { studentProfileId: { in: profileIds } } }),
+    prisma.reminder.count({ where: { userId: user.id } }),
+    prisma.paymentOrder.count({ where: { userId: user.id } }),
+    prisma.communityThread.count({ where: { ownerUserId: user.id } })
+  ]);
+  return {
+    id: user.id,
+    phone: user.phone,
+    status: user.status,
+    sourceTag: user.sourceTag,
+    createdAt: user.createdAt.toISOString(),
+    updatedAt: user.updatedAt.toISOString(),
+    profiles: user.profiles.map((profile: any) => ({
+      id: profile.id,
+      role: profile.role,
+      name: `${profile.firstName} ${profile.lastName}`.trim(),
+      city: profile.city,
+      stream: profile.stream,
+      specialization: profile.specialization,
+      profileStatus: profile.tutorProfile?.profileStatus ?? null,
+      verificationStatus: profile.tutorProfile?.verificationStatus ?? null
+    })),
+    counts: { programs, batches, batchRequests, enrollments, reminders, payments, threads }
+  };
+}
+
+function toAdminTutorVerificationSummary(tutor: any) {
+  return {
+    id: tutor.id,
+    profileId: tutor.profileId,
+    userId: tutor.profile.userId,
+    phone: tutor.profile.user?.phone ?? null,
+    name: `${tutor.profile.firstName} ${tutor.profile.lastName}`.trim(),
+    headline: tutor.headline,
+    subjects: splitCsv(tutor.subjects),
+    location: tutor.location,
+    rating: tutor.rating,
+    experienceYears: tutor.experienceYears,
+    verificationStatus: tutor.verificationStatus,
+    profileStatus: tutor.profileStatus,
+    updatedAt: tutor.updatedAt.toISOString()
+  };
+}
+
+function toAdminReviewSummary(review: any) {
+  return {
+    id: review.id,
+    entityType: review.entityType,
+    entityId: review.entityId,
+    reviewType: review.reviewType,
+    status: review.status,
+    priority: review.priority,
+    assignedTo: review.assignedTo ?? null,
+    decision: review.decision ?? null,
+    reason: review.reason ?? null,
+    metadata: review.metadata ?? null,
+    createdAt: review.createdAt.toISOString(),
+    updatedAt: review.updatedAt.toISOString(),
+    decidedAt: review.decidedAt ? review.decidedAt.toISOString() : null
+  };
+}
+
+function toAdminConfigSummary(config: any) {
+  return {
+    id: config.id,
+    key: config.key,
+    scope: config.scope,
+    value: config.value ?? {},
+    status: config.status,
+    updatedBy: config.updatedBy ?? null,
+    createdAt: config.createdAt.toISOString(),
+    updatedAt: config.updatedAt.toISOString()
+  };
+}
+
+function toAdminAuditSummary(log: any) {
+  return {
+    id: log.id,
+    userId: log.userId ?? null,
+    profileId: log.profileId ?? null,
+    role: log.role ?? null,
+    action: log.action,
+    entityType: log.entityType ?? null,
+    entityId: log.entityId ?? null,
+    metadata: log.metadata ?? null,
+    createdAt: log.createdAt.toISOString()
+  };
+}
+
+async function applyAdminReviewDecision(review: any) {
+  const decision = String(review.decision ?? "");
+  if (review.entityType === "Program" && ["approved", "published", "rejected", "archived"].includes(decision)) {
+    await prisma.program.updateMany({
+      where: { id: review.entityId },
+      data: decision === "approved" || decision === "published"
+        ? { status: "published", visibility: "published" }
+        : { status: decision }
+    });
+  }
+  if (review.entityType === "TutorBatch" && ["active", "paused", "archived"].includes(decision)) {
+    await prisma.tutorBatch.updateMany({ where: { id: review.entityId }, data: { status: decision } });
+  }
+  if (review.entityType === "CommunityThread" && ["active", "under_review", "removed"].includes(decision)) {
+    await prisma.communityThread.updateMany({
+      where: { id: review.entityId },
+      data: { moderatedStatus: decision, moderatedReason: review.reason }
+    });
+  }
+  if (review.entityType === "CommunityComment" && ["active", "under_review", "removed"].includes(decision)) {
+    await prisma.communityComment.updateMany({
+      where: { id: review.entityId },
+      data: { sourceTag: `admin_${decision}` }
+    });
+  }
+}
 
 function generateActivationCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
