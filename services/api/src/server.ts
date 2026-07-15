@@ -498,6 +498,26 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
         where: { id: activation.id },
         data: { status: "accepted", acceptedAt: new Date(), parentProfileId: profile.id }
       });
+      await enqueueNotification(prisma, {
+        userId: activation.studentUserId,
+        profileId: activation.studentProfileId,
+        role: "student",
+        type: "parent.invite.accepted",
+        title: "Parent linked",
+        body: `${profile.firstName} joined as ${activation.relationship}.`,
+        data: { parentProfileId: profile.id, relationship: activation.relationship },
+        priority: "high"
+      });
+      await enqueueNotification(prisma, {
+        userId: user.id,
+        profileId: profile.id,
+        role: "parent",
+        type: "parent.invite.accepted",
+        title: "Student linked",
+        body: "You can now track your child's program and class progress.",
+        data: { studentProfileId: activation.studentProfileId, relationship: activation.relationship },
+        priority: "high"
+      });
       await logAudit({
         userId: user.id,
         profileId: profile.id,
@@ -1127,6 +1147,16 @@ app.post("/api/v1/parent-activation", async (req, res) => {
       sourceTag: "app"
     }
   });
+  await enqueueNotification(prisma, {
+    userId: student.userId,
+    profileId: student.id,
+    role: "student",
+    type: "parent.invite.generated",
+    title: "Parent invite code generated",
+    body: `Share ${invite.code} with ${relationship} to link them to your account.`,
+    data: { codeId: invite.id, relationship },
+    priority: "normal"
+  });
   res.status(201).json({ data: { id: invite.id, code: invite.code, relationship: invite.relationship, status: invite.status } });
 });
 
@@ -1672,6 +1702,7 @@ app.post("/api/v1/usermanagement/batch-requests", async (req, res) => {
     create: { batchId, studentProfileId: student.id, message: stringOrNull(req.body.message), sourceTag: "app" },
     include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true }
   });
+  await notifyBatchRequestCreated(prisma, request);
   res.status(201).json({ data: toBatchRequestSummary(request) });
 });
 
@@ -1730,6 +1761,7 @@ app.post("/api/v1/usermanagement/batch-requests/:id/approve", async (req, res) =
       create: { batchId: request.batchId, studentProfileId: request.studentProfileId, requestId: request.id, status: "active", sourceTag: "app" }
     });
     await ensureBatchScheduleReminders(tx, request);
+    await notifyBatchRequestOutcome(tx, request, "batch.request.approved", "Batch request approved", `${request.batch.title} has been approved and added to your reminders.`);
     return { approved, enrollment };
   });
   const updatedRequest = await prisma.batchRequest.findUnique({
@@ -1751,12 +1783,13 @@ app.post("/api/v1/usermanagement/batch-requests/:id/reject", async (req, res) =>
     res.status(404).json({ error: "Tutor profile not found" });
     return;
   }
-  const request = await prisma.batchRequest.findUnique({ where: { id: req.params.id }, include: { batch: { include: { tutorProfile: true } } } });
+  const request = await prisma.batchRequest.findUnique({ where: { id: req.params.id }, include: { batch: { include: { tutorProfile: true } }, studentProfile: true } });
   if (!request || request.batch.tutorProfile.profileId !== tutor.id) {
     res.status(404).json({ error: "Request not found" });
     return;
   }
   const rejected = await prisma.batchRequest.update({ where: { id: request.id }, data: { status: "rejected", tutorResponse: stringOrNull(req.body.message) ?? "Tutor denied this request." } });
+  await notifyBatchRequestOutcome(prisma, request, "batch.request.rejected", "Batch request denied", rejected.tutorResponse ?? "Tutor denied this request.");
   res.json({ data: rejected });
 });
 
@@ -1767,12 +1800,13 @@ app.post("/api/v1/usermanagement/batch-requests/:id/defer", async (req, res) => 
     res.status(404).json({ error: "Tutor profile not found" });
     return;
   }
-  const request = await prisma.batchRequest.findUnique({ where: { id: req.params.id }, include: { batch: { include: { tutorProfile: true } } } });
+  const request = await prisma.batchRequest.findUnique({ where: { id: req.params.id }, include: { batch: { include: { tutorProfile: true } }, studentProfile: true } });
   if (!request || request.batch.tutorProfile.profileId !== tutor.id) {
     res.status(404).json({ error: "Request not found" });
     return;
   }
   const deferred = await prisma.batchRequest.update({ where: { id: request.id }, data: { status: "deferred", tutorResponse: stringOrNull(req.body.message) ?? "Tutor deferred this request for a later slot." } });
+  await notifyBatchRequestOutcome(prisma, request, "batch.request.deferred", "Batch request deferred", deferred.tutorResponse ?? "Tutor deferred this request for a later slot.");
   res.json({ data: deferred });
 });
 
@@ -1783,7 +1817,7 @@ app.post("/api/v1/usermanagement/batch-requests/:id/suggest", async (req, res) =
     res.status(404).json({ error: "Tutor profile not found" });
     return;
   }
-  const request = await prisma.batchRequest.findUnique({ where: { id: req.params.id }, include: { batch: { include: { tutorProfile: true } } } });
+  const request = await prisma.batchRequest.findUnique({ where: { id: req.params.id }, include: { batch: { include: { tutorProfile: true } }, studentProfile: true } });
   if (!request || request.batch.tutorProfile.profileId !== tutor.id) {
     res.status(404).json({ error: "Request not found" });
     return;
@@ -1804,6 +1838,7 @@ app.post("/api/v1/usermanagement/batch-requests/:id/suggest", async (req, res) =
       tutorResponse: stringOrNull(req.body.message) ?? "Tutor suggested another batch."
     }
   });
+  await notifyBatchRequestOutcome(prisma, { ...request, suggestedBatchId }, "batch.request.suggested", "New batch suggested", suggested.tutorResponse ?? "Tutor suggested another batch.");
   res.json({ data: suggested });
 });
 
@@ -1842,6 +1877,7 @@ app.post("/api/v1/usermanagement/batch-requests/:id/accept-suggestion", async (r
       include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true }
     });
   });
+  await notifyBatchRequestCreated(prisma, result);
   res.status(201).json({ data: toBatchRequestSummary(result) });
 });
 
@@ -1968,6 +2004,17 @@ app.post("/api/v1/events-reminders", async (req, res) => {
       sourceTag: String(req.body.sourceTag ?? "app")
     }
   });
+  await enqueueNotification(prisma, {
+    userId: reminder.userId,
+    profileId: reminder.profileId,
+    role,
+    type: "reminder.created",
+    title: "Reminder scheduled",
+    body: reminder.title,
+    data: { reminderId: reminder.id },
+    scheduledAt: reminder.startsAt,
+    priority: "normal"
+  });
   res.status(201).json({ data: toReminder(reminder) });
 });
 
@@ -1978,6 +2025,17 @@ app.patch("/api/v1/events-reminders/:id", async (req, res) => {
       title: req.body.title ? String(req.body.title) : undefined,
       startsAt: req.body.startsAt ? parseDate(req.body.startsAt) : undefined
     }
+  });
+  await enqueueNotification(prisma, {
+    userId: reminder.userId,
+    profileId: reminder.profileId,
+    role: reminder.role as Role,
+    type: "reminder.updated",
+    title: "Reminder updated",
+    body: reminder.title,
+    data: { reminderId: reminder.id },
+    scheduledAt: reminder.startsAt,
+    priority: "normal"
   });
   res.json({ data: toReminder(reminder) });
 });
@@ -1999,6 +2057,89 @@ app.get("/api/v1/reminders", async (req, res) => {
 app.post("/api/v1/reminders", async (req, res) => {
   req.url = "/api/v1/events-reminders";
   app._router.handle(req, res, () => undefined);
+});
+
+app.post("/api/v1/notifications/devices", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const role = readRole(req.body.role);
+  const profile = await findProfile(role, userId);
+  const pushToken = String(req.body.pushToken ?? "").trim();
+  const platform = String(req.body.platform ?? "expo").trim() || "expo";
+  const provider = String(req.body.provider ?? "expo").trim() || "expo";
+  if (!pushToken) {
+    res.status(400).json({ error: "Push token is required" });
+    return;
+  }
+  const registered = await notificationProvider.registerDevice({ pushToken, platform, provider });
+  const device = await prisma.deviceRegistration.upsert({
+    where: { pushToken },
+    update: {
+      userId,
+      profileId: profile?.id ?? null,
+      role,
+      platform,
+      provider: registered.provider,
+      deviceId: String(req.body.deviceId ?? registered.providerDeviceId),
+      status: "active",
+      sourceTag: "app"
+    },
+    create: {
+      userId,
+      profileId: profile?.id ?? null,
+      role,
+      platform,
+      provider: registered.provider,
+      pushToken,
+      deviceId: String(req.body.deviceId ?? registered.providerDeviceId),
+      status: "active",
+      sourceTag: "app"
+    }
+  });
+  res.status(201).json({ data: toDeviceRegistrationSummary(device) });
+});
+
+app.get("/api/v1/notifications", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const role = readRole(req.query.role);
+  const profile = await findProfile(role, userId);
+  const notifications = await prisma.notification.findMany({
+    where: {
+      userId,
+      role,
+      ...(profile ? { OR: [{ profileId: profile.id }, { profileId: null }] } : {})
+    },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(Number(req.query.limit ?? 20) || 20, 50)
+  });
+  res.json({ data: notifications.map(toNotificationSummary) });
+});
+
+app.post("/api/v1/notifications/:id/read", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const notification = await prisma.notification.findFirst({ where: { id: req.params.id, userId } });
+  if (!notification) {
+    res.status(404).json({ error: "Notification not found" });
+    return;
+  }
+  const read = await prisma.notification.update({
+    where: { id: notification.id },
+    data: { readAt: new Date(), status: notification.status === "queued" ? "queued" : "read" }
+  });
+  res.json({ data: toNotificationSummary(read) });
+});
+
+app.post("/api/v1/notifications/read-all", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const role = readRole(req.body.role ?? req.query.role);
+  await prisma.notification.updateMany({
+    where: { userId, role, readAt: null },
+    data: { readAt: new Date(), status: "read" }
+  });
+  res.json({ data: { success: true } });
 });
 
 app.get("/api/v1/education-plan/current", async (req, res) => {
@@ -2362,6 +2503,16 @@ app.post("/api/v1/education-plan/programs/select", async (req, res) => {
         completedMilestoneSequence: 0,
         sourceTag: "app"
       }
+    });
+    await enqueueNotification(tx, {
+      userId: profile.userId,
+      profileId: profile.id,
+      role: "student",
+      type: "program.activity.ready",
+      title: "Your program is ready",
+      body: `${program.title} is ready. Start with the first activity when you are free.`,
+      data: { programId: program.id },
+      priority: "normal"
     });
     return { selection, progress };
   });
@@ -2922,6 +3073,28 @@ app.post("/api/v1/education-plan/activities/:id/complete", async (req, res) => {
         }
       });
     }
+    const nextActivity = await tx.milestoneActivity.findFirst({
+      where: {
+        milestone: {
+          programId: activity.milestone.programId,
+          sequence: milestoneComplete ? activity.milestone.sequence + 1 : activity.milestone.sequence
+        },
+        id: { not: activity.id }
+      },
+      orderBy: { sequence: "asc" }
+    });
+    if (nextActivity && role === "student") {
+      await enqueueNotification(tx, {
+        userId: profile.userId,
+        profileId: profile.id,
+        role: "student",
+        type: "program.activity.next",
+        title: milestoneComplete ? "Next milestone unlocked" : "Continue your activity",
+        body: milestoneComplete ? "A new milestone is ready in your program." : "Your next activity is ready.",
+        data: { programId: activity.milestone.programId, milestoneId: nextActivity.milestoneId, activityId: nextActivity.id },
+        priority: "normal"
+      });
+    }
     return { activity: completedActivity, milestoneComplete, progress };
   });
 
@@ -3089,6 +3262,101 @@ app.post("/api/v1/payments/orders/:id/refund", async (req, res) => {
   res.json({ data: { order: toPaymentOrderSummary(refunded), message: "Refund placeholder recorded. Gateway refund integration will process this later." } });
 });
 
+const notificationProvider = {
+  provider: "internal",
+  async registerDevice(input: { pushToken: string; platform: string; provider: string }) {
+    return {
+      provider: input.provider || "expo",
+      providerDeviceId: crypto.createHash("sha256").update(`${input.platform}:${input.pushToken}`).digest("hex").slice(0, 24)
+    };
+  },
+  async send(notification: { id: string }) {
+    return {
+      provider: "internal",
+      providerMessageId: `internal_${notification.id}`,
+      status: "sent"
+    };
+  }
+};
+
+type NotificationInput = {
+  userId: string;
+  profileId?: string | null;
+  role: Role;
+  type: string;
+  title: string;
+  body: string;
+  data?: Record<string, unknown> | null;
+  channel?: string;
+  priority?: string;
+  scheduledAt?: Date | null;
+};
+
+async function enqueueNotification(client: any, input: NotificationInput) {
+  const scheduledAt = input.scheduledAt ?? null;
+  const isScheduled = scheduledAt ? scheduledAt.getTime() > Date.now() : false;
+  const notification = await client.notification.create({
+    data: {
+      userId: input.userId,
+      profileId: input.profileId ?? null,
+      role: input.role,
+      type: input.type,
+      title: input.title,
+      body: input.body,
+      data: input.data ?? undefined,
+      channel: input.channel ?? "in_app",
+      provider: notificationProvider.provider,
+      status: isScheduled ? "queued" : "sent",
+      priority: input.priority ?? "normal",
+      scheduledAt,
+      sentAt: isScheduled ? null : new Date(),
+      sourceTag: "app"
+    }
+  });
+  if (!isScheduled) {
+    const delivery = await notificationProvider.send(notification);
+    return client.notification.update({
+      where: { id: notification.id },
+      data: { providerMessageId: delivery.providerMessageId, status: delivery.status }
+    });
+  }
+  return notification;
+}
+
+async function notifyBatchRequestCreated(client: any, request: any) {
+  const tutorProfile = request.batch?.tutorProfile?.profile;
+  if (!tutorProfile) return;
+  await enqueueNotification(client, {
+    userId: tutorProfile.userId,
+    profileId: tutorProfile.id,
+    role: "tutor",
+    type: "batch.request.created",
+    title: "New batch request",
+    body: `${request.studentProfile?.firstName ?? "A student"} requested ${request.batch?.title ?? "your batch"}.`,
+    data: { batchRequestId: request.id, batchId: request.batchId, studentProfileId: request.studentProfileId },
+    priority: "high"
+  });
+}
+
+async function notifyBatchRequestOutcome(client: any, request: any, type: string, title: string, body: string) {
+  const recipients = [{ userId: request.studentProfile.userId, profileId: request.studentProfileId, role: "student" as Role }];
+  const parentLinks = await client.parentStudentLink.findMany({
+    where: { studentProfileId: request.studentProfileId, status: "active" },
+    include: { parentProfile: true }
+  });
+  for (const link of parentLinks) {
+    recipients.push({ userId: link.parentProfile.userId, profileId: link.parentProfileId, role: "parent" as Role });
+  }
+  await Promise.all(recipients.map((recipient) => enqueueNotification(client, {
+    ...recipient,
+    type,
+    title,
+    body,
+    data: { batchRequestId: request.id, batchId: request.batchId, suggestedBatchId: request.suggestedBatchId ?? null },
+    priority: "high"
+  })));
+}
+
 const paymentGateway = {
   provider: "mock",
   allowedMethods: [
@@ -3217,6 +3485,20 @@ async function activatePaidOrder(orderId: string, gatewayPaymentId: string, meth
         update: {},
         create: { profileId: order.profileId, programId: order.programId, unlockedMilestoneSequence: 1, completedMilestoneSequence: 0, sourceTag: "app" }
       });
+      const profile = await tx.profile.findUnique({ where: { id: order.profileId } });
+      const program = await tx.program.findUnique({ where: { id: order.programId } });
+      if (profile && program) {
+        await enqueueNotification(tx, {
+          userId: profile.userId,
+          profileId: profile.id,
+          role: "student",
+          type: "payment.program.unlocked",
+          title: "Program unlocked",
+          body: `${program.title} has been added to your programs.`,
+          data: { programId: program.id, orderId: order.id },
+          priority: "high"
+        });
+      }
       await upsertTutorAccountingEntry(tx, order, "program_purchase", purchase.id, "available");
       return { order, purchase };
     }
@@ -3224,10 +3506,12 @@ async function activatePaidOrder(orderId: string, gatewayPaymentId: string, meth
       const request = await tx.batchRequest.upsert({
         where: { batchId_studentProfileId: { batchId: order.batchId, studentProfileId: order.profileId } },
         update: { status: "pending", paymentOrderId: order.id, message: typeof order.metadata === "object" && order.metadata && "admissionMessage" in order.metadata ? String((order.metadata as any).admissionMessage ?? "") : null, sourceTag: "app" },
-        create: { batchId: order.batchId, studentProfileId: order.profileId, paymentOrderId: order.id, status: "pending", message: typeof order.metadata === "object" && order.metadata && "admissionMessage" in order.metadata ? String((order.metadata as any).admissionMessage ?? "") : null, sourceTag: "app" }
+        create: { batchId: order.batchId, studentProfileId: order.profileId, paymentOrderId: order.id, status: "pending", message: typeof order.metadata === "object" && order.metadata && "admissionMessage" in order.metadata ? String((order.metadata as any).admissionMessage ?? "") : null, sourceTag: "app" },
+        include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true }
       });
       await tx.paymentOrder.update({ where: { id: order.id }, data: { batchRequestId: request.id } });
       await upsertTutorAccountingEntry(tx, order, "batch_admission", request.id, "pending");
+      await notifyBatchRequestCreated(tx, request);
       return { order: { ...order, batchRequestId: request.id }, request };
     }
     return { order };
@@ -3421,7 +3705,7 @@ async function ensureBatchScheduleReminders(tx: any, request: {
 }) {
   const sourceTag = `batch:${request.batchId}:schedule`;
   const studentTitle = `Class: ${request.batch.title}`;
-  await upsertReminderBySource(tx, {
+  const studentReminder = await upsertReminderBySource(tx, {
     userId: request.studentProfile.userId,
     profileId: request.studentProfileId,
     role: "student",
@@ -3429,19 +3713,43 @@ async function ensureBatchScheduleReminders(tx: any, request: {
     startsAt: request.batch.startsAt,
     sourceTag
   });
+  await enqueueNotification(tx, {
+    userId: request.studentProfile.userId,
+    profileId: request.studentProfileId,
+    role: "student",
+    type: "batch.class.reminder",
+    title: "Class reminder scheduled",
+    body: studentTitle,
+    data: { reminderId: studentReminder.id, batchId: request.batchId },
+    scheduledAt: request.batch.startsAt,
+    priority: "normal"
+  });
 
   const parentLinks = await tx.parentStudentLink.findMany({
     where: { studentProfileId: request.studentProfileId, status: "active" },
     include: { parentProfile: true }
   });
-  await Promise.all(parentLinks.map((link: any) => upsertReminderBySource(tx, {
-    userId: link.parentProfile.userId,
-    profileId: link.parentProfileId,
-    role: "parent",
-    title: `Child class: ${request.batch.title}`,
-    startsAt: request.batch.startsAt,
-    sourceTag
-  })));
+  await Promise.all(parentLinks.map(async (link: any) => {
+    const reminder = await upsertReminderBySource(tx, {
+      userId: link.parentProfile.userId,
+      profileId: link.parentProfileId,
+      role: "parent",
+      title: `Child class: ${request.batch.title}`,
+      startsAt: request.batch.startsAt,
+      sourceTag
+    });
+    await enqueueNotification(tx, {
+      userId: link.parentProfile.userId,
+      profileId: link.parentProfileId,
+      role: "parent",
+      type: "batch.class.reminder",
+      title: "Child class reminder scheduled",
+      body: `Child class: ${request.batch.title}`,
+      data: { reminderId: reminder.id, batchId: request.batchId, studentProfileId: request.studentProfileId },
+      scheduledAt: request.batch.startsAt,
+      priority: "normal"
+    });
+  }));
 }
 
 async function upsertReminderBySource(tx: any, input: {
@@ -5052,6 +5360,38 @@ function toReminder(item: {
     title: item.title,
     startsAt: item.startsAt.toISOString(),
     status: item.status
+  };
+}
+
+function toNotificationSummary(item: any) {
+  return {
+    id: item.id,
+    role: item.role,
+    type: item.type,
+    title: item.title,
+    body: item.body,
+    data: item.data ?? null,
+    channel: item.channel,
+    provider: item.provider,
+    status: item.status,
+    priority: item.priority,
+    scheduledAt: item.scheduledAt ? item.scheduledAt.toISOString() : null,
+    sentAt: item.sentAt ? item.sentAt.toISOString() : null,
+    readAt: item.readAt ? item.readAt.toISOString() : null,
+    createdAt: item.createdAt.toISOString()
+  };
+}
+
+function toDeviceRegistrationSummary(item: any) {
+  return {
+    id: item.id,
+    role: item.role,
+    platform: item.platform,
+    provider: item.provider,
+    status: item.status,
+    deviceId: item.deviceId ?? null,
+    createdAt: item.createdAt.toISOString(),
+    updatedAt: item.updatedAt.toISOString()
   };
 }
 

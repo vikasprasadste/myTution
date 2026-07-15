@@ -461,7 +461,55 @@ Phase 9 test matrix:
 - Cancel endpoint cancels unpaid orders; refund endpoint records refund request for paid orders.
 - Replacing the mock gateway later should happen in the payment gateway adapter and method validation config only.
 
-### Phase 10: Admin & Operations
+### Phase 10: Notifications
+
+Goal: Create a durable notification system before adding native push delivery.
+
+Build:
+
+- Notification table for in-app and future push notifications
+- Device registration table for Expo/APNS/FCM tokens
+- Provider boundary for future push vendor integration
+- Batch request notifications
+- Approval, denial, defer, and suggestion notifications
+- Parent invite generated and accepted notifications
+- Program activity ready / next activity notifications
+- Event/reminder scheduled notifications
+
+Acceptance criteria:
+
+- Notification records are associated to user, profile, role, type, and source data.
+- App can fetch role-scoped notifications from the API.
+- Home screen shows actionable unread updates and marks them read.
+- Event/reminder notifications support scheduled delivery metadata.
+- Future native push work changes only the notification provider adapter and mobile token registration.
+
+Status:
+
+- Complete for MVP in-app notification flow.
+- Completed: `Notification` stores type, channel, provider, priority, scheduledAt, sentAt, readAt, and JSON source data.
+- Completed: `DeviceRegistration` stores push token metadata for future Expo/APNS/FCM delivery.
+- Completed: notification APIs support device registration, list, mark-read, and read-all.
+- Completed: batch request create, approve, reject, defer, suggest, and paid-request activation create notification rows.
+- Completed: parent invite generation and invite acceptance notify the student and parent.
+- Completed: program selection/payment unlock/activity completion create program activity notifications.
+- Completed: created/updated reminders and approved batch schedules create scheduled notification rows.
+- Completed: mobile Home shows unread updates and marks them read.
+- Neon migration added in `202607150003_add_notifications`.
+
+Phase 10 test matrix:
+
+- Student requests a free batch and tutor receives `batch.request.created`.
+- Student confirms a paid batch order and tutor receives `batch.request.created`.
+- Tutor approve/reject/defer/suggest creates a student notification and parent notification where linked.
+- Student generates parent activation code and receives `parent.invite.generated`.
+- Parent registers with activation code and both student and parent receive `parent.invite.accepted`.
+- Student selects/unlocks a program and receives a program-ready notification.
+- Student completes an activity and receives next-activity or next-milestone notification.
+- Creating or updating a reminder creates a scheduled notification row.
+- Mobile Home displays unread updates and tapping a row marks it read.
+
+### Phase 11: Admin & Operations
 
 Goal: Give the platform operational control.
 

@@ -155,6 +155,34 @@ export interface QuizAttemptSummary {
   createdAt: string;
 }
 
+export interface NotificationSummary {
+  id: string;
+  role: Role;
+  type: string;
+  title: string;
+  body: string;
+  data: Record<string, unknown> | null;
+  channel: string;
+  provider: string;
+  status: string;
+  priority: string;
+  scheduledAt: string | null;
+  sentAt: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface DeviceRegistrationSummary {
+  id: string;
+  role: Role;
+  platform: string;
+  provider: string;
+  status: string;
+  deviceId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface LearnerProgressProgramSummary {
   programId: string;
   title: string;

@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, NotificationSummary, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -322,6 +322,7 @@ export default function Index() {
   const [editingTutorProgramId, setEditingTutorProgramId] = useState<string | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [notifications, setNotifications] = useState<NotificationSummary[]>([]);
   const [reminderTitle, setReminderTitle] = useState("Math revision reminder");
   const [reminderDate, setReminderDate] = useState("24/06/2026");
   const [reminderTime, setReminderTime] = useState("06:30 PM");
@@ -603,12 +604,13 @@ export default function Index() {
     async function loadRoleData() {
       try {
         const token = authSession?.accessToken;
-        const [identity, bootstrap, recs, marketplace, eventData, dashboard, programList, monitoring] = await Promise.all([
+        const [identity, bootstrap, recs, marketplace, eventData, notificationData, dashboard, programList, monitoring] = await Promise.all([
           token ? apiGet<{ data: IdentityContext }>(`/api/v1/identity/me?role=${role}`, token) : Promise.resolve({ data: null as IdentityContext | null }),
           apiGet<{ persona: Persona }>(`/api/v1/bootstrap?role=${role}`, token),
           apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`),
           role === "student" ? apiGet<{ data: MarketplaceRecommendationResponse }>(`/api/v1/marketplace/recommendations?role=student`, token) : Promise.resolve({ data: null as MarketplaceRecommendationResponse | null }),
           token ? apiGet<{ data: Reminder[] }>(`/api/v1/events-reminders?role=${role}`, token) : Promise.resolve({ data: [] }),
+          token ? apiGet<{ data: NotificationSummary[] }>(`/api/v1/notifications?role=${role}&limit=12`, token) : Promise.resolve({ data: [] }),
           token ? apiGet<{ data: { cards: DashboardCard[] } }>(`/api/v1/dis/dashboard?role=${role}`, token) : Promise.resolve({ data: { cards: [] } }),
           apiGet<{ data: ProgramSummary[]; selectedPrograms?: ProgramSummary[]; maxSelectedPrograms?: number }>(`/api/v1/education-plan/programs?role=${role}`, token),
           token && role === "parent" ? apiGet<{ data: ParentMonitoringResponse }>(`/api/v1/parent/monitoring?role=parent`, token) : Promise.resolve({ data: null as ParentMonitoringResponse | null })
@@ -628,6 +630,7 @@ export default function Index() {
           setTutorFilterOptions((items) => items.subjects.length ? items : buildTutorFilterOptions(marketplace.data?.tutors ?? []));
         }
         setReminders(eventData.data);
+        setNotifications(notificationData.data);
         setDashboardCards(dashboard.data.cards);
         setParentMonitoring(monitoring.data);
         setPrograms(programList.data);
@@ -654,6 +657,7 @@ export default function Index() {
         setIdentityContext(null);
         setApiRecommendations(null);
         setDashboardCards(null);
+        setNotifications([]);
         setParentMonitoring(null);
         setApiMilestones(null);
         if (pendingProgramId) {
@@ -1145,6 +1149,15 @@ export default function Index() {
     }
   }
 
+  async function markNotificationRead(id: string) {
+    setNotifications((items) => items.map((item) => item.id === id ? { ...item, readAt: new Date().toISOString(), status: "read" } : item));
+    try {
+      await apiPost(`/api/v1/notifications/${id}/read`, {}, authSession?.accessToken);
+    } catch {
+      // Keep the optimistic read state; notification read receipts are non-blocking.
+    }
+  }
+
   function openResource(resource: SelectedActivity) {
     setSelectedResource(resource);
     setResourceDetail(null);
@@ -1561,6 +1574,7 @@ export default function Index() {
           <Header role={role} personaName={`${persona.firstName} ${persona.lastName}`} />
           {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
           <TrackCard role={role} onPress={() => setScreen(role === "student" ? "search" : role === "tutor" ? "roleHub" : "sessions")} />
+          <NotificationStrip role={role} notifications={notifications} onRead={markNotificationRead} />
 
           {role === "student" && marketplaceRecommendations ? (
             <MarketplaceHomeSection
@@ -2023,6 +2037,30 @@ function TrackCard({ role, onPress }: { role: Role; onPress: () => void }) {
           <Text style={[styles.trackButtonText, { color: role === "tutor" ? "#201A00" : "#FFFFFF" }]}>{role === "student" ? "Search" : "Open"}</Text>
         </LinearGradient>
       </Pressable>
+    </View>
+  );
+}
+
+function NotificationStrip({ role, notifications, onRead }: { role: Role; notifications: NotificationSummary[]; onRead: (id: string) => void }) {
+  const theme = useRoleTheme(role);
+  const visible = notifications.filter((item) => !item.readAt).slice(0, 3);
+  if (!visible.length) return null;
+  return (
+    <View style={[styles.notificationCard, { backgroundColor: theme.card }]}>
+      <View style={styles.notificationHeader}>
+        <Text style={styles.notificationTitle}>Updates</Text>
+        <Text style={[styles.notificationCount, { color: theme.text }]}>{visible.length}</Text>
+      </View>
+      {visible.map((item) => (
+        <Pressable key={item.id} style={({ pressed }) => [styles.notificationRow, pressed && styles.pressed]} onPress={() => onRead(item.id)}>
+          <View style={[styles.notificationDot, { backgroundColor: theme.accentStrong }]} />
+          <View style={styles.flex}>
+            <Text style={styles.notificationRowTitle}>{item.title}</Text>
+            <Text style={styles.notificationBody}>{item.body}</Text>
+          </View>
+          <Text style={[styles.notificationAction, { color: theme.text }]}>Mark read</Text>
+        </Pressable>
+      ))}
     </View>
   );
 }
@@ -5022,6 +5060,15 @@ const styles = StyleSheet.create({
   trackButton: { borderRadius: 18, minHeight: 48, overflow: "hidden" },
   trackButtonGradient: { alignItems: "center", justifyContent: "center", minHeight: 48, paddingHorizontal: 19 },
   trackButtonText: { fontSize: 14, fontWeight: "900" },
+  notificationCard: { borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, gap: 10, padding: 14, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.045, shadowRadius: 12, elevation: 1 },
+  notificationHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
+  notificationTitle: { color: "#202A35", fontSize: 15, fontWeight: "900" },
+  notificationCount: { backgroundColor: "rgba(255,255,255,0.72)", borderRadius: 999, fontSize: 12, fontWeight: "900", overflow: "hidden", paddingHorizontal: 9, paddingVertical: 4 },
+  notificationRow: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.76)", borderRadius: 13, flexDirection: "row", gap: 10, minHeight: 56, padding: 10 },
+  notificationDot: { borderRadius: 999, height: 9, width: 9 },
+  notificationRowTitle: { color: "#202A35", fontSize: 13, fontWeight: "900", lineHeight: 17 },
+  notificationBody: { color: "#536A86", fontSize: 12, fontWeight: "600", lineHeight: 16 },
+  notificationAction: { fontSize: 11, fontWeight: "900" },
   smartPickCard: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, minHeight: 82, padding: 15 },
   carousel: { gap: 12, paddingBottom: 10 },
   marketplaceCard: { backgroundColor: "#F2E1E5", borderColor: "#E8CFD8", borderRadius: 16, borderWidth: 1, gap: 7, minHeight: 178, padding: 14, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.045, shadowRadius: 12, width: 210 },

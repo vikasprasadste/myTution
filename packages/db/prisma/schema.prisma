@@ -72,6 +72,8 @@ model User {
   userManagementRecords UserManagement[]
   reminders   Reminder[]
   authSessions AuthSession[]
+  deviceRegistrations DeviceRegistration[]
+  notifications Notification[]
   paymentOrders PaymentOrder[]
   communityThreads CommunityThread[] @relation("CommunityThreadOwner")
   communityComments CommunityComment[] @relation("CommunityCommentOwner")
@@ -127,6 +129,8 @@ model Profile {
   sourceTag          String             @default("app")
   user               User               @relation(fields: [userId], references: [id])
   reminders          Reminder[]
+  deviceRegistrations DeviceRegistration[]
+  notifications      Notification[]
   programProgress    ProgramProgress[]
   resourceProgress   ResourceProgress[]
   activityProgress   ActivityProgress[]
@@ -482,6 +486,56 @@ model Reminder {
   updatedAt DateTime       @updatedAt
 
   @@index([profileId, startsAt, status])
+}
+
+model DeviceRegistration {
+  id        String   @id @default(cuid())
+  userId    String
+  profileId String?
+  role      Role
+  platform  String
+  pushToken String   @unique
+  deviceId  String?
+  provider  String   @default("expo")
+  status    String   @default("active")
+  sourceTag String   @default("app")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile   Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([profileId, status])
+  @@index([role, status])
+}
+
+model Notification {
+  id                String    @id @default(cuid())
+  userId            String
+  profileId         String?
+  role              Role
+  type              String
+  title             String
+  body              String
+  data              Json?
+  channel           String    @default("in_app")
+  provider          String    @default("internal")
+  providerMessageId String?
+  status            String    @default("sent")
+  priority          String    @default("normal")
+  scheduledAt       DateTime?
+  sentAt            DateTime?
+  readAt            DateTime?
+  sourceTag         String    @default("app")
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile           Profile?  @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId, status, createdAt])
+  @@index([profileId, status, createdAt])
+  @@index([scheduledAt, status])
+  @@index([type, createdAt])
 }
 
 model Program {
