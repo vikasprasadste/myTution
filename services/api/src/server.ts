@@ -1655,6 +1655,17 @@ app.post("/api/v1/usermanagement/batch-requests", async (req, res) => {
     res.status(404).json({ error: "Batch not found" });
     return;
   }
+  if (batch.feeType === "paid" && (batch.feeAmount ?? 0) > 0) {
+    const order = await createBatchAdmissionPaymentOrder(student, batch, stringOrNull(req.body.methodType) ?? "upi", stringOrNull(req.body.message));
+    res.status(201).json({
+      data: {
+        paymentRequired: true,
+        order: toPaymentOrderSummary(order),
+        message: "Payment is required before this batch admission request can be sent."
+      }
+    });
+    return;
+  }
   const request = await prisma.batchRequest.upsert({
     where: { batchId_studentProfileId: { batchId, studentProfileId: student.id } },
     update: { status: "pending", message: stringOrNull(req.body.message), sourceTag: "app" },
@@ -1707,6 +1718,12 @@ app.post("/api/v1/usermanagement/batch-requests/:id/approve", async (req, res) =
   }
   await prisma.$transaction(async (tx) => {
     const approved = await tx.batchRequest.update({ where: { id: request.id }, data: { status: "approved" } });
+    if (request.paymentOrderId) {
+      await tx.tutorAccountingEntry.updateMany({
+        where: { paymentOrderId: request.paymentOrderId, status: "pending" },
+        data: { status: "available" }
+      });
+    }
     const enrollment = await tx.batchEnrollment.upsert({
       where: { batchId_studentProfileId: { batchId: request.batchId, studentProfileId: request.studentProfileId } },
       update: { status: "active", requestId: request.id },
@@ -2309,6 +2326,15 @@ app.post("/api/v1/education-plan/programs/select", async (req, res) => {
     res.status(404).json({ error: "Program not found" });
     return;
   }
+  if (program.feeType === "paid" && (program.feeAmount ?? 0) > 0) {
+    const purchase = await prisma.programPurchase.findUnique({
+      where: { programId_studentProfileId: { programId, studentProfileId: profile.id } }
+    });
+    if (!purchase || purchase.status !== "active" || purchase.accessStatus !== "active") {
+      res.status(402).json({ error: "Payment is required before this program can be added" });
+      return;
+    }
+  }
   const existing = await prisma.studentProgramSelection.findUnique({
     where: { profileId_programId: { profileId: profile.id, programId } }
   });
@@ -2364,6 +2390,9 @@ app.post("/api/v1/marketplace/program-interest", async (req, res) => {
     res.status(404).json({ error: "Program not found" });
     return;
   }
+  const order = program.feeType === "paid" && (program.feeAmount ?? 0) > 0
+    ? await createProgramPurchasePaymentOrder(profile, program, stringOrNull(req.body.methodType) ?? "upi")
+    : null;
   await logAudit({
     userId: profile.userId,
     profileId: profile.id,
@@ -2382,8 +2411,9 @@ app.post("/api/v1/marketplace/program-interest", async (req, res) => {
   res.status(201).json({
     data: {
       programId: program.id,
-      status: "interest_recorded",
-      message: "Purchase interest recorded. Payment checkout will be available in a later release."
+      status: order ? "payment_required" : "interest_recorded",
+      order: order ? toPaymentOrderSummary(order) : null,
+      message: order ? "Payment order created for this paid program." : "Purchase interest recorded."
     }
   });
 });
@@ -2927,13 +2957,356 @@ app.get("/api/v1/dis/dashboard", async (req, res) => {
 });
 
 app.get("/api/v1/payments/methods", (_req: express.Request, res: express.Response) => {
-  res.json({
-    data: [
-      { id: "upi_1", type: "upi", label: "apoorv@upi" },
-      { id: "card_1", type: "card", label: "Visa ending 4242" }
-    ]
-  });
+  res.json({ data: paymentGateway.allowedMethods });
 });
+
+app.get("/api/v1/payments/orders", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await readUserId(req);
+  const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+  if (role === "tutor") {
+    const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+    const [orders, accounting] = await Promise.all([
+      tutorProfile ? prisma.paymentOrder.findMany({ where: { tutorProfileId: tutorProfile.id }, orderBy: { createdAt: "desc" }, take: 50 }) : [],
+      tutorProfile ? prisma.tutorAccountingEntry.findMany({ where: { tutorProfileId: tutorProfile.id }, orderBy: { createdAt: "desc" }, take: 50 }) : []
+    ]);
+    res.json({ data: { orders: orders.map(toPaymentOrderSummary), accounting: accounting.map(toTutorAccountingSummary) } });
+    return;
+  }
+  const orders = await prisma.paymentOrder.findMany({
+    where: { profileId: profile.id },
+    orderBy: { createdAt: "desc" },
+    take: 50
+  });
+  res.json({ data: { orders: orders.map(toPaymentOrderSummary), accounting: [] } });
+});
+
+app.post("/api/v1/payments/orders", async (req, res) => {
+  const role = readRole(req.body.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  if (role !== "student") {
+    res.status(400).json({ error: "Payment order creation is currently available for student purchases only" });
+    return;
+  }
+  const profile = await findProfile("student", userId);
+  if (!profile) {
+    res.status(404).json({ error: "Student profile not found" });
+    return;
+  }
+  const targetType = String(req.body.targetType ?? "");
+  if (targetType === "program_purchase") {
+    const program = await prisma.program.findFirst({
+      where: { id: String(req.body.programId ?? ""), role: "tutor", status: "published", visibility: "published" },
+      include: { creatorProfile: { include: { tutorProfile: true } } }
+    });
+    if (!program) {
+      res.status(404).json({ error: "Program not found" });
+      return;
+    }
+    const order = await createProgramPurchasePaymentOrder(profile, program, stringOrNull(req.body.methodType) ?? "upi");
+    res.status(201).json({ data: toPaymentOrderSummary(order) });
+    return;
+  }
+  if (targetType === "batch_admission") {
+    const batch = await prisma.tutorBatch.findUnique({ where: { id: String(req.body.batchId ?? "") } });
+    if (!batch) {
+      res.status(404).json({ error: "Batch not found" });
+      return;
+    }
+    const order = await createBatchAdmissionPaymentOrder(profile, batch, stringOrNull(req.body.methodType) ?? "upi", stringOrNull(req.body.message));
+    res.status(201).json({ data: toPaymentOrderSummary(order) });
+    return;
+  }
+  res.status(400).json({ error: "Unsupported payment target type" });
+});
+
+app.post("/api/v1/payments/orders/:id/confirm", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const methodType = stringOrNull(req.body.methodType) ?? "upi";
+  const order = await prisma.paymentOrder.findUnique({ where: { id: req.params.id } });
+  if (!order || order.userId !== userId) {
+    res.status(404).json({ error: "Payment order not found" });
+    return;
+  }
+  if (order.status === "paid") {
+    res.json({ data: { order: toPaymentOrderSummary(order), alreadyPaid: true } });
+    return;
+  }
+  const gatewayResult = await paymentGateway.confirmPayment(order, methodType);
+  const result = await activatePaidOrder(order.id, gatewayResult.gatewayPaymentId, methodType);
+  res.json({ data: result });
+});
+
+app.post("/api/v1/payments/orders/:id/sync", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const order = await prisma.paymentOrder.findUnique({ where: { id: req.params.id } });
+  if (!order || order.userId !== userId) {
+    res.status(404).json({ error: "Payment order not found" });
+    return;
+  }
+  const synced = await paymentGateway.syncStatus(order);
+  res.json({ data: { order: toPaymentOrderSummary({ ...order, status: synced.status }) } });
+});
+
+app.post("/api/v1/payments/orders/:id/cancel", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const order = await prisma.paymentOrder.findUnique({ where: { id: req.params.id } });
+  if (!order || order.userId !== userId) {
+    res.status(404).json({ error: "Payment order not found" });
+    return;
+  }
+  if (order.status === "paid") {
+    res.status(409).json({ error: "Paid orders require refund flow" });
+    return;
+  }
+  const cancelled = await prisma.paymentOrder.update({
+    where: { id: order.id },
+    data: { status: "cancelled", cancelReason: stringOrNull(req.body.reason) ?? "User cancelled", cancelledAt: new Date() }
+  });
+  res.json({ data: toPaymentOrderSummary(cancelled) });
+});
+
+app.post("/api/v1/payments/orders/:id/refund", async (req, res) => {
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const order = await prisma.paymentOrder.findUnique({ where: { id: req.params.id } });
+  if (!order || order.userId !== userId) {
+    res.status(404).json({ error: "Payment order not found" });
+    return;
+  }
+  const refunded = await prisma.paymentOrder.update({
+    where: { id: order.id },
+    data: { refundStatus: "requested", metadata: { ...(order.metadata as any ?? {}), refundReason: stringOrNull(req.body.reason) ?? "Requested from app" } }
+  });
+  res.json({ data: { order: toPaymentOrderSummary(refunded), message: "Refund placeholder recorded. Gateway refund integration will process this later." } });
+});
+
+const paymentGateway = {
+  provider: "mock",
+  allowedMethods: [
+    { id: "upi_mock", type: "upi", label: "UPI", enabled: true, validation: { upiPattern: "^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$" } },
+    { id: "card_mock", type: "card", label: "Card", enabled: true, validation: { allowedNetworks: ["visa", "mastercard", "rupay"] } },
+    { id: "netbanking_mock", type: "netbanking", label: "Net banking", enabled: true, validation: { allowedBanks: ["hdfc", "icici", "sbi", "axis", "kotak"] } }
+  ],
+  async createIntent(input: { amount: number; currency: string; targetType: string; targetId: string }) {
+    return {
+      gatewayProvider: "mock",
+      gatewayOrderId: `mock_order_${crypto.randomBytes(12).toString("hex")}`,
+      metadata: {
+        gateway: "mock",
+        targetType: input.targetType,
+        targetId: input.targetId,
+        amount: input.amount,
+        currency: input.currency,
+        replaceWith: "paymentGateway.createIntent implementation for Razorpay/Stripe/Cashfree/etc."
+      }
+    };
+  },
+  async confirmPayment(order: { id: string; gatewayOrderId: string; amount: number; currency: string }, methodType: string) {
+    const allowed = this.allowedMethods.some((method) => method.type === methodType && method.enabled);
+    if (!allowed) throw new Error("Unsupported payment method");
+    return {
+      gatewayPaymentId: `mock_pay_${crypto.randomBytes(12).toString("hex")}`,
+      status: "paid",
+      methodType,
+      paymentRail: methodType
+    };
+  },
+  async syncStatus(order: { status: string }) {
+    return { status: order.status };
+  }
+};
+
+const platformFeeBps = 1000;
+
+async function createProgramPurchasePaymentOrder(profile: any, program: any, methodType: string) {
+  const amount = Number(program.feeAmount ?? 0);
+  if (amount <= 0) throw new Error("Program is not paid");
+  const existing = await prisma.paymentOrder.findFirst({
+    where: { profileId: profile.id, targetType: "program_purchase", programId: program.id, status: { in: ["requires_payment", "paid"] } },
+    orderBy: { createdAt: "desc" }
+  });
+  if (existing) return existing;
+  const intent = await paymentGateway.createIntent({ amount, currency: "INR", targetType: "program_purchase", targetId: program.id });
+  return prisma.paymentOrder.create({
+    data: {
+      userId: profile.userId,
+      profileId: profile.id,
+      role: "student",
+      targetType: "program_purchase",
+      targetId: program.id,
+      programId: program.id,
+      tutorProfileId: program.creatorProfile?.tutorProfile?.id ?? null,
+      amount,
+      currency: "INR",
+      status: "requires_payment",
+      gatewayProvider: intent.gatewayProvider,
+      gatewayOrderId: intent.gatewayOrderId,
+      methodType,
+      paymentRail: methodType,
+      metadata: intent.metadata,
+      sourceTag: "app"
+    }
+  });
+}
+
+async function createBatchAdmissionPaymentOrder(profile: any, batch: any, methodType: string, message?: string | null) {
+  const amount = Number(batch.feeAmount ?? 0);
+  if (amount <= 0) throw new Error("Batch is not paid");
+  const existing = await prisma.paymentOrder.findFirst({
+    where: { profileId: profile.id, targetType: "batch_admission", batchId: batch.id, status: { in: ["requires_payment", "paid"] } },
+    orderBy: { createdAt: "desc" }
+  });
+  if (existing) return existing;
+  const intent = await paymentGateway.createIntent({ amount, currency: "INR", targetType: "batch_admission", targetId: batch.id });
+  return prisma.paymentOrder.create({
+    data: {
+      userId: profile.userId,
+      profileId: profile.id,
+      role: "student",
+      targetType: "batch_admission",
+      targetId: batch.id,
+      batchId: batch.id,
+      tutorProfileId: batch.tutorProfileId,
+      amount,
+      currency: "INR",
+      status: "requires_payment",
+      gatewayProvider: intent.gatewayProvider,
+      gatewayOrderId: intent.gatewayOrderId,
+      methodType,
+      paymentRail: methodType,
+      metadata: { ...(intent.metadata as any), admissionMessage: message ?? null },
+      sourceTag: "app"
+    }
+  });
+}
+
+async function activatePaidOrder(orderId: string, gatewayPaymentId: string, methodType: string) {
+  const result = await prisma.$transaction(async (tx) => {
+    const order = await tx.paymentOrder.update({
+      where: { id: orderId },
+      data: {
+        status: "paid",
+        gatewayPaymentId,
+        methodType,
+        paymentRail: methodType,
+        paidAt: new Date()
+      }
+    });
+    if (order.targetType === "program_purchase" && order.programId) {
+      const purchase = await tx.programPurchase.upsert({
+        where: { programId_studentProfileId: { programId: order.programId, studentProfileId: order.profileId } },
+        update: { orderId: order.id, status: "active", accessStatus: "active", purchasedAt: new Date() },
+        create: { orderId: order.id, programId: order.programId, studentProfileId: order.profileId, status: "active", accessStatus: "active", purchasedAt: new Date(), sourceTag: "app" }
+      });
+      await tx.studentProgramSelection.upsert({
+        where: { profileId_programId: { profileId: order.profileId, programId: order.programId } },
+        update: { status: "active", sourceTag: "app" },
+        create: { profileId: order.profileId, programId: order.programId, status: "active", sourceTag: "app" }
+      });
+      await tx.programProgress.upsert({
+        where: { profileId_programId: { profileId: order.profileId, programId: order.programId } },
+        update: {},
+        create: { profileId: order.profileId, programId: order.programId, unlockedMilestoneSequence: 1, completedMilestoneSequence: 0, sourceTag: "app" }
+      });
+      await upsertTutorAccountingEntry(tx, order, "program_purchase", purchase.id, "available");
+      return { order, purchase };
+    }
+    if (order.targetType === "batch_admission" && order.batchId) {
+      const request = await tx.batchRequest.upsert({
+        where: { batchId_studentProfileId: { batchId: order.batchId, studentProfileId: order.profileId } },
+        update: { status: "pending", paymentOrderId: order.id, message: typeof order.metadata === "object" && order.metadata && "admissionMessage" in order.metadata ? String((order.metadata as any).admissionMessage ?? "") : null, sourceTag: "app" },
+        create: { batchId: order.batchId, studentProfileId: order.profileId, paymentOrderId: order.id, status: "pending", message: typeof order.metadata === "object" && order.metadata && "admissionMessage" in order.metadata ? String((order.metadata as any).admissionMessage ?? "") : null, sourceTag: "app" }
+      });
+      await tx.paymentOrder.update({ where: { id: order.id }, data: { batchRequestId: request.id } });
+      await upsertTutorAccountingEntry(tx, order, "batch_admission", request.id, "pending");
+      return { order: { ...order, batchRequestId: request.id }, request };
+    }
+    return { order };
+  });
+  return {
+    ...result,
+    order: toPaymentOrderSummary(result.order)
+  };
+}
+
+async function upsertTutorAccountingEntry(tx: any, order: any, sourceType: string, sourceId: string, status: string) {
+  if (!order.tutorProfileId || order.amount <= 0) return null;
+  const platformFee = Math.round((order.amount * platformFeeBps) / 10000);
+  const netAmount = Math.max(0, order.amount - platformFee);
+  const existing = await tx.tutorAccountingEntry.findFirst({ where: { paymentOrderId: order.id, sourceType, sourceId } });
+  if (existing) {
+    return tx.tutorAccountingEntry.update({
+      where: { id: existing.id },
+      data: { grossAmount: order.amount, platformFee, netAmount, status }
+    });
+  }
+  return tx.tutorAccountingEntry.create({
+    data: {
+      tutorProfileId: order.tutorProfileId,
+      paymentOrderId: order.id,
+      sourceType,
+      sourceId,
+      grossAmount: order.amount,
+      platformFee,
+      netAmount,
+      currency: order.currency,
+      status,
+      sourceTag: "app"
+    }
+  });
+}
+
+function toPaymentOrderSummary(order: any) {
+  return {
+    id: order.id,
+    role: order.role,
+    targetType: order.targetType,
+    targetId: order.targetId,
+    programId: order.programId,
+    batchId: order.batchId,
+    batchRequestId: order.batchRequestId,
+    amount: order.amount,
+    currency: order.currency,
+    status: order.status,
+    gatewayProvider: order.gatewayProvider,
+    gatewayOrderId: order.gatewayOrderId,
+    gatewayPaymentId: order.gatewayPaymentId,
+    methodType: order.methodType,
+    paymentRail: order.paymentRail,
+    refundStatus: order.refundStatus,
+    cancelReason: order.cancelReason,
+    paidAt: order.paidAt?.toISOString?.() ?? null,
+    cancelledAt: order.cancelledAt?.toISOString?.() ?? null,
+    refundedAt: order.refundedAt?.toISOString?.() ?? null,
+    createdAt: order.createdAt.toISOString()
+  };
+}
+
+function toTutorAccountingSummary(item: any) {
+  return {
+    id: item.id,
+    tutorProfileId: item.tutorProfileId,
+    paymentOrderId: item.paymentOrderId,
+    sourceType: item.sourceType,
+    sourceId: item.sourceId,
+    grossAmount: item.grossAmount,
+    platformFee: item.platformFee,
+    netAmount: item.netAmount,
+    currency: item.currency,
+    status: item.status,
+    payoutReference: item.payoutReference,
+    createdAt: item.createdAt.toISOString()
+  };
+}
 
 async function createSession(userId: string) {
   const mobileClient = await prisma.mobileClient.upsert({

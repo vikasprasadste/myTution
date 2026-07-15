@@ -72,6 +72,7 @@ model User {
   userManagementRecords UserManagement[]
   reminders   Reminder[]
   authSessions AuthSession[]
+  paymentOrders PaymentOrder[]
   communityThreads CommunityThread[] @relation("CommunityThreadOwner")
   communityComments CommunityComment[] @relation("CommunityCommentOwner")
   communityReactions CommunityReaction[] @relation("CommunityReactionUser")
@@ -130,6 +131,8 @@ model Profile {
   resourceProgress   ResourceProgress[]
   activityProgress   ActivityProgress[]
   quizAttempts       QuizAttempt[]
+  paymentOrders      PaymentOrder[]
+  programPurchases   ProgramPurchase[] @relation("StudentProgramPurchases")
   studentProgramSelections StudentProgramSelection[]
   authoredPrograms  Program[]          @relation("ProgramCreator")
   authoredResources Resource[]         @relation("ResourceCreator")
@@ -328,6 +331,8 @@ model TutorProfile {
   sourceTag       String       @default("app")
   profile         Profile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
   batches         TutorBatch[]
+  accountingEntries TutorAccountingEntry[]
+  paymentOrders   PaymentOrder[]
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
@@ -359,6 +364,7 @@ model TutorBatch {
   requests          BatchRequest[]
   enrollments       BatchEnrollment[]
   communityThreads  CommunityThread[]
+  paymentOrders     PaymentOrder[]
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
@@ -373,12 +379,14 @@ model BatchRequest {
   batchId          String
   suggestedBatchId String?
   studentProfileId String
+  paymentOrderId   String?            @unique
   status           BatchRequestStatus @default(pending)
   message          String?
   tutorResponse    String?
   sourceTag        String             @default("app")
   batch            TutorBatch         @relation(fields: [batchId], references: [id], onDelete: Cascade)
   studentProfile   Profile            @relation("StudentBatchRequests", fields: [studentProfileId], references: [id], onDelete: Cascade)
+  paymentOrder     PaymentOrder?      @relation(fields: [paymentOrderId], references: [id], onDelete: SetNull)
   enrollment       BatchEnrollment?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
@@ -493,8 +501,95 @@ model Program {
   progress    ProgramProgress[]
   studentSelections StudentProgramSelection[]
   communityThreads CommunityThread[]
+  paymentOrders PaymentOrder[]
+  purchases ProgramPurchase[]
 
   @@index([creatorProfileId, status])
+}
+
+model PaymentOrder {
+  id               String   @id @default(cuid())
+  userId           String
+  profileId        String
+  role             Role
+  targetType       String
+  targetId         String
+  programId        String?
+  batchId          String?
+  batchRequestId   String?
+  tutorProfileId   String?
+  amount           Int
+  currency         String   @default("INR")
+  status           String   @default("requires_payment")
+  gatewayProvider  String   @default("mock")
+  gatewayOrderId   String   @unique
+  gatewayPaymentId String?
+  methodType       String?
+  paymentRail      String?
+  metadata         Json?
+  refundStatus     String   @default("none")
+  cancelReason     String?
+  paidAt           DateTime?
+  cancelledAt      DateTime?
+  refundedAt       DateTime?
+  sourceTag        String   @default("app")
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile          Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  program          Program? @relation(fields: [programId], references: [id], onDelete: SetNull)
+  batch            TutorBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  batchRequest     BatchRequest?
+  tutorProfile     TutorProfile? @relation(fields: [tutorProfileId], references: [id], onDelete: SetNull)
+  programPurchase  ProgramPurchase?
+  accountingEntries TutorAccountingEntry[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([profileId, status, createdAt])
+  @@index([targetType, targetId])
+  @@index([tutorProfileId, status])
+}
+
+model ProgramPurchase {
+  id               String   @id @default(cuid())
+  orderId          String   @unique
+  programId        String
+  studentProfileId String
+  status           String   @default("pending")
+  accessStatus     String   @default("locked")
+  purchasedAt      DateTime?
+  cancelledAt      DateTime?
+  refundedAt       DateTime?
+  sourceTag        String   @default("app")
+  order            PaymentOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  program          Program @relation(fields: [programId], references: [id], onDelete: Cascade)
+  studentProfile   Profile @relation("StudentProgramPurchases", fields: [studentProfileId], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([programId, studentProfileId])
+  @@index([studentProfileId, status])
+}
+
+model TutorAccountingEntry {
+  id               String   @id @default(cuid())
+  tutorProfileId   String
+  paymentOrderId   String?
+  sourceType       String
+  sourceId         String
+  grossAmount      Int
+  platformFee      Int
+  netAmount        Int
+  currency         String   @default("INR")
+  status           String   @default("pending")
+  payoutReference  String?
+  sourceTag        String   @default("app")
+  tutorProfile     TutorProfile @relation(fields: [tutorProfileId], references: [id], onDelete: Cascade)
+  paymentOrder     PaymentOrder? @relation(fields: [paymentOrderId], references: [id], onDelete: SetNull)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([tutorProfileId, status])
+  @@index([paymentOrderId])
 }
 
 model StudentProgramSelection {

@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, ParentMonitoringResponse, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -709,9 +709,15 @@ export default function Index() {
   async function requestBatch(batchId: string) {
     setLoadingAction("requestBatch:" + batchId);
     try {
-      await apiPost("/api/v1/usermanagement/batch-requests", { batchId, message: "I would like to join this batch." }, authSession?.accessToken);
-      setApiNotice("Batch request sent to tutor.");
+      const response = await apiPost<{ data?: { paymentRequired?: boolean; order?: PaymentOrderSummary } }>("/api/v1/usermanagement/batch-requests", { batchId, message: "I would like to join this batch.", methodType: "upi" }, authSession?.accessToken);
+      if (response?.data?.paymentRequired && response.data.order) {
+        await apiPost(`/api/v1/payments/orders/${response.data.order.id}/confirm`, { methodType: "upi" }, authSession?.accessToken);
+        setApiNotice("Payment completed. Batch request sent to tutor.");
+      } else {
+        setApiNotice("Batch request sent to tutor.");
+      }
       await refreshTutorSearch();
+      await refreshStudentBatchRequests();
     } catch {
       setApiNotice("Batch request failed. Please check API deployment and login state.");
     } finally {
@@ -743,8 +749,16 @@ export default function Index() {
   async function requestProgramPurchase(programId: string) {
     setLoadingAction("purchaseProgram:" + programId);
     try {
-      await apiPost("/api/v1/marketplace/program-interest", { programId }, authSession?.accessToken);
-      setApiNotice("Purchase interest recorded. We will connect this to checkout in the payment phase.");
+      const response = await apiPost<{ data: { order?: PaymentOrderSummary | null; status: string } }>("/api/v1/marketplace/program-interest", { programId, methodType: "upi" }, authSession?.accessToken);
+      if (response.data.order) {
+        await apiPost(`/api/v1/payments/orders/${response.data.order.id}/confirm`, { methodType: "upi" }, authSession?.accessToken);
+        setSelectedProgramId(programId);
+        setProgramRefreshKey((value) => value + 1);
+        setApiNotice("Payment completed. Program added to Program.");
+        setScreen("sessions");
+      } else {
+        setApiNotice("Purchase interest recorded.");
+      }
     } catch {
       setApiNotice("Purchase interest could not be recorded. Please check login/API.");
     } finally {
@@ -1640,7 +1654,7 @@ export default function Index() {
 
     if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} marketplaceTarget={marketplaceTarget} clearTargetTutor={() => setMarketplaceTarget(null)} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestProgramPurchase={requestProgramPurchase} requestLoading={loadingAction} search={refreshTutorSearch} back={() => { setMarketplaceTarget(null); setScreen("home"); }} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
-    if (screen === "payments") return <Payments role={role} back={() => setScreen("account")} />;
+    if (screen === "payments") return <Payments role={role} accessToken={authSession?.accessToken} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} refreshSupply={refreshTutorSupply} />;
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
@@ -4207,13 +4221,60 @@ function Events({
   );
 }
 
-function Payments({ role, back }: { role: Role; back: () => void }) {
+function Payments({ role, accessToken, back }: { role: Role; accessToken?: string; back: () => void }) {
+  const [methods, setMethods] = useState<PaymentMethodConfig[]>([]);
+  const [orders, setOrders] = useState<PaymentOrderSummary[]>([]);
+  const [accounting, setAccounting] = useState<TutorAccountingSummary[]>([]);
+  const [notice, setNotice] = useState("");
+  useEffect(() => {
+    let ignore = false;
+    async function loadPayments() {
+      try {
+        const [methodResponse, orderResponse] = await Promise.all([
+          apiGet<{ data: PaymentMethodConfig[] }>("/api/v1/payments/methods", accessToken),
+          accessToken ? apiGet<{ data: { orders: PaymentOrderSummary[]; accounting: TutorAccountingSummary[] } }>(`/api/v1/payments/orders?role=${role}`, accessToken) : Promise.resolve({ data: { orders: [], accounting: [] } })
+        ]);
+        if (ignore) return;
+        setMethods(methodResponse.data);
+        setOrders(orderResponse.data.orders);
+        setAccounting(orderResponse.data.accounting);
+        setNotice("");
+      } catch {
+        if (!ignore) setNotice("Payments could not be loaded from API.");
+      }
+    }
+    loadPayments();
+    return () => { ignore = true; };
+  }, [accessToken, role]);
   return (
     <>
       <TopBar title="Payments" left="‹" onLeft={back} />
-      <Card role={role}><CardTitle>UPI</CardTitle><Muted>apoorv@upi</Muted></Card>
-      <Card role={role}><CardTitle>Visa ending 4242</CardTitle><Muted>Primary card</Muted></Card>
-      <Button role={role} label="Add card / UPI" onPress={() => undefined} />
+      {notice ? <Text style={styles.apiNotice}>{notice}</Text> : null}
+      <SectionTitle>Payment methods</SectionTitle>
+      {methods.map((method) => (
+        <Card key={method.id} role={role}>
+          <CardTitle>{method.label}</CardTitle>
+          <Muted>{method.type.toUpperCase()} • {method.enabled ? "Enabled" : "Disabled"}</Muted>
+        </Card>
+      ))}
+      <SectionTitle>Orders</SectionTitle>
+      {orders.length ? orders.map((order) => (
+        <Card key={order.id} role={role}>
+          <CardTitle>{order.targetType.replace("_", " ")} • ₹{order.amount}</CardTitle>
+          <Muted>{order.status} • {order.gatewayProvider} • {order.methodType ?? "method pending"}</Muted>
+        </Card>
+      )) : <Card role={role}><CardTitle>No payment orders</CardTitle><Muted>Paid programs and batches will appear here.</Muted></Card>}
+      {role === "tutor" ? (
+        <>
+          <SectionTitle>Payout-ready accounting</SectionTitle>
+          {accounting.length ? accounting.map((item) => (
+            <Card key={item.id} role={role}>
+              <CardTitle>Net ₹{item.netAmount}</CardTitle>
+              <Muted>Gross ₹{item.grossAmount} • Fee ₹{item.platformFee} • {item.status}</Muted>
+            </Card>
+          )) : <Card role={role}><CardTitle>No accounting entries</CardTitle><Muted>Paid enrollments and purchases will create tutor payout entries.</Muted></Card>}
+        </>
+      ) : null}
     </>
   );
 }

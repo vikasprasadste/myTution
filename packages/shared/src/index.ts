@@ -236,6 +236,60 @@ export interface ParentMonitoringResponse {
   children: ParentMonitoringChild[];
 }
 
+export type PaymentTargetType = "program_purchase" | "batch_admission";
+export type PaymentOrderStatus = "requires_payment" | "paid" | "failed" | "cancelled" | "refunded";
+
+export interface PaymentMethodConfig {
+  id: string;
+  type: "card" | "upi" | "netbanking";
+  label: string;
+  enabled: boolean;
+  validation?: {
+    allowedNetworks?: string[];
+    allowedBanks?: string[];
+    upiPattern?: string;
+  };
+}
+
+export interface PaymentOrderSummary {
+  id: string;
+  role: Role;
+  targetType: PaymentTargetType | string;
+  targetId: string;
+  programId?: string | null;
+  batchId?: string | null;
+  batchRequestId?: string | null;
+  amount: number;
+  currency: string;
+  status: PaymentOrderStatus | string;
+  gatewayProvider: string;
+  gatewayOrderId: string;
+  gatewayPaymentId?: string | null;
+  methodType?: string | null;
+  paymentRail?: string | null;
+  refundStatus: string;
+  cancelReason?: string | null;
+  paidAt?: string | null;
+  cancelledAt?: string | null;
+  refundedAt?: string | null;
+  createdAt: string;
+}
+
+export interface TutorAccountingSummary {
+  id: string;
+  tutorProfileId: string;
+  paymentOrderId?: string | null;
+  sourceType: string;
+  sourceId: string;
+  grossAmount: number;
+  platformFee: number;
+  netAmount: number;
+  currency: string;
+  status: string;
+  payoutReference?: string | null;
+  createdAt: string;
+}
+
 export interface ProgramSummary {
   id: string;
   role: Role;

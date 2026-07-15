@@ -437,6 +437,30 @@ Acceptance criteria:
 - Content access depends on successful payment or enrollment.
 - Tutor revenue can be calculated from DB.
 
+Status:
+
+- Complete for MVP gateway-ready flow.
+- Completed: `PaymentOrder` stores payment intent/order state with target type, target id, gateway provider/order/payment ids, method rail, refund/cancel placeholders, and metadata.
+- Completed: `ProgramPurchase` stores paid program access and unlocks student program selection only after order status becomes `paid`.
+- Completed: paid batch admission creates a payment order first; confirming payment creates the admission request for tutor review.
+- Completed: tutor approval of a paid batch moves accounting from `pending` to `available`.
+- Completed: `TutorAccountingEntry` records gross amount, platform fee, net amount, currency, and payout readiness state.
+- Completed: payment APIs are routed through a single `paymentGateway` adapter with allowed card/UPI/netbanking validation config.
+- Completed: mobile paid program/batch CTAs use the order-confirm flow and the Payments screen shows methods, orders, and tutor accounting.
+- Refund and cancel are placeholders in the payment API and DB model, ready for gateway/admin operations.
+- Neon migration added in `202607150002_add_payments`.
+
+Phase 9 test matrix:
+
+- Student taps a paid tutor program and receives a `PaymentOrder`.
+- Confirming the order marks it paid, creates/activates `ProgramPurchase`, and adds the program to the student’s Program list.
+- Student requests a paid batch and receives a payment-required response before tutor request creation.
+- Confirming a paid batch order creates a pending `BatchRequest`.
+- Tutor approving the paid batch request creates active enrollment and marks tutor accounting entry `available`.
+- Student/tutor Payments screen lists orders; tutor sees payout-ready accounting rows.
+- Cancel endpoint cancels unpaid orders; refund endpoint records refund request for paid orders.
+- Replacing the mock gateway later should happen in the payment gateway adapter and method validation config only.
+
 ### Phase 10: Admin & Operations
 
 Goal: Give the platform operational control.
