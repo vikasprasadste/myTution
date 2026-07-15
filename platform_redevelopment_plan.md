@@ -558,6 +558,54 @@ Phase 11 test matrix:
 - Admin reads audit logs filtered by action/entity.
 - Admin writes a feature flag override and reads it back.
 
+### Phase 12: Production Hardening
+
+Goal: Raise the MVP from feature-complete to safer live-environment behavior.
+
+Build:
+
+- API tests for core flows
+- Mobile smoke test matrix
+- Error logging and observability
+- Rate limiting
+- Token/session hardening
+- File/asset request limits and security
+- DB indexes review
+- Seed/mock cleanup strategy
+- Environment-specific config cleanup
+
+Acceptance criteria:
+
+- Core API flows can be smoke-tested against local or Render.
+- API responses include request IDs and errors are logged with enough context.
+- Auth/session routes are rate-limited and inactive users cannot keep using sessions.
+- AMS/static asset access rejects unsupported paths/extensions.
+- Key admin, marketplace, payment, audit, and batch queries have supporting indexes.
+- Production runbook documents smoke tests, mobile QA, cleanup, and env config.
+
+Status:
+
+- Complete for MVP production hardening.
+- Completed: `npm run test:api:smoke` runs health, bootstrap, register, identity, program, notification, refresh, and optional admin cleanup flows.
+- Completed: API adds request IDs, production morgan format, error middleware, and process-level error logging.
+- Completed: in-memory global and auth-specific rate limit middleware added with env-configurable windows/limits.
+- Completed: access/refresh token TTLs are environment-configurable and active-user checks are enforced on login, refresh, and bearer-token reads.
+- Completed: JSON body size limit and AMS static asset extension/path checks added.
+- Completed: DB index migration added for user status, tutor verification, batch status/start, program marketplace, payment status, and audit entity queries.
+- Completed: production hardening runbook added in `docs/production_hardening.md`.
+- Neon migration added in `202607150005_production_hardening_indexes`.
+
+Phase 12 test matrix:
+
+- Run `npm run db:generate`.
+- Run `npm run build --workspace services/api`.
+- Run `npm run typecheck --workspace apps/mobile`.
+- Run `API_BASE_URL=<api-url> npm run test:api:smoke`.
+- Verify repeated auth requests return `429` after configured threshold.
+- Verify suspended/deleted users cannot log in or refresh.
+- Verify unsupported AMS extension/path returns `403`.
+- Execute the mobile smoke matrix from `docs/production_hardening.md`.
+
 ## 5. API Service Domains
 
 Recommended service boundaries:

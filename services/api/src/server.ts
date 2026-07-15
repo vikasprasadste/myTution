@@ -15,11 +15,66 @@ const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
 const assetsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../assets");
 const mockOtp = "123456";
 const mobileClientId = "mytution_mobile_app";
+const isProduction = process.env.NODE_ENV === "production";
+const jsonBodyLimit = process.env.API_JSON_BODY_LIMIT ?? "512kb";
+const allowedOrigins = splitCsv(process.env.API_ALLOWED_ORIGINS ?? "").filter(Boolean);
+const accessTokenTtlMinutes = Number(process.env.ACCESS_TOKEN_TTL_MINUTES ?? 15);
+const refreshTokenTtlDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 30);
+const maxStaticAssetBytes = Number(process.env.AMS_MAX_STATIC_ASSET_BYTES ?? 25 * 1024 * 1024);
+const allowedAssetExtensions = new Set([".svg", ".png", ".jpg", ".jpeg", ".webp", ".vtt", ".md", ".json", ".mp4"]);
 
 function isMissingParentLinkTable(error: unknown) {
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined;
   const table = typeof error === "object" && error !== null && "meta" in error ? (error as { meta?: { table?: string } }).meta?.table : undefined;
   return code === "P2021" && (table === "public.ParentActivationCode" || table === "public.ParentStudentLink");
+}
+
+type RateLimitBucket = { count: number; resetAt: number };
+const rateLimitBuckets = new Map<string, RateLimitBucket>();
+
+function createRateLimiter(input: { windowMs: number; max: number; keyPrefix: string }) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const now = Date.now();
+    const actor = readBearer(req.headers.authorization) ? `token:${crypto.createHash("sha256").update(readBearer(req.headers.authorization) ?? "").digest("hex").slice(0, 16)}` : `ip:${req.ip}`;
+    const key = `${input.keyPrefix}:${actor}`;
+    const existing = rateLimitBuckets.get(key);
+    const bucket = !existing || existing.resetAt <= now ? { count: 0, resetAt: now + input.windowMs } : existing;
+    bucket.count += 1;
+    rateLimitBuckets.set(key, bucket);
+    res.setHeader("x-ratelimit-limit", String(input.max));
+    res.setHeader("x-ratelimit-remaining", String(Math.max(0, input.max - bucket.count)));
+    res.setHeader("x-ratelimit-reset", new Date(bucket.resetAt).toISOString());
+    if (bucket.count > input.max) {
+      res.status(429).json({ error: "Too many requests", requestId: req.headers["x-request-id"] });
+      return;
+    }
+    if (rateLimitBuckets.size > 10_000 && Math.random() < 0.02) {
+      for (const [bucketKey, value] of rateLimitBuckets.entries()) {
+        if (value.resetAt <= now) rateLimitBuckets.delete(bucketKey);
+      }
+    }
+    next();
+  };
+}
+
+function validateStaticAssetRequest(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const decodedPath = decodeURIComponent(req.path);
+  const extension = path.extname(decodedPath).toLowerCase();
+  if (decodedPath.includes("..") || !allowedAssetExtensions.has(extension)) {
+    res.status(403).json({ error: "Unsupported asset request" });
+    return;
+  }
+  const requestedPath = path.resolve(assetsRoot, "." + decodedPath);
+  if (!requestedPath.startsWith(assetsRoot)) {
+    res.status(403).json({ error: "Unsupported asset request" });
+    return;
+  }
+  const expectedSize = Number(req.header("content-length") ?? 0);
+  if (expectedSize > maxStaticAssetBytes) {
+    res.status(413).json({ error: "Asset request is too large" });
+    return;
+  }
+  next();
 }
 
 const medicalProgramCatalog = [
@@ -86,18 +141,53 @@ const quizQuestionBank: QuizQuestion[] = [
   }
 ];
 
-app.use(helmet());
-app.use(cors());
-app.use(express.json());
-app.use(morgan("dev"));
-app.use("/api/v1/ams/files", express.static(assetsRoot));
+app.set("trust proxy", 1);
+morgan.token("request-id", (req) => String(req.headers["x-request-id"] ?? ""));
+app.use((req, res, next) => {
+  const requestId = String(req.headers["x-request-id"] ?? crypto.randomUUID());
+  req.headers["x-request-id"] = requestId;
+  res.setHeader("x-request-id", requestId);
+  next();
+});
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || !isProduction || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("Origin not allowed"));
+  }
+}));
+app.use(createRateLimiter({
+  windowMs: Number(process.env.API_RATE_LIMIT_WINDOW_MS ?? 60_000),
+  max: Number(process.env.API_RATE_LIMIT_MAX ?? 240),
+  keyPrefix: "api"
+}));
+app.use("/api/v1/auth", createRateLimiter({
+  windowMs: Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS ?? 60_000),
+  max: Number(process.env.AUTH_RATE_LIMIT_MAX ?? 30),
+  keyPrefix: "auth"
+}));
+app.use(express.json({
+  limit: jsonBodyLimit,
+  type: ["application/json", "application/*+json"]
+}));
+app.use(morgan(isProduction ? ":method :url :status :response-time ms rid=:request-id" : "dev"));
+app.use("/api/v1/ams/files", validateStaticAssetRequest, express.static(assetsRoot, {
+  dotfiles: "deny",
+  etag: true,
+  immutable: isProduction,
+  maxAge: isProduction ? "1h" : 0,
+  setHeaders: (res) => {
+    res.setHeader("x-content-type-options", "nosniff");
+  }
+}));
 
 app.get("/", (_req, res) => {
   res.json({ ok: true, service: "myTution API" });
-});
-
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
 });
 
 type AssetKind = "thumbnail" | "banner" | "vtt" | "metadata";
@@ -554,7 +644,7 @@ app.post("/api/v1/auth/login", async (req, res) => {
     where: { phone },
     include: { profiles: { where: { role }, take: 1 } }
   });
-  if (!user?.passwordHash || !(await verifyPassword(password, user.passwordHash)) || user.profiles.length === 0) {
+  if (!user?.passwordHash || user.status !== "active" || !(await verifyPassword(password, user.passwordHash)) || user.profiles.length === 0) {
     res.status(401).json({ error: "Something went wrong" });
     return;
   }
@@ -573,8 +663,8 @@ app.post("/api/v1/auth/login", async (req, res) => {
 
 app.post("/api/v1/auth/refresh", async (req, res) => {
   const refreshToken = String(req.body.refreshToken ?? "");
-  const session = await prisma.authSession.findUnique({ where: { refreshToken } });
-  if (!session || session.revokedAt || session.refreshTokenExpiresAt < new Date()) {
+  const session = await prisma.authSession.findUnique({ where: { refreshToken }, include: { user: true } });
+  if (!session || session.revokedAt || session.refreshTokenExpiresAt < new Date() || session.user.status !== "active") {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -4094,8 +4184,8 @@ async function createSession(userId: string) {
   });
   const accessToken = `access_${crypto.randomBytes(32).toString("hex")}`;
   const refreshToken = `refresh_${crypto.randomBytes(32).toString("hex")}`;
-  const accessTokenExpiresAt = addMinutes(15);
-  const refreshTokenExpiresAt = addDays(30);
+  const accessTokenExpiresAt = addMinutes(accessTokenTtlMinutes);
+  const refreshTokenExpiresAt = addDays(refreshTokenTtlDays);
   await prisma.authSession.create({
     data: {
       userId,
@@ -4112,8 +4202,8 @@ async function createSession(userId: string) {
 async function readUserId(req: express.Request) {
   const accessToken = readRequestAccessToken(req);
   if (!accessToken) return null;
-  const session = await prisma.authSession.findUnique({ where: { accessToken } });
-  if (!session || session.revokedAt || session.accessTokenExpiresAt < new Date()) return null;
+  const session = await prisma.authSession.findUnique({ where: { accessToken }, include: { user: true } });
+  if (!session || session.revokedAt || session.accessTokenExpiresAt < new Date() || session.user.status !== "active") return null;
   return session.userId;
 }
 
@@ -6016,6 +6106,28 @@ function addDays(days: number) {
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
+
+app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const requestId = String(req.headers["x-request-id"] ?? "");
+  const message = error instanceof Error ? error.message : "Unknown error";
+  console.error("api_error", {
+    requestId,
+    method: req.method,
+    path: req.path,
+    message,
+    stack: isProduction || !(error instanceof Error) ? undefined : error.stack
+  });
+  if (res.headersSent) return;
+  res.status(500).json({ error: "Internal server error", requestId });
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("unhandled_rejection", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("uncaught_exception", error);
+});
 
 app.listen(port, () => {
   console.log(`myTution API running on http://localhost:${port}`);

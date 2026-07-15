@@ -82,6 +82,8 @@ model User {
   parentActivationCodes ParentActivationCode[] @relation("StudentActivationCodes")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  @@index([status, createdAt])
 }
 
 model MobileClient {
@@ -342,6 +344,7 @@ model TutorProfile {
 
   @@index([location, gender])
   @@index([rating, experienceYears])
+  @@index([verificationStatus, profileStatus, updatedAt])
 }
 
 model TutorBatch {
@@ -375,6 +378,7 @@ model TutorBatch {
   @@index([subject, grade, board, mode])
   @@index([tutorProfileId, status])
   @@index([programId, status])
+  @@index([status, startsAt])
   @@index([startsAt])
 }
 
@@ -559,6 +563,8 @@ model Program {
   purchases ProgramPurchase[]
 
   @@index([creatorProfileId, status])
+  @@index([role, status, visibility])
+  @@index([status, visibility])
 }
 
 model PaymentOrder {
@@ -601,6 +607,7 @@ model PaymentOrder {
   @@index([profileId, status, createdAt])
   @@index([targetType, targetId])
   @@index([tutorProfileId, status])
+  @@index([status, createdAt])
 }
 
 model ProgramPurchase {
@@ -766,6 +773,7 @@ model AuditLog {
   @@index([userId, createdAt])
   @@index([profileId, createdAt])
   @@index([action, createdAt])
+  @@index([entityType, entityId, createdAt])
 }
 
 model AdminReview {

@@ -15,6 +15,7 @@
     "db:migrate": "npm run migrate --workspace packages/db",
     "db:deploy": "npm run deploy --workspace packages/db",
     "db:seed": "npm run seed --workspace packages/db",
+    "test:api:smoke": "npm run smoke --workspace services/api",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present"
   },
