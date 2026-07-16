@@ -1674,7 +1674,7 @@ export default function Index() {
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
-    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
+    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} programDataReady={!authSession?.accessToken || apiMilestones !== null || programs.length > 0} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
     if (screen === "milestoneDetail" && selectedMilestone) {
       const selectedProgram = programs.find((program) => program.id === selectedProgramId);
       return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} editableActivities={role === "tutor" && !isPublishedProgram(selectedProgram)} onEditActivity={editTutorActivityFromMilestone} />;
@@ -3071,6 +3071,7 @@ function Sessions({
   programs,
   selectedPrograms,
   selectedProgramId,
+  programDataReady,
   switchProgram,
   milestones,
   completedMilestone,
@@ -3095,6 +3096,7 @@ function Sessions({
   programs: ProgramSummary[];
   selectedPrograms: ProgramSummary[];
   selectedProgramId: string | null;
+  programDataReady: boolean;
   switchProgram: (programId: string) => void;
   milestones: ProgramMilestone[];
   completedMilestone: number;
@@ -3118,7 +3120,7 @@ function Sessions({
   const theme = useRoleTheme(role);
   const selectedProgram = selectedPrograms.find((program) => program.id === selectedProgramId) ?? programs.find((program) => program.id === selectedProgramId) ?? selectedPrograms[0] ?? programs[0];
   const selectedProgramStatus = programStatusMeta(selectedProgram);
-  const tutorEmptyState = role === "tutor" && programs.length === 0 && !tutorProgramComposerOpen;
+  const tutorEmptyState = role === "tutor" && programDataReady && programs.length === 0 && !selectedProgram && !selectedProgramId && !tutorProgramComposerOpen;
 
   return (
     <>
@@ -3272,7 +3274,11 @@ function TutorProgramEmptyState({ role, onCreate }: { role: Role; onCreate: () =
       <Text style={styles.tutorEmptyCopy}>
         Create a program with milestones, videos, articles, flashcards, and quizzes. Publish it when it is ready for students to discover.
       </Text>
-      <Button role={role} label="Create new program" onPress={onCreate} />
+      <Pressable style={({ pressed }) => [styles.tutorEmptyCta, pressed && styles.pressed]} onPress={onCreate}>
+        <LinearGradient colors={buttonGradient(role)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.tutorEmptyCtaGradient}>
+          <Text style={styles.tutorEmptyCtaText}>Create new program</Text>
+        </LinearGradient>
+      </Pressable>
     </View>
   );
 }
@@ -5274,6 +5280,9 @@ const styles = StyleSheet.create({
   tutorEmptyIconText: { fontSize: 34, fontWeight: "900", lineHeight: 40 },
   tutorEmptyTitle: { color: "#202A35", fontSize: 22, fontWeight: "900", lineHeight: 28, marginTop: 4, textAlign: "center" },
   tutorEmptyCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 21, maxWidth: 310, textAlign: "center" },
+  tutorEmptyCta: { alignSelf: "center", borderRadius: 14, height: 48, marginTop: 4, overflow: "hidden", width: 230 },
+  tutorEmptyCtaGradient: { alignItems: "center", height: 48, justifyContent: "center", paddingHorizontal: 18 },
+  tutorEmptyCtaText: { color: "#201A00", fontSize: 14, fontWeight: "900" },
   tutorProgramPanel: { gap: 14 },
   tutorProgramSummary: { borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, flexDirection: "row", gap: 12, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
   tutorProgramEyebrow: { color: "#64748B", fontSize: 12, fontWeight: "900", letterSpacing: 0 },
