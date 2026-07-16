@@ -403,14 +403,20 @@ export default function Index() {
   }, [screen, authSession?.accessToken, role]);
 
   useEffect(() => {
-    if (screen !== "sessions" || programModalSeen || !programs.length) return;
+    if (screen !== "sessions") return;
+    if (role === "tutor") {
+      setProgramModalVisible(false);
+      setProgramModalCanClose(false);
+      return;
+    }
+    if (programModalSeen || !programs.length) return;
     if (role === "parent") {
       setDraftProgramId(selectedProgramId ?? selectedPrograms[0]?.id ?? programs[0]?.id ?? null);
       setProgramModalSeen(true);
       setProgramModalVisible(false);
       return;
     }
-    if (role === "student" && selectedPrograms.length > 0) return;
+    if (role !== "student" || selectedPrograms.length > 0) return;
     setDraftProgramId(selectedProgramId ?? programs[0]?.id ?? null);
     setProgramMenuOpen(false);
     setProgramModalCanClose(false);
