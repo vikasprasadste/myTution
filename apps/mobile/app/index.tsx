@@ -3118,18 +3118,19 @@ function Sessions({
   const theme = useRoleTheme(role);
   const selectedProgram = selectedPrograms.find((program) => program.id === selectedProgramId) ?? programs.find((program) => program.id === selectedProgramId) ?? selectedPrograms[0] ?? programs[0];
   const selectedProgramStatus = programStatusMeta(selectedProgram);
+  const tutorEmptyState = role === "tutor" && programs.length === 0 && !tutorProgramComposerOpen;
 
   return (
     <>
       <View style={styles.milesHeader}>
         <View style={styles.milesHeaderSpacer} />
         <Text style={styles.milesHeaderTitle}>{role === "tutor" ? "Program" : "My Miles"}</Text>
-        {role !== "parent" ? (
+        {role !== "parent" && !tutorEmptyState ? (
           <Pressable style={styles.headerIconButton} onPress={() => setMenuOpen(!menuOpen)}>
             <Text style={[styles.headerIconButtonText, { color: theme.accentStrong }]}>⋮</Text>
           </Pressable>
         ) : <View style={styles.milesHeaderSpacer} />}
-        {menuOpen && role !== "parent" ? (
+        {menuOpen && role !== "parent" && !tutorEmptyState ? (
           <View style={styles.programMenu}>
             {role === "tutor" ? (
               <Pressable
@@ -3145,6 +3146,16 @@ function Sessions({
           </View>
         ) : null}
       </View>
+      {tutorEmptyState ? (
+        <TutorProgramEmptyState
+          role={role}
+          onCreate={() => {
+            setTutorProgramDraft(defaultTutorProgramDraft);
+            setEditingProgramId(null);
+            setTutorProgramComposerOpen(true);
+          }}
+        />
+      ) : null}
       {(role === "student" || role === "parent") && selectedPrograms.length > 0 ? (
         <View style={[styles.selectedProgramPanel, { backgroundColor: theme.card }]}>
           <FieldLabel>Selected programs</FieldLabel>
@@ -3158,7 +3169,7 @@ function Sessions({
           />
         </View>
       ) : null}
-      {role === "tutor" ? (
+      {role === "tutor" && !tutorEmptyState ? (
         <TutorProgramAuthoring
           role={role}
           programs={programs}
@@ -3182,7 +3193,7 @@ function Sessions({
           <Text style={[styles.programStatusPill, { color: theme.text }]}>{selectedProgramStatus.icon} {selectedProgramStatus.label}</Text>
         </View>
       ) : null}
-      <View style={styles.milesTimeline}>
+      {!tutorEmptyState ? <View style={styles.milesTimeline}>
         {milestones.map((milestone, index) => {
           const locked = milestone.sequence > completedMilestone + 1;
           const complete = milestone.sequence <= completedMilestone;
@@ -3245,8 +3256,24 @@ function Sessions({
             </View>
           );
         })}
-      </View>
+      </View> : null}
     </>
+  );
+}
+
+function TutorProgramEmptyState({ role, onCreate }: { role: Role; onCreate: () => void }) {
+  const theme = useRoleTheme(role);
+  return (
+    <View style={[styles.tutorEmptyProgramCard, { backgroundColor: theme.card }]}>
+      <View style={[styles.tutorEmptyIcon, { backgroundColor: theme.cardAlt }]}>
+        <Text style={[styles.tutorEmptyIconText, { color: theme.text }]}>＋</Text>
+      </View>
+      <Text style={styles.tutorEmptyTitle}>Design your first learning path</Text>
+      <Text style={styles.tutorEmptyCopy}>
+        Create a program with milestones, videos, articles, flashcards, and quizzes. Publish it when it is ready for students to discover.
+      </Text>
+      <Button role={role} label="Create new program" onPress={onCreate} />
+    </View>
   );
 }
 
@@ -5242,6 +5269,11 @@ const styles = StyleSheet.create({
   programStatusLine: { alignItems: "flex-start", marginTop: -2 },
   programStatusPill: { backgroundColor: "rgba(255,255,255,0.82)", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, fontSize: 12, fontWeight: "900", overflow: "hidden", paddingHorizontal: 12, paddingVertical: 7 },
   programLifecycleActions: { gap: 8, marginTop: 10 },
+  tutorEmptyProgramCard: { alignItems: "center", borderColor: "#DDE7EF", borderRadius: 24, borderWidth: 1, gap: 14, justifyContent: "center", marginTop: 10, minHeight: 360, padding: 24, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.08, shadowRadius: 22, elevation: 2 },
+  tutorEmptyIcon: { alignItems: "center", borderRadius: 28, height: 78, justifyContent: "center", width: 78 },
+  tutorEmptyIconText: { fontSize: 34, fontWeight: "900", lineHeight: 40 },
+  tutorEmptyTitle: { color: "#202A35", fontSize: 22, fontWeight: "900", lineHeight: 28, marginTop: 4, textAlign: "center" },
+  tutorEmptyCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 21, maxWidth: 310, textAlign: "center" },
   tutorProgramPanel: { gap: 14 },
   tutorProgramSummary: { borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, flexDirection: "row", gap: 12, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
   tutorProgramEyebrow: { color: "#64748B", fontSize: 12, fontWeight: "900", letterSpacing: 0 },
