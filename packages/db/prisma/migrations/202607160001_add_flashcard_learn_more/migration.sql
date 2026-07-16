@@ -1,0 +1,2 @@
+ALTER TABLE "Flashcard"
+ADD COLUMN IF NOT EXISTS "learnMore" TEXT;

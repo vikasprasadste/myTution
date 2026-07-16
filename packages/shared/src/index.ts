@@ -359,8 +359,16 @@ export interface TutorProgramResourceInput {
   bannerPath?: string;
   vttPath?: string;
   metadataPath?: string;
-  flashcards?: Array<{ question: string; answer: string }>;
-  quizQuestions?: Array<{ prompt: string; options: string[]; answerIndex: number; learnMore?: string }>;
+  flashcards?: Array<{ question: string; answer: string; learnMore?: string; relatedArticleId?: string | null }>;
+  quizQuestions?: Array<{
+    prompt: string;
+    options: string[];
+    answerIndex: number;
+    learnMore?: string;
+    questionType?: "single" | "multi" | "free_text" | string;
+    correctOptionIndexes?: number[];
+    answerText?: string;
+  }>;
 }
 
 export interface TutorResourceSummary {

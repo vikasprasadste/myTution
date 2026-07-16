@@ -470,6 +470,7 @@ model Flashcard {
   sequence          Int
   question          String
   answer            String
+  learnMore         String?
   relatedArticleId  String?
   sourceTag         String   @default("app")
   resource          Resource @relation(fields: [resourceId], references: [id])

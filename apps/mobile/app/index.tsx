@@ -94,7 +94,7 @@ type ParentLink = { id: string; name: string; relationship: string; status: stri
 type DashboardCard = { value: string; label: string; target: AppScreen };
 type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number; milestoneTitle?: string; required?: boolean };
 type TutorProgramDraft = TutorProgramCreateInput;
-type FlashcardPayload = { id?: string; sequence: number; question: string; answer: string; relatedArticleId?: string | null };
+type FlashcardPayload = { id?: string; sequence?: number; question: string; answer: string; learnMore?: string; relatedArticleId?: string | null };
 type ResourceDetailPayload = SelectedActivity & {
   body?: string | null;
   contentJson?: Record<string, unknown> | null;
@@ -117,7 +117,16 @@ type ResourceDetailPayload = SelectedActivity & {
 };
 type VttCue = { start: number; end: number; text: string };
 type JourneyActivity = SelectedActivity & { milestoneTitle: string; milestoneSequence: number; activitySequence: number; required: boolean; status: "pending" | "in_progress" | "complete" };
-type QuizQuestion = { id: string; prompt: string; options: string[]; answerIndex: number; learnMore: string };
+type QuizQuestion = {
+  id: string;
+  prompt: string;
+  options: string[];
+  answerIndex: number;
+  learnMore: string;
+  questionType?: "single" | "multi" | "free_text" | string;
+  correctOptionIndexes?: number[];
+  answerText?: string;
+};
 type QuizPayload = { resourceId: string; title: string; description: string; questions: QuizQuestion[] };
 type SignInMode = "fresh" | "returning";
 type TutorFilterOptions = { subjects: string[]; locations: string[]; grades: string[]; boards: string[]; modes: string[]; languages: string[]; genders: string[]; experience: string[]; ratings: string[] };
@@ -233,16 +242,19 @@ const defaultTutorBatchDraft: TutorBatchDraft = {
 };
 
 const emptyFlashcards = [
-  { question: "", answer: "" },
-  { question: "", answer: "" },
-  { question: "", answer: "" }
+  { question: "", answer: "", learnMore: "" },
+  { question: "", answer: "", learnMore: "" },
+  { question: "", answer: "", learnMore: "" }
 ];
 
 const emptyQuizQuestions = [{
   prompt: "",
   options: ["", "", "", ""],
   answerIndex: 0,
-  learnMore: ""
+  learnMore: "",
+  questionType: "single",
+  correctOptionIndexes: [0],
+  answerText: ""
 }];
 
 function isPublishedProgram(program?: ProgramSummary | null) {
@@ -511,9 +523,9 @@ export default function Index() {
   }
 
   async function loadTutorProgramForEdit(programId: string) {
+    setSelectedProgramId(programId);
     const program = programs.find((item) => item.id === programId);
     if (isPublishedProgram(program)) {
-      setSelectedProgramId(programId);
       setTutorProgramComposerOpen(false);
       setEditingTutorProgramId(null);
       setProgramRefreshKey((value) => value + 1);
@@ -622,7 +634,8 @@ export default function Index() {
           token && role === "parent" ? apiGet<{ data: ParentMonitoringResponse }>(`/api/v1/parent/monitoring?role=parent`, token) : Promise.resolve({ data: null as ParentMonitoringResponse | null })
         ]);
         const selectedFromApi = programList.selectedPrograms ?? programList.data.filter((program) => program.selected);
-        const programId = selectedProgramId ?? selectedFromApi[0]?.id ?? (role === "student" ? null : programList.data[0]?.id ?? null);
+        const existingProgramId = selectedProgramId && programList.data.some((program) => program.id === selectedProgramId) ? selectedProgramId : null;
+        const programId = existingProgramId ?? selectedFromApi[0]?.id ?? (role === "student" ? null : programList.data[0]?.id ?? null);
         const plan = programId
           ? await apiGet<{ data: { milestones: ProgramMilestone[]; completedMilestoneSequence: number } }>(`/api/v1/education-plan/current?role=${role}&programId=${programId}`, token)
           : { data: { milestones: [], completedMilestoneSequence: 0 } };
@@ -2890,7 +2903,7 @@ function FlashIntro({ role, resource, start, back }: { role: Role; resource: Res
         <Text style={styles.flashIntroCopy}>{description}</Text>
         <Text style={styles.flashIntroMeta}>{cards.length} cards • Tap each card to reveal the answer</Text>
       </View>
-      {role !== "parent" && role !== "tutor" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View> : null}
+      {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View> : null}
     </>
   );
 }
@@ -2908,8 +2921,9 @@ function FlashPlay({ role, resource, cards, index, answer, setAnswer, next, lear
         <Text style={styles.flashText}>{answer ? activeCard.answer : activeCard.question}</Text>
         <Text style={styles.flipHint}>Tap to flip</Text>
       </Pressable>
-      {answer ? <Button role={role} variant="secondary" label="💡  Learn more" onPress={learnMore} /> : null}
-      <Button role={role} label={index === cards.length - 1 ? "Mark complete" : "Next"} onPress={index === cards.length - 1 ? complete : next} />
+      {answer && activeCard.learnMore ? <View style={styles.quizLearnMore}><Text style={styles.quizLearnMoreText}>💡 {activeCard.learnMore}</Text></View> : null}
+      {answer && activeCard.relatedArticleId ? <Button role={role} variant="secondary" label="💡  Learn more" onPress={learnMore} /> : null}
+      <Button role={role} label={index === cards.length - 1 && role !== "tutor" ? "Mark complete" : "Next"} onPress={index === cards.length - 1 && role !== "tutor" ? complete : next} />
     </>
   );
 }
@@ -2931,7 +2945,7 @@ function QuizIntro({ role, resource, loading, start, back }: { role: Role; resou
         <Text style={styles.quizHeroTitle}>{resource.title}</Text>
         <Text style={styles.quizHeroCopy}>{resource.description}</Text>
       </View>
-      {role !== "parent" && role !== "tutor" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start" onPress={start} loading={loading} /></View> : null}
+      {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start" onPress={start} loading={loading} /></View> : null}
     </>
   );
 }
@@ -2989,7 +3003,7 @@ function QuizResult({ role, payload, answers, complete, loading, backToTopic }: 
         <View style={styles.reactionRowCentered}><Text style={styles.reactionButton}>👍</Text><Text style={styles.reactionButton}>👎</Text></View>
       </View>
       <View style={styles.resourceBottomCta}>
-        <Button role={role} label="Next Milestone" onPress={complete} loading={loading} />
+        {role !== "tutor" ? <Button role={role} label="Next Milestone" onPress={complete} loading={loading} /> : null}
         <Pressable style={({ pressed }) => [styles.backToTopicLink, pressed && styles.pressed]} onPress={backToTopic}><Text style={styles.backToTopicText}>Back to program</Text></Pressable>
       </View>
     </>
@@ -3203,9 +3217,9 @@ function Sessions({
       ) : null}
       {!tutorEmptyState ? <View style={styles.milesTimeline}>
         {milestones.map((milestone, index) => {
-          const locked = milestone.sequence > completedMilestone + 1;
+          const locked = role === "tutor" ? false : milestone.sequence > completedMilestone + 1;
           const complete = milestone.sequence <= completedMilestone;
-          const active = milestone.sequence === completedMilestone + 1;
+          const active = role === "tutor" ? index === 0 : milestone.sequence === completedMilestone + 1;
           const completeGreen = "#16A34A";
           const activityText = milestone.activities?.length
             ? milestone.activities.map((activity) => capitalize(activity.type)).join(" • ")
@@ -3378,7 +3392,7 @@ function TutorProgramAuthoring({
         : milestone)
     }));
   };
-  const updateFlashcard = (milestoneIndex: number, resourceIndex: number, cardIndex: number, patch: { question?: string; answer?: string }) => {
+  const updateFlashcard = (milestoneIndex: number, resourceIndex: number, cardIndex: number, patch: { question?: string; answer?: string; learnMore?: string }) => {
     setDraft((current) => ({
       ...current,
       milestones: milestones.map((milestone, index) => {
@@ -3401,7 +3415,7 @@ function TutorProgramAuthoring({
         ? {
             ...milestone,
             resources: milestone.resources.map((resource, innerIndex) => innerIndex === resourceIndex
-              ? { ...resource, flashcards: [...(resource.flashcards?.length ? resource.flashcards : emptyFlashcards), { question: "New flashcard question", answer: "New flashcard answer" }] }
+              ? { ...resource, flashcards: [...(resource.flashcards?.length ? resource.flashcards : emptyFlashcards), { question: "New flashcard question", answer: "New flashcard answer", learnMore: "Add a short explanation or next step." }] }
               : resource)
           }
         : milestone)
@@ -3443,7 +3457,7 @@ function TutorProgramAuthoring({
         ? {
             ...milestone,
             resources: milestone.resources.map((resource, innerIndex) => innerIndex === resourceIndex
-              ? { ...resource, quizQuestions: [...(resource.quizQuestions?.length ? resource.quizQuestions : emptyQuizQuestions), { prompt: "New quiz question", options: ["Option 1", "Option 2", "Option 3", "Option 4"], answerIndex: 0, learnMore: "Add a short explanation for students." }] }
+              ? { ...resource, quizQuestions: [...(resource.quizQuestions?.length ? resource.quizQuestions : emptyQuizQuestions), { prompt: "New quiz question", options: ["Option 1", "Option 2", "Option 3", "Option 4"], answerIndex: 0, learnMore: "Add a short explanation for students.", questionType: "single", correctOptionIndexes: [0], answerText: "" }] }
               : resource)
           }
         : milestone)
@@ -3471,13 +3485,6 @@ function TutorProgramAuthoring({
 
   return (
     <View style={styles.tutorProgramPanel}>
-      <View style={[styles.tutorProgramSummary, { backgroundColor: theme.card }]}>
-        <View style={styles.flex}>
-          <Text style={styles.tutorProgramEyebrow}>Educator programs</Text>
-          <Text style={styles.tutorProgramTitle}>{selectedProgram?.title ?? "Create your first program"}</Text>
-          <Text style={styles.tutorProgramCopy}>{programs.length ? `${selectedProgramStatus.icon} ${selectedProgramStatus.label}. Drafts can be resumed; published programs are view-only.` : "Add a program and configure milestones with your own education content."}</Text>
-        </View>
-      </View>
       {programs.length ? (
         <View style={[styles.selectedProgramPanel, { backgroundColor: theme.card }]}>
           <FieldLabel>Configured programs</FieldLabel>
@@ -3501,10 +3508,23 @@ function TutorProgramAuthoring({
               <Button role={role} variant="secondary" label="Archive program" onPress={() => archiveProgram(selectedProgram.id)} loading={loadingAction === "archiveTutorProgram:" + selectedProgram.id} />
             </View>
           ) : null}
-          {selectedProgram && !selectedProgramEditable ? <Muted>This program is published. Students can view it, but edits are locked.</Muted> : null}
+          {selectedProgram ? (
+            <View style={styles.tutorSelectedProgramMeta}>
+              <Text style={styles.tutorProgramEyebrow}>Selected program</Text>
+              <Text style={styles.tutorProgramTitle}>{selectedProgram.title}</Text>
+              <Text style={styles.tutorProgramCopy}>{selectedProgramStatus.icon} {selectedProgramStatus.label}. {selectedProgramEditable ? "You can edit milestones and activities before publishing." : "Published programs are review-only."}</Text>
+            </View>
+          ) : null}
         </View>
       ) : (
-        <Button role={role} label="Add a program" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
+        <View style={[styles.tutorProgramSummary, { backgroundColor: theme.card }]}>
+          <View style={styles.flex}>
+            <Text style={styles.tutorProgramEyebrow}>Educator programs</Text>
+            <Text style={styles.tutorProgramTitle}>Create your first program</Text>
+            <Text style={styles.tutorProgramCopy}>Add a program and configure milestones with your own education content.</Text>
+          </View>
+          <Button role={role} label="Add a program" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
+        </View>
       )}
       {open && composerEditable ? (
         <View style={[styles.tutorComposerCard, { backgroundColor: theme.cardAlt }]}>
@@ -3545,6 +3565,10 @@ function TutorProgramAuthoring({
               <Input value={resource.title} onChangeText={(title) => updateResource(milestoneIndex, index, { title })} />
               <FieldLabel>Description</FieldLabel>
               <TextInput multiline value={resource.description} onChangeText={(description) => updateResource(milestoneIndex, index, { description })} placeholder="Student-facing summary" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+              <FieldLabel>Thumbnail path</FieldLabel>
+              <Input value={resource.thumbnailPath ?? ""} onChangeText={(thumbnailPath) => updateResource(milestoneIndex, index, { thumbnailPath })} placeholder="/api/v1/ams/files/..." />
+              <FieldLabel>Banner path</FieldLabel>
+              <Input value={resource.bannerPath ?? ""} onChangeText={(bannerPath) => updateResource(milestoneIndex, index, { bannerPath })} placeholder="/api/v1/ams/files/..." />
               {resource.type === "article" ? (
                 <>
                   <FieldLabel>Article body</FieldLabel>
@@ -3567,6 +3591,7 @@ function TutorProgramAuthoring({
                       </View>
                       <Input value={card.question} onChangeText={(question) => updateFlashcard(milestoneIndex, index, cardIndex, { question })} placeholder="Question" />
                       <Input value={card.answer} onChangeText={(answer) => updateFlashcard(milestoneIndex, index, cardIndex, { answer })} placeholder="Answer" />
+                      <TextInput multiline value={card.learnMore ?? ""} onChangeText={(learnMore) => updateFlashcard(milestoneIndex, index, cardIndex, { learnMore })} placeholder="Learn more guidance" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
                     </View>
                   ))}
                   <Button role={role} variant="secondary" label="Add flashcard" onPress={() => addFlashcard(milestoneIndex, index)} />
@@ -3581,10 +3606,38 @@ function TutorProgramAuthoring({
                         <Pressable onPress={() => removeQuizQuestion(milestoneIndex, index, questionIndex)}><Text style={styles.tutorResourcePill}>Delete</Text></Pressable>
                       </View>
                       <TextInput multiline value={question.prompt} onChangeText={(prompt) => updateQuizQuestion(milestoneIndex, index, questionIndex, { prompt })} placeholder="Question prompt" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                      <FieldLabel>Question type</FieldLabel>
+                      <DropdownField
+                        value={question.questionType === "multi" ? "Multi choice" : question.questionType === "free_text" ? "Free text" : "Single choice"}
+                        options={["Single choice", "Multi choice", "Free text"]}
+                        onSelect={(value) => updateQuizQuestion(milestoneIndex, index, questionIndex, {
+                          questionType: value === "Multi choice" ? "multi" : value === "Free text" ? "free_text" : "single"
+                        })}
+                      />
                       <FieldLabel>Options, separated by comma</FieldLabel>
                       <Input value={(question.options ?? []).join(", ")} onChangeText={(value) => updateQuizQuestion(milestoneIndex, index, questionIndex, { options: value.split(",").map((option) => option.trim()).filter(Boolean) })} />
-                      <FieldLabel>Correct option number</FieldLabel>
-                      <DropdownField value={String((question.answerIndex ?? 0) + 1)} options={["1", "2", "3", "4"]} onSelect={(value) => updateQuizQuestion(milestoneIndex, index, questionIndex, { answerIndex: Number(value) - 1 })} />
+                      {question.questionType === "multi" ? (
+                        <>
+                          <FieldLabel>Correct option numbers</FieldLabel>
+                          <Input
+                            value={(question.correctOptionIndexes?.length ? question.correctOptionIndexes : [question.answerIndex ?? 0]).map((item) => String(item + 1)).join(", ")}
+                            onChangeText={(value) => updateQuizQuestion(milestoneIndex, index, questionIndex, {
+                              correctOptionIndexes: value.split(",").map((item) => Number(item.trim()) - 1).filter((item) => Number.isFinite(item) && item >= 0)
+                            })}
+                            placeholder="1, 3"
+                          />
+                        </>
+                      ) : question.questionType === "free_text" ? (
+                        <>
+                          <FieldLabel>Expected answer text</FieldLabel>
+                          <TextInput multiline value={question.answerText ?? ""} onChangeText={(answerText) => updateQuizQuestion(milestoneIndex, index, questionIndex, { answerText })} placeholder="Model answer or accepted phrase" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                        </>
+                      ) : (
+                        <>
+                          <FieldLabel>Correct option number</FieldLabel>
+                          <DropdownField value={String((question.answerIndex ?? 0) + 1)} options={["1", "2", "3", "4"]} onSelect={(value) => updateQuizQuestion(milestoneIndex, index, questionIndex, { answerIndex: Number(value) - 1, correctOptionIndexes: [Number(value) - 1] })} />
+                        </>
+                      )}
                       <FieldLabel>Learn more</FieldLabel>
                       <TextInput multiline value={question.learnMore ?? ""} onChangeText={(learnMore) => updateQuizQuestion(milestoneIndex, index, questionIndex, { learnMore })} placeholder="Explanation shown after answering" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
                     </View>
@@ -5359,6 +5412,7 @@ const styles = StyleSheet.create({
   tutorProgramEyebrow: { color: "#64748B", fontSize: 12, fontWeight: "900", letterSpacing: 0 },
   tutorProgramTitle: { color: "#202A35", fontSize: 18, fontWeight: "900", lineHeight: 24, marginTop: 4 },
   tutorProgramCopy: { color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19, marginTop: 4 },
+  tutorSelectedProgramMeta: { backgroundColor: "rgba(255,255,255,0.64)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, gap: 2, padding: 12 },
   smallOutlineButton: { alignItems: "center", alignSelf: "flex-start", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, minHeight: 38, justifyContent: "center", paddingHorizontal: 18 },
   smallOutlineButtonText: { fontSize: 13, fontWeight: "900" },
   tutorComposerCard: { borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 10, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.07, shadowRadius: 18 },

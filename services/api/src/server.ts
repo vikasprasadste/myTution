@@ -305,7 +305,7 @@ function hasPlaceholderFlashcards(resource: { type?: string | null; flashcards?:
   });
 }
 
-function withFlashcardFallback<T extends { id: string; type?: string | null; title?: string; description?: string; flashcards?: Array<{ id?: string; resourceId?: string; sequence: number; question: string; answer: string; relatedArticleId?: string | null; sourceTag?: string }> }>(resource: T) {
+function withFlashcardFallback<T extends { id: string; type?: string | null; title?: string; description?: string; flashcards?: Array<{ id?: string; resourceId?: string; sequence: number; question: string; answer: string; learnMore?: string | null; relatedArticleId?: string | null; sourceTag?: string }> }>(resource: T) {
   if (!hasPlaceholderFlashcards(resource)) return resource;
   return {
     ...resource,
@@ -317,6 +317,7 @@ function withFlashcardFallback<T extends { id: string; type?: string | null; tit
       sequence: index + 1,
       question,
       answer,
+      learnMore: "Review the linked concept notes and connect this answer back to the current milestone.",
       relatedArticleId: null,
       sourceTag: "mock"
     }))
@@ -428,7 +429,10 @@ function tutorResourceData(input: TutorProgramResourceInput, tutorId: string) {
         prompt: question.prompt,
         options: question.options,
         answerIndex: question.answerIndex,
-        learnMore: question.learnMore ?? "Review the linked notes and try the concept again."
+        learnMore: question.learnMore ?? "Review the linked notes and try the concept again.",
+        questionType: question.questionType ?? "single",
+        correctOptionIndexes: question.correctOptionIndexes ?? [],
+        answerText: question.answerText ?? ""
       }))
     } : mediaUrl ? { mediaUrl } : {},
     sourceTag: "app"
@@ -442,6 +446,8 @@ async function writeResourceFlashcards(tx: any, resourceId: string, input: Tutor
     sequence: cardIndex + 1,
     question: card.question,
     answer: card.answer,
+    learnMore: (card as { learnMore?: string | null }).learnMore ?? null,
+    relatedArticleId: (card as { relatedArticleId?: string | null }).relatedArticleId ?? null,
     sourceTag: "app"
   }));
   await tx.flashcard.createMany({ data: cards });
@@ -3218,12 +3224,19 @@ function tutorProgramToDraft(program: any) {
           description: activity.description,
           body: resource.body ?? "",
           mediaUrl: resource.sourceUrl ?? "",
-          flashcards: (resource.flashcards ?? []).map((card: any) => ({ question: card.question, answer: card.answer })),
+          thumbnailPath: resource.thumbnailPath ?? "",
+          bannerPath: resource.bannerPath ?? "",
+          vttPath: resource.vttPath ?? "",
+          metadataPath: resource.metadataPath ?? "",
+          flashcards: (resource.flashcards ?? []).map((card: any) => ({ question: card.question, answer: card.answer, learnMore: card.learnMore ?? "", relatedArticleId: card.relatedArticleId ?? null })),
           quizQuestions: questions.map((question: any) => ({
             prompt: String(question.prompt ?? ""),
             options: Array.isArray(question.options) ? question.options.map(String) : [],
             answerIndex: Number(question.answerIndex ?? 0) || 0,
-            learnMore: String(question.learnMore ?? "")
+            learnMore: String(question.learnMore ?? ""),
+            questionType: String(question.questionType ?? "single"),
+            correctOptionIndexes: Array.isArray(question.correctOptionIndexes) ? question.correctOptionIndexes.map(Number).filter(Number.isFinite) : [],
+            answerText: String(question.answerText ?? "")
           }))
         };
       })
