@@ -3328,6 +3328,7 @@ function TutorProgramAuthoring({
   const updateDraft = (patch: Partial<TutorProgramDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const selectedProgramStatus = programStatusMeta(selectedProgram);
   const selectedProgramEditable = selectedProgram ? !isPublishedProgram(selectedProgram) : false;
+  const composerEditable = !editingProgramId || selectedProgramEditable;
   const milestones = draft.milestones?.length ? draft.milestones : [{
     title: draft.milestoneTitle ?? "Milestone 1",
     sequence: 1,
@@ -3393,7 +3394,33 @@ function TutorProgramAuthoring({
       })
     }));
   };
-  const updateQuizQuestion = (milestoneIndex: number, resourceIndex: number, patch: Partial<NonNullable<TutorProgramResourceInput["quizQuestions"]>[number]>) => {
+  const addFlashcard = (milestoneIndex: number, resourceIndex: number) => {
+    setDraft((current) => ({
+      ...current,
+      milestones: milestones.map((milestone, index) => index === milestoneIndex
+        ? {
+            ...milestone,
+            resources: milestone.resources.map((resource, innerIndex) => innerIndex === resourceIndex
+              ? { ...resource, flashcards: [...(resource.flashcards?.length ? resource.flashcards : emptyFlashcards), { question: "New flashcard question", answer: "New flashcard answer" }] }
+              : resource)
+          }
+        : milestone)
+    }));
+  };
+  const removeFlashcard = (milestoneIndex: number, resourceIndex: number, cardIndex: number) => {
+    setDraft((current) => ({
+      ...current,
+      milestones: milestones.map((milestone, index) => index === milestoneIndex
+        ? {
+            ...milestone,
+            resources: milestone.resources.map((resource, innerIndex) => innerIndex === resourceIndex
+              ? { ...resource, flashcards: (resource.flashcards?.length ? resource.flashcards : emptyFlashcards).filter((_, itemIndex) => itemIndex !== cardIndex) }
+              : resource)
+          }
+        : milestone)
+    }));
+  };
+  const updateQuizQuestion = (milestoneIndex: number, resourceIndex: number, questionIndex: number, patch: Partial<NonNullable<TutorProgramResourceInput["quizQuestions"]>[number]>) => {
     setDraft((current) => ({
       ...current,
       milestones: milestones.map((milestone, index) => {
@@ -3402,11 +3429,37 @@ function TutorProgramAuthoring({
           ...milestone,
           resources: milestone.resources.map((resource, innerIndex) => {
             if (innerIndex !== resourceIndex) return resource;
-            const question = resource.quizQuestions?.[0] ?? emptyQuizQuestions[0];
-            return { ...resource, quizQuestions: question ? [{ ...question, ...patch }] : [] };
+            const questions = resource.quizQuestions?.length ? resource.quizQuestions : emptyQuizQuestions;
+            return { ...resource, quizQuestions: questions.map((question, itemIndex) => itemIndex === questionIndex ? { ...question, ...patch } : question) };
           })
         };
       })
+    }));
+  };
+  const addQuizQuestion = (milestoneIndex: number, resourceIndex: number) => {
+    setDraft((current) => ({
+      ...current,
+      milestones: milestones.map((milestone, index) => index === milestoneIndex
+        ? {
+            ...milestone,
+            resources: milestone.resources.map((resource, innerIndex) => innerIndex === resourceIndex
+              ? { ...resource, quizQuestions: [...(resource.quizQuestions?.length ? resource.quizQuestions : emptyQuizQuestions), { prompt: "New quiz question", options: ["Option 1", "Option 2", "Option 3", "Option 4"], answerIndex: 0, learnMore: "Add a short explanation for students." }] }
+              : resource)
+          }
+        : milestone)
+    }));
+  };
+  const removeQuizQuestion = (milestoneIndex: number, resourceIndex: number, questionIndex: number) => {
+    setDraft((current) => ({
+      ...current,
+      milestones: milestones.map((milestone, index) => index === milestoneIndex
+        ? {
+            ...milestone,
+            resources: milestone.resources.map((resource, innerIndex) => innerIndex === resourceIndex
+              ? { ...resource, quizQuestions: (resource.quizQuestions?.length ? resource.quizQuestions : emptyQuizQuestions).filter((_, itemIndex) => itemIndex !== questionIndex) }
+              : resource)
+          }
+        : milestone)
     }));
   };
   const canCreate = Boolean(
@@ -3441,11 +3494,9 @@ function TutorProgramAuthoring({
               loadProgramForEdit(program.id);
             }}
           />
-          <View style={styles.row}>
-            <Button role={role} label="Add new" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
-          </View>
           {selectedProgram ? (
             <View style={styles.programLifecycleActions}>
+              <Button role={role} label="Add New" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
               {!isPublishedProgram(selectedProgram) ? <Button role={role} label="Publish program" onPress={() => publishProgram(selectedProgram.id)} loading={loadingAction === "publishTutorProgram:" + selectedProgram.id} /> : null}
               <Button role={role} variant="secondary" label="Archive program" onPress={() => archiveProgram(selectedProgram.id)} loading={loadingAction === "archiveTutorProgram:" + selectedProgram.id} />
             </View>
@@ -3455,7 +3506,7 @@ function TutorProgramAuthoring({
       ) : (
         <Button role={role} label="Add a program" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
       )}
-      {open ? (
+      {open && composerEditable ? (
         <View style={[styles.tutorComposerCard, { backgroundColor: theme.cardAlt }]}>
           <Text style={styles.tutorComposerTitle}>{editingProgramId ? "Edit program" : "Add a program"}</Text>
           <FieldLabel>Program title</FieldLabel>
@@ -3508,23 +3559,37 @@ function TutorProgramAuthoring({
               ) : null}
               {resource.type === "flashcard" ? (
                 <>
-                  {(resource.flashcards?.length ? resource.flashcards : emptyFlashcards).slice(0, 3).map((card, cardIndex) => (
+                  {(resource.flashcards?.length ? resource.flashcards : emptyFlashcards).map((card, cardIndex) => (
                     <View key={cardIndex} style={styles.flashcardEditorRow}>
-                      <FieldLabel>Flashcard {cardIndex + 1}</FieldLabel>
+                      <View style={styles.rowBetween}>
+                        <FieldLabel>Flashcard {cardIndex + 1}</FieldLabel>
+                        <Pressable onPress={() => removeFlashcard(milestoneIndex, index, cardIndex)}><Text style={styles.tutorResourcePill}>Delete</Text></Pressable>
+                      </View>
                       <Input value={card.question} onChangeText={(question) => updateFlashcard(milestoneIndex, index, cardIndex, { question })} placeholder="Question" />
                       <Input value={card.answer} onChangeText={(answer) => updateFlashcard(milestoneIndex, index, cardIndex, { answer })} placeholder="Answer" />
                     </View>
                   ))}
+                  <Button role={role} variant="secondary" label="Add flashcard" onPress={() => addFlashcard(milestoneIndex, index)} />
                 </>
               ) : null}
               {resource.type === "quiz" ? (
                 <>
-                  <FieldLabel>Quiz question</FieldLabel>
-                  <TextInput multiline value={resource.quizQuestions?.[0]?.prompt ?? ""} onChangeText={(prompt) => updateQuizQuestion(milestoneIndex, index, { prompt })} placeholder="Question prompt" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
-                  <FieldLabel>Options, separated by comma</FieldLabel>
-                  <Input value={(resource.quizQuestions?.[0]?.options ?? []).join(", ")} onChangeText={(value) => updateQuizQuestion(milestoneIndex, index, { options: value.split(",").map((option) => option.trim()).filter(Boolean) })} />
-                  <FieldLabel>Correct option number</FieldLabel>
-                  <DropdownField value={String((resource.quizQuestions?.[0]?.answerIndex ?? 0) + 1)} options={["1", "2", "3", "4"]} onSelect={(value) => updateQuizQuestion(milestoneIndex, index, { answerIndex: Number(value) - 1 })} />
+                  {(resource.quizQuestions?.length ? resource.quizQuestions : emptyQuizQuestions).map((question, questionIndex) => (
+                    <View key={questionIndex} style={styles.quizEditorRow}>
+                      <View style={styles.rowBetween}>
+                        <FieldLabel>Quiz question {questionIndex + 1}</FieldLabel>
+                        <Pressable onPress={() => removeQuizQuestion(milestoneIndex, index, questionIndex)}><Text style={styles.tutorResourcePill}>Delete</Text></Pressable>
+                      </View>
+                      <TextInput multiline value={question.prompt} onChangeText={(prompt) => updateQuizQuestion(milestoneIndex, index, questionIndex, { prompt })} placeholder="Question prompt" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                      <FieldLabel>Options, separated by comma</FieldLabel>
+                      <Input value={(question.options ?? []).join(", ")} onChangeText={(value) => updateQuizQuestion(milestoneIndex, index, questionIndex, { options: value.split(",").map((option) => option.trim()).filter(Boolean) })} />
+                      <FieldLabel>Correct option number</FieldLabel>
+                      <DropdownField value={String((question.answerIndex ?? 0) + 1)} options={["1", "2", "3", "4"]} onSelect={(value) => updateQuizQuestion(milestoneIndex, index, questionIndex, { answerIndex: Number(value) - 1 })} />
+                      <FieldLabel>Learn more</FieldLabel>
+                      <TextInput multiline value={question.learnMore ?? ""} onChangeText={(learnMore) => updateQuizQuestion(milestoneIndex, index, questionIndex, { learnMore })} placeholder="Explanation shown after answering" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                    </View>
+                  ))}
+                  <Button role={role} variant="secondary" label="Add quiz question" onPress={() => addQuizQuestion(milestoneIndex, index)} />
                 </>
               ) : null}
             </View>
@@ -5306,6 +5371,7 @@ const styles = StyleSheet.create({
   rowBetween: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   textAreaSmall: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 16, borderWidth: 1, color: "#111827", minHeight: 64, padding: 14, textAlignVertical: "top" },
   flashcardEditorRow: { gap: 8 },
+  quizEditorRow: { gap: 8 },
   milesTimeline: { gap: 10, paddingBottom: 18, paddingTop: 10 },
   mileRow: { flexDirection: "row", minHeight: 148 },
   mileRail: { alignItems: "center", marginRight: 12, width: 44 },
