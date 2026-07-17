@@ -3169,6 +3169,10 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
     res.status(400).json({ error: publishing ? "Published programs require title, description, milestones, and resources" : "Program title and description are required" });
     return;
   }
+  if (await tutorProgramTitleExists(tutor.id, input.title)) {
+    res.status(409).json({ error: "Program title already exists for this tutor" });
+    return;
+  }
 
   const program = await prisma.$transaction(async (tx) => {
     const createdProgram = await tx.program.create({
@@ -3263,6 +3267,31 @@ function tutorProgramSummary(program: any): ProgramSummary {
   } as ProgramSummary;
 }
 
+async function tutorProgramTitleExists(tutorId: string, title: string, excludeProgramId?: string) {
+  const normalized = title.trim().toLowerCase();
+  if (!normalized) return false;
+  const programs = await prisma.program.findMany({
+    where: { creatorProfileId: tutorId, role: "tutor", ...(excludeProgramId ? { id: { not: excludeProgramId } } : {}) },
+    select: { title: true }
+  });
+  return programs.some((program) => program.title.trim().toLowerCase() === normalized);
+}
+
+async function nextTutorProgramCopyTitle(tutorId: string, title: string) {
+  const baseTitle = `${title.trim()} restored`;
+  const programs = await prisma.program.findMany({
+    where: { creatorProfileId: tutorId, role: "tutor" },
+    select: { title: true }
+  });
+  const existing = new Set(programs.map((program) => program.title.trim().toLowerCase()));
+  if (!existing.has(baseTitle.toLowerCase())) return baseTitle;
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${baseTitle} ${index}`;
+    if (!existing.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${baseTitle} ${Date.now()}`;
+}
+
 async function writeTutorProgramTree(tx: any, programId: string, tutorId: string, input: TutorProgramCreateInput) {
   const orderedMilestones = [...(input.milestones ?? [])].sort((a, b) => a.sequence - b.sequence);
   for (const milestoneInput of orderedMilestones) {
@@ -3331,6 +3360,10 @@ app.put("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
   }
   if (existing.status === "published") {
     res.status(409).json({ error: "Published programs are view-only. Archive or create a new draft version to change content." });
+    return;
+  }
+  if (await tutorProgramTitleExists(tutor.id, input.title, existing.id)) {
+    res.status(409).json({ error: "Program title already exists for this tutor" });
     return;
   }
   const program = await prisma.$transaction(async (tx) => {
@@ -3424,6 +3457,56 @@ app.post("/api/v1/education-plan/tutor/programs/:id/archive", async (req, res) =
     entityId: req.params.id
   });
   res.status(204).send();
+});
+
+app.post("/api/v1/education-plan/tutor/programs/:id/restore", async (req, res) => {
+  const tutor = await requireProfile(req, res, "tutor");
+  if (!tutor) return;
+  const archived = await prisma.program.findFirst({
+    where: { id: req.params.id, creatorProfileId: tutor.id, role: "tutor", status: "archived" },
+    include: {
+      milestones: {
+        orderBy: { sequence: "asc" },
+        include: { activities: { orderBy: { sequence: "asc" }, include: { resource: { include: { flashcards: { orderBy: { sequence: "asc" } } } } } } }
+      }
+    }
+  });
+  if (!archived) {
+    res.status(404).json({ error: "Archived program not found" });
+    return;
+  }
+  const draft = tutorProgramToDraft(archived) as TutorProgramCreateInput;
+  const title = await nextTutorProgramCopyTitle(tutor.id, archived.title);
+  const program = await prisma.$transaction(async (tx) => {
+    const createdProgram = await tx.program.create({
+      data: {
+        role: "tutor",
+        title,
+        description: draft.description,
+        creatorProfileId: tutor.id,
+        visibility: "private",
+        status: "draft",
+        feeType: draft.feeType ?? "free",
+        feeAmount: draft.feeType === "paid" ? draft.feeAmount ?? 0 : null,
+        sourceTag: "app"
+      }
+    });
+    await writeTutorProgramTree(tx, createdProgram.id, tutor.id, { ...draft, title, visibility: "private" });
+    return tx.program.findUnique({
+      where: { id: createdProgram.id },
+      include: { milestones: { include: { activities: true }, orderBy: { sequence: "asc" } } }
+    });
+  });
+  await logAudit({
+    userId: tutor.userId,
+    profileId: tutor.id,
+    role: "tutor",
+    action: "tutor.program.restore_copy",
+    entityType: "Program",
+    entityId: program?.id,
+    metadata: { sourceProgramId: archived.id }
+  });
+  res.status(201).json({ data: tutorProgramSummary(program) });
 });
 
 app.get("/api/v1/programs/current", async (req, res) => {

@@ -261,7 +261,14 @@ function isPublishedProgram(program?: ProgramSummary | null) {
   return program?.status === "published" || program?.visibility === "published";
 }
 
+function isArchivedProgram(program?: ProgramSummary | null) {
+  return program?.status === "archived";
+}
+
 function programStatusMeta(program?: ProgramSummary | null) {
+  if (isArchivedProgram(program)) {
+    return { icon: "⎌", label: "Archived" };
+  }
   const published = isPublishedProgram(program);
   return {
     icon: published ? "✓" : "◔",
@@ -329,6 +336,7 @@ export default function Index() {
   const [programRefreshKey, setProgramRefreshKey] = useState(0);
   const [programToast, setProgramToast] = useState("");
   const [programMenuOpen, setProgramMenuOpen] = useState(false);
+  const [programArchiveModalVisible, setProgramArchiveModalVisible] = useState(false);
   const [tutorProgramDraft, setTutorProgramDraft] = useState<TutorProgramDraft>(defaultTutorProgramDraft);
   const [tutorProgramComposerOpen, setTutorProgramComposerOpen] = useState(false);
   const [editingTutorProgramId, setEditingTutorProgramId] = useState<string | null>(null);
@@ -601,10 +609,11 @@ export default function Index() {
   async function archiveTutorProgram(programId?: string | null) {
     if (!programId) return;
     setProgramMenuOpen(false);
+    setProgramArchiveModalVisible(false);
     setLoadingAction("archiveTutorProgram:" + programId);
     try {
       await apiPost(`/api/v1/education-plan/tutor/programs/${programId}/archive`, {}, authSession?.accessToken);
-      setPrograms((items) => items.filter((item) => item.id !== programId));
+      setPrograms((items) => items.map((item) => item.id === programId ? { ...item, status: "archived", visibility: "private" } : item));
       if (selectedProgramId === programId) setSelectedProgramId(null);
       setProgramRefreshKey((value) => value + 1);
       await refreshTutorSupply();
@@ -612,6 +621,26 @@ export default function Index() {
       setApiNotice("");
     } catch {
       setApiNotice("Program could not be archived. Please check API deployment and login state.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function restoreTutorProgram(programId?: string | null) {
+    if (!programId) return;
+    setProgramMenuOpen(false);
+    setProgramArchiveModalVisible(false);
+    setLoadingAction("restoreTutorProgram:" + programId);
+    try {
+      const response = await apiPost<{ data: ProgramSummary }>(`/api/v1/education-plan/tutor/programs/${programId}/restore`, {}, authSession?.accessToken);
+      setPrograms((items) => [response.data, ...items]);
+      setSelectedProgramId(response.data.id);
+      setProgramRefreshKey((value) => value + 1);
+      await refreshTutorSupply();
+      setProgramToast("Archived program copied as a new in-progress program.");
+      setApiNotice("");
+    } catch {
+      setApiNotice("Program could not be restored. Please check API deployment and login state.");
     } finally {
       setLoadingAction(null);
     }
@@ -635,7 +664,8 @@ export default function Index() {
         ]);
         const selectedFromApi = programList.selectedPrograms ?? programList.data.filter((program) => program.selected);
         const existingProgramId = selectedProgramId && programList.data.some((program) => program.id === selectedProgramId) ? selectedProgramId : null;
-        const programId = existingProgramId ?? selectedFromApi[0]?.id ?? (role === "student" ? null : programList.data[0]?.id ?? null);
+        const defaultProgram = role === "tutor" ? programList.data.find((program) => !isArchivedProgram(program)) : programList.data[0];
+        const programId = existingProgramId && (role !== "tutor" || !isArchivedProgram(programList.data.find((program) => program.id === existingProgramId))) ? existingProgramId : selectedFromApi[0]?.id ?? (role === "student" ? null : defaultProgram?.id ?? null);
         const plan = programId
           ? await apiGet<{ data: { milestones: ProgramMilestone[]; completedMilestoneSequence: number } }>(`/api/v1/education-plan/current?role=${role}&programId=${programId}`, token)
           : { data: { milestones: [], completedMilestoneSequence: 0 } };
@@ -1693,7 +1723,7 @@ export default function Index() {
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
-    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} programDataReady={!authSession?.accessToken || apiMilestones !== null || programs.length > 0} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
+    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} programDataReady={!authSession?.accessToken || apiMilestones !== null || programs.length > 0} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} restoreProgram={restoreTutorProgram} archiveModalVisible={programArchiveModalVisible} setArchiveModalVisible={setProgramArchiveModalVisible} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
     if (screen === "milestoneDetail" && selectedMilestone) {
       const selectedProgram = programs.find((program) => program.id === selectedProgramId);
       return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} editableActivities={role === "tutor" && !isPublishedProgram(selectedProgram)} onEditActivity={editTutorActivityFromMilestone} />;
@@ -2911,6 +2941,7 @@ function FlashIntro({ role, resource, start, back }: { role: Role; resource: Res
 function FlashPlay({ role, resource, cards, index, answer, setAnswer, next, learnMore, complete, back }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; cards: FlashcardPayload[]; index: number; answer: boolean; setAnswer: (value: boolean) => void; next: () => void; learnMore: () => void; complete: () => void; back: () => void }) {
   const activeCard = cards[index] ?? cards[0] ?? fallbackFlashcards[0];
   const progressWidth = (String(Math.round(((index + 1) / cards.length) * 100)) + "%") as any;
+  const isLastCard = index === cards.length - 1;
   return (
     <>
       <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
@@ -2923,7 +2954,7 @@ function FlashPlay({ role, resource, cards, index, answer, setAnswer, next, lear
       </Pressable>
       {answer && activeCard.learnMore ? <View style={styles.quizLearnMore}><Text style={styles.quizLearnMoreText}>💡 {activeCard.learnMore}</Text></View> : null}
       {answer && activeCard.relatedArticleId ? <Button role={role} variant="secondary" label="💡  Learn more" onPress={learnMore} /> : null}
-      <Button role={role} label={index === cards.length - 1 && role !== "tutor" ? "Mark complete" : "Next"} onPress={index === cards.length - 1 && role !== "tutor" ? complete : next} />
+      {role === "tutor" && isLastCard ? null : <Button role={role} label={isLastCard && role !== "tutor" ? "Mark complete" : "Next"} onPress={isLastCard && role !== "tutor" ? complete : next} />}
     </>
   );
 }
@@ -3100,6 +3131,9 @@ function Sessions({
   setMenuOpen,
   openProgramPicker,
   archiveProgram,
+  restoreProgram,
+  archiveModalVisible,
+  setArchiveModalVisible,
   publishProgram,
   tutorProgramDraft,
   setTutorProgramDraft,
@@ -3125,6 +3159,9 @@ function Sessions({
   setMenuOpen: (value: boolean) => void;
   openProgramPicker: () => void;
   archiveProgram: (programId?: string | null) => void;
+  restoreProgram: (programId?: string | null) => void;
+  archiveModalVisible: boolean;
+  setArchiveModalVisible: (value: boolean) => void;
   publishProgram: (programId: string) => void;
   tutorProgramDraft: TutorProgramDraft;
   setTutorProgramDraft: (value: TutorProgramDraft | ((draft: TutorProgramDraft) => TutorProgramDraft)) => void;
@@ -3138,9 +3175,12 @@ function Sessions({
   loadingAction: string | null;
 }) {
   const theme = useRoleTheme(role);
-  const selectedProgram = selectedPrograms.find((program) => program.id === selectedProgramId) ?? programs.find((program) => program.id === selectedProgramId) ?? selectedPrograms[0] ?? programs[0];
+  const activeTutorPrograms = role === "tutor" ? programs.filter((program) => !isArchivedProgram(program)) : programs;
+  const archivedTutorPrograms = role === "tutor" ? programs.filter(isArchivedProgram) : [];
+  const visiblePrograms = role === "tutor" ? activeTutorPrograms : programs;
+  const selectedProgram = selectedPrograms.find((program) => program.id === selectedProgramId) ?? visiblePrograms.find((program) => program.id === selectedProgramId) ?? selectedPrograms[0] ?? visiblePrograms[0];
   const selectedProgramStatus = programStatusMeta(selectedProgram);
-  const tutorEmptyState = role === "tutor" && programDataReady && programs.length === 0 && !selectedProgram && !selectedProgramId && !tutorProgramComposerOpen;
+  const tutorEmptyState = role === "tutor" && programDataReady && activeTutorPrograms.length === 0 && !selectedProgram && !selectedProgramId && !tutorProgramComposerOpen;
 
   return (
     <>
@@ -3162,7 +3202,7 @@ function Sessions({
                 <Text style={styles.programMenuText}>Add a program</Text>
               </Pressable>
             ) : null}
-            <Pressable style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]} onPress={() => archiveProgram(selectedProgram?.id)}>
+            <Pressable style={({ pressed }) => [styles.programMenuItem, pressed && styles.pressed]} onPress={() => { setMenuOpen(false); setArchiveModalVisible(true); }}>
               <Text style={styles.programMenuText}>Archive a program</Text>
             </Pressable>
           </View>
@@ -3195,6 +3235,7 @@ function Sessions({
         <TutorProgramAuthoring
           role={role}
           programs={programs}
+          activePrograms={activeTutorPrograms}
           selectedProgram={selectedProgram}
           draft={tutorProgramDraft}
           setDraft={setTutorProgramDraft}
@@ -3279,6 +3320,18 @@ function Sessions({
           );
         })}
       </View> : null}
+      {role === "tutor" ? (
+        <ProgramArchiveModal
+          role={role}
+          visible={archiveModalVisible}
+          activePrograms={activeTutorPrograms}
+          archivedPrograms={archivedTutorPrograms}
+          archiveProgram={archiveProgram}
+          restoreProgram={restoreProgram}
+          loadingAction={loadingAction}
+          onClose={() => setArchiveModalVisible(false)}
+        />
+      ) : null}
     </>
   );
 }
@@ -3303,11 +3356,71 @@ function TutorProgramEmptyState({ role, onCreate }: { role: Role; onCreate: () =
   );
 }
 
+function ProgramArchiveModal({
+  role,
+  visible,
+  activePrograms,
+  archivedPrograms,
+  archiveProgram,
+  restoreProgram,
+  loadingAction,
+  onClose
+}: {
+  role: Role;
+  visible: boolean;
+  activePrograms: ProgramSummary[];
+  archivedPrograms: ProgramSummary[];
+  archiveProgram: (programId?: string | null) => void;
+  restoreProgram: (programId?: string | null) => void;
+  loadingAction: string | null;
+  onClose: () => void;
+}) {
+  const theme = useRoleTheme(role);
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <BlurView intensity={92} tint="dark" style={styles.modalBackdrop}>
+        <View style={styles.programModalCard}>
+          <Pressable style={({ pressed }) => [styles.programModalClose, pressed && styles.pressed]} onPress={onClose}>
+            <Text style={styles.programModalCloseText}>×</Text>
+          </Pressable>
+          <Text style={styles.programModalTitle}>Manage archive</Text>
+          <Text style={styles.programModalCopy}>Archive active programs or restore archived ones as new in-progress copies.</Text>
+          <FieldLabel>Available to archive</FieldLabel>
+          {activePrograms.length ? activePrograms.map((program) => (
+            <View key={program.id} style={[styles.archiveProgramRow, { backgroundColor: theme.cardAlt }]}>
+              <View style={styles.flex}>
+                <Text style={styles.archiveProgramTitle}>{program.title}</Text>
+                <Text style={styles.archiveProgramMeta}>{programStatusMeta(program).label}</Text>
+              </View>
+              <Pressable style={({ pressed }) => [styles.archiveActionButton, pressed && styles.pressed]} onPress={() => archiveProgram(program.id)}>
+                {loadingAction === "archiveTutorProgram:" + program.id ? <ActivityIndicator size="small" color={theme.text} /> : <Text style={[styles.archiveActionText, { color: theme.text }]}>Archive</Text>}
+              </Pressable>
+            </View>
+          )) : <Muted>No active programs to archive.</Muted>}
+          <FieldLabel>Archived programs</FieldLabel>
+          {archivedPrograms.length ? archivedPrograms.map((program) => (
+            <View key={program.id} style={[styles.archiveProgramRow, { backgroundColor: "#F8FAFC" }]}>
+              <View style={styles.flex}>
+                <Text style={styles.archiveProgramTitle}>{program.title}</Text>
+                <Text style={styles.archiveProgramMeta}>Archived</Text>
+              </View>
+              <Pressable style={({ pressed }) => [styles.archiveActionButton, pressed && styles.pressed]} onPress={() => restoreProgram(program.id)}>
+                {loadingAction === "restoreTutorProgram:" + program.id ? <ActivityIndicator size="small" color={theme.text} /> : <Text style={[styles.archiveActionText, { color: theme.text }]}>Restore</Text>}
+              </Pressable>
+            </View>
+          )) : <Muted>No archived programs yet.</Muted>}
+        </View>
+      </BlurView>
+    </Modal>
+  );
+}
+
 const resourceTypeOptions: ResourceType[] = ["article", "video", "flashcard", "quiz"];
 
 function TutorProgramAuthoring({
   role,
   programs,
+  activePrograms,
   selectedProgram,
   draft,
   setDraft,
@@ -3324,6 +3437,7 @@ function TutorProgramAuthoring({
 }: {
   role: Role;
   programs: ProgramSummary[];
+  activePrograms: ProgramSummary[];
   selectedProgram?: ProgramSummary;
   draft: TutorProgramDraft;
   setDraft: (value: TutorProgramDraft | ((draft: TutorProgramDraft) => TutorProgramDraft)) => void;
@@ -3485,14 +3599,14 @@ function TutorProgramAuthoring({
 
   return (
     <View style={styles.tutorProgramPanel}>
-      {programs.length ? (
+      {activePrograms.length ? (
         <View style={[styles.selectedProgramPanel, { backgroundColor: theme.card }]}>
           <FieldLabel>Configured programs</FieldLabel>
           <DropdownField
             value={selectedProgram ? programOptionLabel(selectedProgram) : "Select program"}
-            options={programs.map(programOptionLabel)}
+            options={activePrograms.map(programOptionLabel)}
             onSelect={(label) => {
-              const program = programs.find((item) => programOptionLabel(item) === label);
+              const program = activePrograms.find((item) => programOptionLabel(item) === label);
               if (!program) return;
               if (isPublishedProgram(program)) {
                 setEditingProgramId(null);
@@ -3505,14 +3619,6 @@ function TutorProgramAuthoring({
             <View style={styles.programLifecycleActions}>
               <Button role={role} label="Add New" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
               {!isPublishedProgram(selectedProgram) ? <Button role={role} label="Publish program" onPress={() => publishProgram(selectedProgram.id)} loading={loadingAction === "publishTutorProgram:" + selectedProgram.id} /> : null}
-              <Button role={role} variant="secondary" label="Archive program" onPress={() => archiveProgram(selectedProgram.id)} loading={loadingAction === "archiveTutorProgram:" + selectedProgram.id} />
-            </View>
-          ) : null}
-          {selectedProgram ? (
-            <View style={styles.tutorSelectedProgramMeta}>
-              <Text style={styles.tutorProgramEyebrow}>Selected program</Text>
-              <Text style={styles.tutorProgramTitle}>{selectedProgram.title}</Text>
-              <Text style={styles.tutorProgramCopy}>{selectedProgramStatus.icon} {selectedProgramStatus.label}. {selectedProgramEditable ? "You can edit milestones and activities before publishing." : "Published programs are review-only."}</Text>
             </View>
           ) : null}
         </View>
@@ -5656,6 +5762,11 @@ const styles = StyleSheet.create({
   programModalCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
   programPreparing: { alignItems: "center", flex: 1, gap: 18, justifyContent: "center", minHeight: 260 },
   modalBottomCta: { marginTop: 64 },
+  archiveProgramRow: { alignItems: "center", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, minHeight: 68, padding: 12 },
+  archiveProgramTitle: { color: "#202A35", fontSize: 14, fontWeight: "900", lineHeight: 19 },
+  archiveProgramMeta: { color: "#536A86", fontSize: 12, fontWeight: "800", marginTop: 2 },
+  archiveActionButton: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, justifyContent: "center", minHeight: 36, minWidth: 88, paddingHorizontal: 14 },
+  archiveActionText: { fontSize: 12, fontWeight: "900" },
   toast: { alignItems: "center", backgroundColor: "rgba(32,42,53,0.94)", borderRadius: 999, bottom: 104, left: 24, minHeight: 44, paddingHorizontal: 18, position: "absolute", right: 24, shadowColor: "#000", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 18 },
   toastText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800", lineHeight: 44, textAlign: "center" },
   accountHeader: {
