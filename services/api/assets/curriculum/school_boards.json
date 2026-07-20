@@ -1,0 +1,871 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "description": "Complete class structure for all major Indian and international school boards from Pre-Primary to Class 12",
+    "boards_included": [
+      "CBSE", "ICSE/ISC", "IB (PYP/MYP/DP)", "IGCSE (Cambridge)", 
+      "GSEB", "MSBSHSE", "TNBSE", "KSEEB", "WBBSE/WBCHSE", 
+      "BSEB", "MPBSE", "RBSE", "PSEB", "BIEAP", "BIETELANGANA",
+      "CHSE_ODISHA", "CGBSE", "JKBOSE", "UPMSP", "BSEH_HARYANA"
+    ],
+    "language": "English",
+    "last_updated": "2026"
+  },
+
+  "unified_structure": {
+    "pre_primary": {
+      "stage": "Pre-Primary",
+      "age_range": "2.5 – 5 years",
+      "grades": [
+        {
+          "grade_id": "nursery",
+          "grade_name": "Nursery",
+          "alternate_names": ["Play Group", "Playschool", "Junior KG (in some schools)"],
+          "age": "2.5 – 3.5 years",
+          "board_mapping": {
+            "CBSE": { "recognized": true, "called": "Nursery", "governed_by": "School level — CBSE does not regulate pre-primary" },
+            "ICSE": { "recognized": true, "called": "Nursery", "governed_by": "School level — CISCE does not regulate pre-primary" },
+            "IB_PYP": { "recognized": true, "called": "PYP Year 1", "governed_by": "IB PYP framework" },
+            "IGCSE": { "recognized": false, "note": "Cambridge begins at Primary (approx. Grade 1)" },
+            "State_Boards": { "recognized": true, "called": "Nursery / Bal Vatika", "note": "Varies by state; NEP 2020 formalises as Balvatika 1" }
+          },
+          "curriculum_focus": "Play-based learning, motor skills, language exposure, social skills",
+          "subjects_activities": [
+            "Language & Communication (English, regional language)",
+            "Number Sense (pre-math)",
+            "Art & Craft",
+            "Music & Movement",
+            "Environmental Awareness",
+            "Social-Emotional Learning"
+          ]
+        },
+        {
+          "grade_id": "lkg",
+          "grade_name": "LKG",
+          "alternate_names": ["Lower Kindergarten", "Junior KG", "Balvatika 2 (NEP 2020)", "KG-1"],
+          "age": "3.5 – 4.5 years",
+          "board_mapping": {
+            "CBSE": { "recognized": true, "called": "LKG", "governed_by": "School level" },
+            "ICSE": { "recognized": true, "called": "LKG / Junior KG", "governed_by": "School level" },
+            "IB_PYP": { "recognized": true, "called": "PYP Year 2" },
+            "IGCSE": { "recognized": false, "note": "Not covered" },
+            "State_Boards": { "recognized": true, "called": "LKG / Balvatika 2", "note": "NEP 2020 integration ongoing" }
+          },
+          "curriculum_focus": "Early literacy, early numeracy, foundational language skills",
+          "subjects_activities": [
+            "English (phonics, rhymes, basic reading)",
+            "Regional Language (alphabets, simple words)",
+            "Mathematics (numbers 1–50, shapes, colours)",
+            "Environmental Studies (basic awareness)",
+            "Art & Craft",
+            "Music, Dance & Drama",
+            "Physical Development"
+          ]
+        },
+        {
+          "grade_id": "ukg",
+          "grade_name": "UKG",
+          "alternate_names": ["Upper Kindergarten", "Senior KG", "Balvatika 3 (NEP 2020)", "KG-2"],
+          "age": "4.5 – 5.5 years",
+          "board_mapping": {
+            "CBSE": { "recognized": true, "called": "UKG", "governed_by": "School level" },
+            "ICSE": { "recognized": true, "called": "UKG / Senior KG", "governed_by": "School level" },
+            "IB_PYP": { "recognized": true, "called": "PYP Year 3" },
+            "IGCSE": { "recognized": false, "note": "Not covered" },
+            "State_Boards": { "recognized": true, "called": "UKG / Balvatika 3" }
+          },
+          "curriculum_focus": "Readiness for formal schooling, pre-writing, early comprehension",
+          "subjects_activities": [
+            "English (reading, writing, simple sentences)",
+            "Regional Language (reading, writing)",
+            "Mathematics (numbers 1–100, addition/subtraction intro, patterns)",
+            "Environmental Studies",
+            "General Knowledge",
+            "Art & Craft",
+            "Music & Physical Education"
+          ]
+        }
+      ]
+    },
+
+    "primary": {
+      "stage": "Primary",
+      "age_range": "6 – 11 years",
+      "grades": [
+        {
+          "grade_id": "class_1",
+          "grade_name": "Class 1",
+          "alternate_names": ["Grade 1", "Standard 1", "Form 1"],
+          "age": "5.5 – 7 years",
+          "board_mapping": {
+            "CBSE": { "called": "Class 1", "formal_start": true },
+            "ICSE": { "called": "Class 1", "formal_start": true },
+            "IB_PYP": { "called": "PYP Year 4" },
+            "IGCSE": { "called": "Cambridge Primary Year 1" },
+            "State_Boards": { "called": "Class 1 / Std. 1", "formal_start": true }
+          },
+          "subjects": {
+            "CBSE": ["English", "Hindi", "Mathematics", "Environmental Studies (EVS)", "Art Education", "Health & Physical Education"],
+            "ICSE": ["English", "Second Language (Hindi/Regional)", "Mathematics", "Environmental Studies", "Art", "Physical Education"],
+            "IB_PYP": ["Language (English)", "Mathematics", "Unit of Inquiry (transdisciplinary themes)", "Arts", "PE", "Additional Language"],
+            "IGCSE": ["English", "Mathematics", "Science", "Additional subject per school"],
+            "State_Boards": ["English", "Regional Language", "Mathematics", "EVS", "Art", "PE"]
+          },
+          "key_notes": "Foundation literacy and numeracy. NEP 2020 calls this part of the 5+3+3+4 structure's 'Foundational Stage' (age 3-8)."
+        },
+        {
+          "grade_id": "class_2",
+          "grade_name": "Class 2",
+          "alternate_names": ["Grade 2", "Standard 2"],
+          "age": "6.5 – 8 years",
+          "board_mapping": {
+            "CBSE": { "called": "Class 2" },
+            "ICSE": { "called": "Class 2" },
+            "IB_PYP": { "called": "PYP Year 5" },
+            "IGCSE": { "called": "Cambridge Primary Year 2" },
+            "State_Boards": { "called": "Class 2 / Std. 2" }
+          },
+          "subjects": {
+            "CBSE": ["English", "Hindi", "Mathematics", "Environmental Studies (EVS)", "Art Education", "Health & Physical Education"],
+            "ICSE": ["English", "Second Language", "Mathematics", "Environmental Studies", "Art", "Physical Education"],
+            "IB_PYP": ["Language", "Mathematics", "Unit of Inquiry", "Arts", "PE", "Additional Language"],
+            "IGCSE": ["English", "Mathematics", "Science"],
+            "State_Boards": ["English", "Regional Language", "Mathematics", "EVS", "Art", "PE"]
+          },
+          "key_notes": "Continuation of foundational stage. Reading fluency and basic arithmetic consolidation."
+        },
+        {
+          "grade_id": "class_3",
+          "grade_name": "Class 3",
+          "alternate_names": ["Grade 3", "Standard 3"],
+          "age": "7.5 – 9 years",
+          "board_mapping": {
+            "CBSE": { "called": "Class 3" },
+            "ICSE": { "called": "Class 3" },
+            "IB_PYP": { "called": "PYP Year 6" },
+            "IGCSE": { "called": "Cambridge Primary Year 3" },
+            "State_Boards": { "called": "Class 3 / Std. 3" }
+          },
+          "subjects": {
+            "CBSE": ["English", "Hindi", "Mathematics", "Environmental Studies (EVS)", "Art Education", "Health & Physical Education"],
+            "ICSE": ["English", "Second Language", "Mathematics", "Environmental Studies", "Computer Science (optional)", "Art", "PE"],
+            "IB_PYP": ["Language", "Mathematics", "Unit of Inquiry", "Arts", "PE", "Additional Language"],
+            "IGCSE": ["English", "Mathematics", "Science", "Digital Literacy"],
+            "State_Boards": ["English", "Regional Language", "Mathematics", "EVS", "Art", "PE"]
+          },
+          "key_notes": "NEP 2020 'Preparatory Stage' begins at Class 3 (age 8-11). Introduction of formal subject boundaries in some boards."
+        },
+        {
+          "grade_id": "class_4",
+          "grade_name": "Class 4",
+          "alternate_names": ["Grade 4", "Standard 4"],
+          "age": "8.5 – 10 years",
+          "board_mapping": {
+            "CBSE": { "called": "Class 4" },
+            "ICSE": { "called": "Class 4" },
+            "IB_PYP": { "called": "PYP Year 7" },
+            "IGCSE": { "called": "Cambridge Primary Year 4" },
+            "State_Boards": { "called": "Class 4 / Std. 4" }
+          },
+          "subjects": {
+            "CBSE": ["English", "Hindi", "Mathematics", "Environmental Studies (EVS)", "Art Education", "Health & Physical Education"],
+            "ICSE": ["English", "Second Language", "Mathematics", "Science", "Social Studies", "Computer Science", "Art", "PE"],
+            "IB_PYP": ["Language", "Mathematics", "Science", "Social Studies", "Arts", "PE", "Additional Language"],
+            "IGCSE": ["English", "Mathematics", "Science", "Social Studies"],
+            "State_Boards": ["English", "Regional Language", "Mathematics", "EVS / Science", "Social Studies", "Art", "PE"]
+          },
+          "key_notes": "Science and Social Studies begin separating from EVS in ICSE and most state boards at this level."
+        },
+        {
+          "grade_id": "class_5",
+          "grade_name": "Class 5",
+          "alternate_names": ["Grade 5", "Standard 5"],
+          "age": "9.5 – 11 years",
+          "board_mapping": {
+            "CBSE": { "called": "Class 5" },
+            "ICSE": { "called": "Class 5" },
+            "IB_PYP": { "called": "PYP Year 8 (Final PYP year — PYP Exhibition)" },
+            "IGCSE": { "called": "Cambridge Primary Year 5" },
+            "State_Boards": { "called": "Class 5 / Std. 5" }
+          },
+          "subjects": {
+            "CBSE": ["English", "Hindi", "Mathematics", "Environmental Studies (EVS)", "Art Education", "Health & Physical Education"],
+            "ICSE": ["English", "Second Language", "Mathematics", "Science", "Social Studies", "Computer Science", "Art", "PE"],
+            "IB_PYP": ["Language", "Mathematics", "Science", "Social Studies", "Arts", "PE", "Additional Language", "PYP Exhibition Project"],
+            "IGCSE": ["English", "Mathematics", "Science", "Social Studies", "Digital Literacy"],
+            "State_Boards": ["English", "Regional Language", "Mathematics", "Science", "Social Studies", "Art", "PE"]
+          },
+          "board_transitions": {
+            "IB": "PYP ends at Grade 5. Students move to MYP from Grade 6.",
+            "IGCSE": "Cambridge Primary ends. Students move to Cambridge Lower Secondary (Grade 6).",
+            "CBSE": "Primary stage ends. Middle stage begins at Class 6.",
+            "State_Boards": "Some states have board exams / scholarship exams at Class 5 (e.g. NTS, state talent search)."
+          },
+          "key_notes": "Primary stage completion for CBSE. IB PYP Exhibition — major transdisciplinary project."
+        }
+      ]
+    },
+
+    "middle": {
+      "stage": "Middle School",
+      "age_range": "11 – 14 years",
+      "grades": [
+        {
+          "grade_id": "class_6",
+          "grade_name": "Class 6",
+          "alternate_names": ["Grade 6", "Standard 6", "Form 6"],
+          "age": "10.5 – 12 years",
+          "board_mapping": {
+            "CBSE": { "called": "Class 6", "stage": "Middle (6-8)" },
+            "ICSE": { "called": "Class 6", "stage": "Middle" },
+            "IB_MYP": { "called": "MYP Year 1", "stage": "Middle Years Programme begins" },
+            "IGCSE": { "called": "Cambridge Lower Secondary Year 7", "stage": "Lower Secondary begins" },
+            "State_Boards": { "called": "Class 6 / Std. 6" }
+          },
+          "subjects": {
+            "CBSE": ["English", "Hindi / Sanskrit / Urdu", "Mathematics", "Science", "Social Science", "Computer / IT", "Art Education", "Health & Physical Education"],
+            "ICSE": ["English", "Second Language", "Mathematics", "Physics", "Chemistry", "Biology", "History & Civics", "Geography", "Computer Applications", "Art", "PE"],
+            "IB_MYP": ["Language & Literature", "Language Acquisition", "Mathematics", "Sciences", "Individuals & Societies", "Arts", "Physical & Health Education", "Design"],
+            "IGCSE": ["English", "Mathematics", "Science", "Global Perspectives", "Digital Literacy"],
+            "State_Boards": ["English", "Regional Language", "Hindi / Third Language", "Mathematics", "Science", "Social Science", "Computer", "Art", "PE"]
+          },
+          "key_notes": "NEP 2020 Middle Stage: Class 6-8. Science bifurcates into Physics, Chemistry, Biology in ICSE from Class 6."
+        },
+        {
+          "grade_id": "class_7",
+          "grade_name": "Class 7",
+          "alternate_names": ["Grade 7", "Standard 7"],
+          "age": "11.5 – 13 years",
+          "board_mapping": {
+            "CBSE": { "called": "Class 7" },
+            "ICSE": { "called": "Class 7" },
+            "IB_MYP": { "called": "MYP Year 2" },
+            "IGCSE": { "called": "Cambridge Lower Secondary Year 8" },
+            "State_Boards": { "called": "Class 7 / Std. 7" }
+          },
+          "subjects": {
+            "CBSE": ["English", "Hindi / Sanskrit / Urdu", "Mathematics", "Science", "Social Science", "Computer / IT", "Art Education", "Health & Physical Education"],
+            "ICSE": ["English", "Second Language", "Mathematics", "Physics", "Chemistry", "Biology", "History & Civics", "Geography", "Computer Applications", "Art", "PE"],
+            "IB_MYP": ["Language & Literature", "Language Acquisition", "Mathematics", "Sciences", "Individuals & Societies", "Arts", "Physical & Health Education", "Design"],
+            "IGCSE": ["English", "Mathematics", "Science", "Global Perspectives", "Digital Literacy"],
+            "State_Boards": ["English", "Regional Language", "Hindi / Third Language", "Mathematics", "Science", "Social Science", "Computer", "Art", "PE"]
+          },
+          "key_notes": "Algebra, geometry, and essay writing become core. NTSE, Olympiads preparation begins in many schools."
+        },
+        {
+          "grade_id": "class_8",
+          "grade_name": "Class 8",
+          "alternate_names": ["Grade 8", "Standard 8"],
+          "age": "12.5 – 14 years",
+          "board_mapping": {
+            "CBSE": { "called": "Class 8", "note": "Middle stage ends" },
+            "ICSE": { "called": "Class 8" },
+            "IB_MYP": { "called": "MYP Year 3" },
+            "IGCSE": { "called": "Cambridge Lower Secondary Year 9 (Checkpoint exams)" },
+            "State_Boards": { "called": "Class 8 / Std. 8", "note": "Some states have Class 8 board exams" }
+          },
+          "subjects": {
+            "CBSE": ["English", "Hindi / Sanskrit / Urdu", "Mathematics", "Science", "Social Science", "Computer / IT", "Art Education", "Health & Physical Education"],
+            "ICSE": ["English", "Second Language", "Mathematics", "Physics", "Chemistry", "Biology", "History & Civics", "Geography", "Computer Applications", "Economic Applications", "Art", "PE"],
+            "IB_MYP": ["Language & Literature", "Language Acquisition", "Mathematics", "Sciences", "Individuals & Societies", "Arts", "Physical & Health Education", "Design"],
+            "IGCSE": ["English", "Mathematics", "Science", "Global Perspectives", "Cambridge Lower Secondary Checkpoint Assessment"],
+            "State_Boards": ["English", "Regional Language", "Mathematics", "Science", "Social Science", "Computer", "Art", "PE"]
+          },
+          "board_transitions": {
+            "IGCSE": "Cambridge Lower Secondary Checkpoint exams taken at end of Year 9 (Class 8 equivalent). Students then move to IGCSE (Grade 9-10).",
+            "CBSE": "Middle stage ends; Secondary (9-10) begins next year."
+          },
+          "key_notes": "NEP 2020 Middle Stage ends at Class 8. Some state boards (UP, Rajasthan) hold formal Class 8 board exams."
+        }
+      ]
+    },
+
+    "secondary": {
+      "stage": "Secondary",
+      "age_range": "14 – 16 years",
+      "grades": [
+        {
+          "grade_id": "class_9",
+          "grade_name": "Class 9",
+          "alternate_names": ["Grade 9", "Standard 9", "Form 9", "9th Grade"],
+          "age": "13.5 – 15 years",
+          "board_mapping": {
+            "CBSE": { "called": "Class 9", "stage": "Secondary (9-10)", "note": "SA1/SA2 internal exams; CBSE board begins at Class 10" },
+            "ICSE": { "called": "Class 9", "stage": "Secondary", "note": "Preparatory year for ICSE (Class 10 board)" },
+            "IB_MYP": { "called": "MYP Year 4" },
+            "IGCSE": { "called": "IGCSE Year 1 (Grade 9)", "stage": "IGCSE begins" },
+            "State_Boards": { "called": "Class 9 / Std. 9", "note": "Preparatory year for Class 10 board in most states" }
+          },
+          "subjects": {
+            "CBSE": ["English (Language & Literature)", "Hindi A/B or Sanskrit/Urdu", "Mathematics (Standard/Basic)", "Science (Physics, Chemistry, Biology integrated)", "Social Science (History, Geography, Civics, Economics)", "Information Technology / AI (optional)", "Physical Education", "Art Education"],
+            "ICSE": ["English Paper 1 & 2", "Second Language (Hindi/Regional/French etc.)", "Mathematics", "Physics", "Chemistry", "Biology / Computer Applications / Economic Applications", "History, Civics & Geography", "Optional: Environmental Science, Art, PE"],
+            "IB_MYP": ["Language & Literature", "Language Acquisition", "Mathematics (Standard/Extended)", "Sciences", "Individuals & Societies", "Arts", "Physical & Health Education", "Design", "MYP Personal Project begins"],
+            "IGCSE": ["English (First Language / Second Language)", "Mathematics (Core/Extended)", "Sciences (Biology/Chemistry/Physics — combined or separate)", "History / Geography / Economics", "Computer Science / ICT", "Second Language", "Creative Arts (optional)"],
+            "State_Boards": ["English", "Regional Language", "Mathematics", "Science (Physics/Chemistry/Biology)", "Social Studies", "Third Language", "Computer / Vocational (optional)", "PE"]
+          },
+          "key_notes": "NEP 2020 Secondary Stage: Class 9-12. IGCSE formally begins at Class 9. IB MYP Personal Project begins."
+        },
+        {
+          "grade_id": "class_10",
+          "grade_name": "Class 10",
+          "alternate_names": ["Grade 10", "Standard 10", "Matriculation", "SSC", "SSLC", "10th Grade"],
+          "age": "14.5 – 16 years",
+          "board_mapping": {
+            "CBSE": { "called": "Class 10", "board_exam": "CBSE Class 10 Board Examination", "credential": "Secondary School Certificate (SSC)" },
+            "ICSE": { "called": "Class 10", "board_exam": "ICSE Examination (Indian Certificate of Secondary Education)", "governing_body": "CISCE", "credential": "ICSE Certificate" },
+            "IB_MYP": { "called": "MYP Year 5", "board_exam": "MYP eAssessment (optional) / MYP Certificate", "note": "Some schools do not offer MYP eAssessment and transition to IGCSE or Diploma" },
+            "IGCSE": { "called": "IGCSE Year 2 (Grade 10)", "board_exam": "Cambridge IGCSE Examinations", "credential": "Cambridge IGCSE Certificate", "governing_body": "Cambridge Assessment International Education (CAIE)" },
+            "GSEB": { "called": "Std. 10", "board_exam": "GSEB SSC Examination", "credential": "SSC Certificate" },
+            "MSBSHSE": { "called": "Std. 10 (SSC)", "board_exam": "Maharashtra SSC Board Exam", "credential": "SSC Certificate" },
+            "TNBSE": { "called": "10th Standard (SSLC)", "board_exam": "Tamil Nadu SSLC Examination", "credential": "SSLC Certificate" },
+            "KSEEB": { "called": "10th Standard (SSLC)", "board_exam": "Karnataka SSLC Examination", "credential": "SSLC Certificate" },
+            "WBBSE": { "called": "Class 10 (Madhyamik)", "board_exam": "Madhyamik Pariksha", "credential": "Madhyamik Certificate", "governing_body": "West Bengal Board of Secondary Education" },
+            "BSEB": { "called": "Class 10 (Matric)", "board_exam": "Bihar Board Matric Examination", "credential": "Matriculation Certificate" },
+            "MPBSE": { "called": "Class 10 (High School)", "board_exam": "MP Board High School Examination", "credential": "High School Certificate" },
+            "RBSE": { "called": "Class 10 (Secondary)", "board_exam": "Rajasthan Board Secondary Examination", "credential": "Secondary Certificate" },
+            "PSEB": { "called": "Class 10 (Matric)", "board_exam": "Punjab Board Matric Examination", "credential": "Matriculation Certificate" },
+            "BIEAP": { "called": "Class 10 (SSC)", "board_exam": "AP SSC Board Examination", "credential": "SSC Certificate" },
+            "BIETELANGANA": { "called": "Class 10 (SSC)", "board_exam": "Telangana SSC Board Examination", "credential": "SSC Certificate" },
+            "CHSE_ODISHA": { "called": "Class 10 (Matric)", "board_exam": "BSE Odisha HSC / Matric Exam", "credential": "HSC Certificate" },
+            "CGBSE": { "called": "Class 10 (High School)", "board_exam": "CG Board High School Examination", "credential": "High School Certificate" },
+            "JKBOSE": { "called": "Class 10 (Secondary)", "board_exam": "JKBOSE Secondary Examination", "credential": "Secondary Certificate" },
+            "UPMSP": { "called": "Class 10 (High School)", "board_exam": "UP Board High School Examination", "credential": "High School Certificate" },
+            "BSEH_HARYANA": { "called": "Class 10 (Secondary)", "board_exam": "HBSE Secondary Examination", "credential": "Secondary Certificate" }
+          },
+          "subjects": {
+            "CBSE": {
+              "compulsory": ["English Language & Literature", "Hindi A or Hindi B or Sanskrit or Urdu"],
+              "core": ["Mathematics Standard or Mathematics Basic", "Science", "Social Science"],
+              "optional_6th": ["Information Technology", "Artificial Intelligence", "Introduction to Financial Markets", "Painting", "Physical Education"],
+              "note": "Students choose 5 main subjects + 1 optional (6th subject)"
+            },
+            "ICSE": {
+              "compulsory": ["English (Paper 1: Composition/Grammar, Paper 2: Literature)"],
+              "group_2": ["History & Civics", "Geography"],
+              "group_3_choose_any_2": ["Mathematics", "Science (Physics+Chemistry+Biology)", "Computer Applications", "Economic Applications", "Commercial Studies", "Technical Drawing", "Environmental Science", "Art", "Home Science", "Hindi/Regional Language/French/German"],
+              "note": "ICSE has 3 groups; English compulsory; 2 subjects from each of Group 2 & 3 required"
+            },
+            "IB_MYP": {
+              "subject_groups": ["Language & Literature", "Language Acquisition", "Mathematics", "Sciences", "Individuals & Societies", "Arts", "Physical & Health Education", "Design"],
+              "assessment": "MYP eAssessment (external) or school-based assessment (internal)",
+              "personal_project": "Independent MYP Personal Project completed in Year 5"
+            },
+            "IGCSE": {
+              "core_required": ["English (First Language or Second Language)", "Mathematics"],
+              "additional_choose_3_to_5": ["Physics", "Chemistry", "Biology", "Combined Science", "History", "Geography", "Economics", "Business Studies", "Computer Science", "ICT", "Accounting", "Art & Design", "Drama", "Music", "Physical Education", "Second Language"],
+              "note": "Students typically choose 7-10 IGCSE subjects. Minimum 5 required for most pathways. Core vs Extended tiers available per subject."
+            },
+            "State_Boards_General": {
+              "compulsory": ["First Language (Regional)", "Second Language (English or Hindi)", "Mathematics"],
+              "core": ["Science (Physics + Chemistry + Biology)", "Social Science (History + Geography + Civics + Economics)"],
+              "optional": ["Computer Science", "Third Language", "Vocational Subject"],
+              "note": "Subject names and groupings vary by state; generally 5-6 subjects for the board exam"
+            }
+          },
+          "key_notes": "Most critical board exam year in Indian schooling. Class 10 marks are required for school admissions, scholarships, and stream selection for Class 11-12.",
+          "bifurcation_point": false
+        }
+      ]
+    },
+
+    "higher_secondary": {
+      "stage": "Higher Secondary (Senior Secondary)",
+      "age_range": "16 – 18 years",
+      "bifurcation_note": "Class 11 is the major bifurcation point in Indian education. Students choose a stream — Science, Commerce, or Arts/Humanities — that determines subject choices for both Class 11 and Class 12. This choice also determines eligibility for most professional entrance exams (JEE/NEET for Science; CA/CS/CMA for Commerce; CLAT/CUET-Arts for Humanities).",
+      "grades": [
+        {
+          "grade_id": "class_11",
+          "grade_name": "Class 11",
+          "alternate_names": ["Grade 11", "Standard 11", "First Year Junior College (FYJC)", "Plus One (+1)", "11th Grade", "Intermediate Year 1"],
+          "age": "15.5 – 17 years",
+          "bifurcation_point": true,
+          "streams": {
+            "Science": {
+              "description": "Leads to JEE (Engineering), NEET (Medical), NDA, and most tech/research careers",
+              "sub_streams": {
+                "PCM": {
+                  "name": "Physics, Chemistry, Mathematics",
+                  "compulsory": ["English", "Physics", "Chemistry", "Mathematics"],
+                  "optional_choose_1": ["Computer Science", "Biology", "Physical Education", "Psychology", "Economics", "Fine Arts", "Informatics Practices"],
+                  "career_paths": ["Engineering (JEE)", "Architecture (NATA)", "Merchant Navy", "Data Science", "Aviation"]
+                },
+                "PCB": {
+                  "name": "Physics, Chemistry, Biology",
+                  "compulsory": ["English", "Physics", "Chemistry", "Biology"],
+                  "optional_choose_1": ["Mathematics", "Computer Science", "Physical Education", "Psychology", "Biotechnology"],
+                  "career_paths": ["Medicine (NEET)", "Pharmacy", "Nursing", "Dentistry", "Veterinary Science", "Biotechnology"]
+                },
+                "PCMB": {
+                  "name": "Physics, Chemistry, Mathematics, Biology",
+                  "compulsory": ["English", "Physics", "Chemistry", "Mathematics", "Biology"],
+                  "note": "5th subject combination; attempted by students targeting both JEE and NEET"
+                }
+              }
+            },
+            "Commerce": {
+              "description": "Leads to CA, CS, CMA, BBA, BCom, Economics, Finance careers",
+              "compulsory": ["English", "Accountancy", "Business Studies", "Economics"],
+              "optional_choose_1": ["Mathematics", "Computer Science / Informatics Practices", "Physical Education", "Entrepreneurship", "Applied Mathematics"],
+              "career_paths": ["CA/CMA/CS", "BBA/BCom/MBA", "Economics", "Finance & Banking", "Marketing"]
+            },
+            "Arts_Humanities": {
+              "description": "Leads to Law, Journalism, Civil Services, Teaching, Design, Social Sciences",
+              "compulsory": ["English"],
+              "core_subjects_choose_4": ["History", "Political Science", "Geography", "Economics", "Psychology", "Sociology", "Philosophy", "Hindi Literature", "Regional Language Literature", "Fine Arts", "Music", "Physical Education", "Home Science"],
+              "career_paths": ["UPSC/Civil Services (CLAT)", "Law", "Journalism", "Design", "Teaching", "Social Work", "Literature & Languages"]
+            },
+            "Vocational": {
+              "description": "Skill-based streams introduced under NEP 2020 and NSQF",
+              "examples": ["IT & ITES", "Healthcare", "Retail", "Tourism & Hospitality", "Agriculture", "Media & Entertainment"],
+              "note": "Available in CBSE (Vocational stream), State Boards (ITI/Polytechnic prep); NSQF Level 4 certification"
+            }
+          },
+          "board_mapping": {
+            "CBSE": { "called": "Class 11", "exam_type": "School-based internal exam; no CBSE board exam at Class 11", "stream_selection": "At the time of Class 11 admission after Class 10 results" },
+            "ICSE_ISC": { "called": "Class 11 (ISC Year 1)", "governing_body": "CISCE", "note": "ISC (Indian School Certificate) is the Class 11-12 programme under CISCE; equivalent to CBSE Class 11-12" },
+            "IB_DP": { "called": "DP Year 1 (Grade 11)", "programme": "IB Diploma Programme begins", "note": "Students choose 6 subjects across 6 groups" },
+            "IGCSE_AS": { "called": "AS Level Year 1 or Cambridge International AS & A Level Year 1", "note": "After IGCSE, students may move to A Levels (Grade 11-12)" },
+            "GSEB": { "called": "Std. 11 (HSC Year 1)" },
+            "MSBSHSE": { "called": "FYJC (First Year Junior College) / Std. 11" },
+            "TNBSE": { "called": "Plus One (+1) / 11th Standard" },
+            "KSEEB": { "called": "1st PUC (Pre-University Course Year 1)", "note": "Karnataka uses PUC instead of HSC; governing body is Dept of Pre-University Education" },
+            "WBCHSE": { "called": "Class 11 (Higher Secondary Year 1)", "governing_body": "West Bengal Council of Higher Secondary Education" },
+            "BSEB": { "called": "Class 11 (Intermediate Year 1)" },
+            "MPBSE": { "called": "Class 11 (Higher Secondary Year 1)" },
+            "RBSE": { "called": "Class 11 (Senior Secondary Year 1)" },
+            "PSEB": { "called": "Class 11 (Senior Secondary Year 1)" },
+            "BIEAP": { "called": "Intermediate Year 1 (IPE Year 1)", "governing_body": "Board of Intermediate Education Andhra Pradesh" },
+            "BIETELANGANA": { "called": "Intermediate Year 1", "governing_body": "Telangana State Board of Intermediate Education" },
+            "CHSE_ODISHA": { "called": "Class 11 (+2 Year 1)", "governing_body": "CHSE Odisha" },
+            "CGBSE": { "called": "Class 11 (Higher Secondary Year 1)" },
+            "JKBOSE": { "called": "Class 11 (Higher Secondary Part I)" },
+            "UPMSP": { "called": "Class 11 (Intermediate Year 1)" },
+            "BSEH_HARYANA": { "called": "Class 11 (Senior Secondary Year 1)" }
+          },
+          "key_notes": "Stream/subject selection at Class 11 is the most consequential academic decision in Indian schooling. It directly determines entrance exam eligibility."
+        },
+        {
+          "grade_id": "class_12",
+          "grade_name": "Class 12",
+          "alternate_names": ["Grade 12", "Standard 12", "SYJC (Second Year Junior College)", "Plus Two (+2)", "12th Grade", "Intermediate Year 2", "Higher Secondary Final Year"],
+          "age": "16.5 – 18 years",
+          "bifurcation_point": false,
+          "board_mapping": {
+            "CBSE": { "called": "Class 12", "board_exam": "CBSE Class 12 Board Examination", "credential": "All India Senior School Certificate (AISSCE)", "governing_body": "Central Board of Secondary Education" },
+            "ISC": { "called": "Class 12 (ISC)", "board_exam": "ISC Examination (Indian School Certificate)", "credential": "ISC Certificate", "governing_body": "CISCE" },
+            "IB_DP": { "called": "DP Year 2 (Grade 12)", "board_exam": "IB Diploma Examinations (May/November)", "credential": "IB Diploma", "governing_body": "International Baccalaureate Organization (IBO)" },
+            "A_LEVEL": { "called": "A Level Year 2 (Grade 12)", "board_exam": "Cambridge International A Level Examinations", "credential": "Cambridge International AS & A Level Certificate", "governing_body": "Cambridge Assessment International Education (CAIE)" },
+            "GSEB": { "called": "Std. 12 (HSC)", "board_exam": "GSEB HSC Examination", "credential": "Higher Secondary Certificate (HSC)" },
+            "MSBSHSE": { "called": "SYJC / Std. 12 (HSC)", "board_exam": "Maharashtra HSC Board Exam", "credential": "HSC Certificate" },
+            "TNBSE": { "called": "Plus Two (+2) / 12th Standard", "board_exam": "Tamil Nadu HSC Examination", "credential": "HSC Certificate" },
+            "KSEEB": { "called": "2nd PUC", "board_exam": "Karnataka 2nd PUC Examination", "credential": "PUC Certificate", "governing_body": "Dept of Pre-University Education, Karnataka" },
+            "WBCHSE": { "called": "Class 12 (HS Final)", "board_exam": "West Bengal HS Examination (Uchha Madhyamik)", "credential": "Higher Secondary Certificate" },
+            "BSEB": { "called": "Class 12 (Intermediate)", "board_exam": "Bihar Board Intermediate Examination", "credential": "Intermediate Certificate" },
+            "MPBSE": { "called": "Class 12 (Higher Secondary)", "board_exam": "MP Board Higher Secondary Examination", "credential": "Higher Secondary Certificate" },
+            "RBSE": { "called": "Class 12 (Senior Secondary)", "board_exam": "Rajasthan Board Senior Secondary Examination", "credential": "Senior Secondary Certificate" },
+            "PSEB": { "called": "Class 12 (Senior Secondary)", "board_exam": "Punjab Board Senior Secondary Examination", "credential": "Senior Secondary Certificate" },
+            "BIEAP": { "called": "Intermediate Year 2", "board_exam": "AP Intermediate Public Examination (IPE Year 2)", "credential": "Intermediate Certificate" },
+            "BIETELANGANA": { "called": "Intermediate Year 2", "board_exam": "Telangana Intermediate Public Examination", "credential": "Intermediate Certificate" },
+            "CHSE_ODISHA": { "called": "Class 12 (+2 Year 2)", "board_exam": "CHSE Odisha +2 Final Examination", "credential": "+2 Certificate" },
+            "CGBSE": { "called": "Class 12 (Higher Secondary)", "board_exam": "CG Board Higher Secondary Examination", "credential": "Higher Secondary Certificate" },
+            "JKBOSE": { "called": "Class 12 (Higher Secondary Part II)", "board_exam": "JKBOSE Higher Secondary Examination", "credential": "Higher Secondary Certificate" },
+            "UPMSP": { "called": "Class 12 (Intermediate)", "board_exam": "UP Board Intermediate Examination", "credential": "Intermediate Certificate" },
+            "BSEH_HARYANA": { "called": "Class 12 (Senior Secondary)", "board_exam": "HBSE Senior Secondary Examination", "credential": "Senior Secondary Certificate" }
+          },
+          "subjects_by_stream": {
+            "Science_PCM": {
+              "CBSE": { "compulsory": ["English"], "core": ["Physics", "Chemistry", "Mathematics"], "optional_1": ["Computer Science", "Informatics Practices", "Physical Education", "Biology", "Fine Arts", "Psychology"] },
+              "ISC": { "compulsory": ["English Paper 1 & 2"], "core": ["Physics", "Chemistry", "Mathematics"], "optional_1_from_list": ["Computer Science", "Biology", "Physical Education", "Psychology", "Economics", "Art"] },
+              "IB_DP": {
+                "structure": "6 subjects across 6 groups (3 at Higher Level, 3 at Standard Level) + Theory of Knowledge (TOK) + Extended Essay + CAS",
+                "groups": {
+                  "Group_1_Language_Literature": ["English A: Language & Literature", "English A: Literature"],
+                  "Group_2_Language_Acquisition": ["Hindi B", "French B", "Spanish AB initio", "German B"],
+                  "Group_3_Individuals_Societies": ["History", "Economics", "Psychology", "Geography", "Business Management", "Global Politics"],
+                  "Group_4_Sciences": ["Physics", "Chemistry", "Biology", "Computer Science", "Environmental Systems"],
+                  "Group_5_Mathematics": ["Mathematics: Analysis & Approaches (AA)", "Mathematics: Applications & Interpretation (AI)"],
+                  "Group_6_Arts": ["Visual Arts", "Theatre", "Music", "Film", "Dance", "or additional Group 3-5 subject"]
+                },
+                "core": ["Theory of Knowledge (TOK)", "Extended Essay (EE)", "Creativity Activity Service (CAS)"],
+                "credential_requirements": "Minimum 24 points (out of 45) to receive IB Diploma; 7 points per subject + up to 3 bonus points for TOK+EE"
+              },
+              "A_LEVEL": {
+                "structure": "Typically 3-4 A Level subjects",
+                "common_PCM": ["Physics (A Level)", "Chemistry (A Level)", "Mathematics (A Level)", "Further Mathematics (optional)"],
+                "AS_note": "AS Levels taken in Year 1 (Class 11); A Levels completed in Year 2 (Class 12)"
+              }
+            },
+            "Science_PCB": {
+              "CBSE": { "compulsory": ["English"], "core": ["Physics", "Chemistry", "Biology"], "optional_1": ["Mathematics", "Biotechnology", "Computer Science", "Physical Education", "Psychology"] },
+              "ISC": { "compulsory": ["English"], "core": ["Physics", "Chemistry", "Biology"], "optional_1": ["Mathematics", "Computer Science", "Psychology", "Art", "Physical Education"] }
+            },
+            "Commerce": {
+              "CBSE": { "compulsory": ["English"], "core": ["Accountancy", "Business Studies", "Economics"], "optional_1": ["Mathematics", "Applied Mathematics", "Informatics Practices", "Computer Science", "Entrepreneurship", "Physical Education", "Fine Arts"] },
+              "ISC": { "compulsory": ["English"], "core": ["Accounts", "Commerce", "Economics"], "optional_1": ["Mathematics", "Computer Science", "Physical Education", "Art", "Psychology", "Sociology"] },
+              "IB_DP": { "common_choices": ["Business Management (HL/SL)", "Economics (HL/SL)", "Mathematics: AI (HL/SL)", "English A", "Language B", "Psychology or History"] }
+            },
+            "Arts_Humanities": {
+              "CBSE": { "compulsory": ["English"], "choose_4_from": ["History", "Political Science", "Geography", "Economics", "Psychology", "Sociology", "Philosophy", "Hindi Elective", "Sanskrit", "Regional Languages", "Fine Arts", "Music Hindustani/Carnatic", "Physical Education", "Home Science"] },
+              "ISC": { "compulsory": ["English"], "choose_from": ["History", "Political Science", "Geography", "Economics", "Sociology", "Psychology", "Art", "Music", "Physical Education", "Home Science", "Hindi"] },
+              "IB_DP": { "common_choices": ["History (HL)", "Economics (SL)", "Psychology (HL)", "English A", "Language B", "Theatre or Visual Arts"] }
+            }
+          },
+          "board_exam_characteristics": {
+            "CBSE": { "exam_duration": "March (main) / July (compartment)", "evaluation": "Theory + Practicals; Internal Assessment 20-30%", "grading": "Marks out of 100 per subject; CGPA optional" },
+            "ISC": { "exam_duration": "February–April", "evaluation": "Theory + Practicals; Internal assessment included", "grading": "Percentage-based; ISC known for rigorous English and Science standards" },
+            "IB_DP": { "exam_duration": "May (Northern Hemisphere) / November (Southern Hemisphere)", "evaluation": "Internal Assessment (IA) + External Examinations; TOK Essay + EE externally moderated", "grading": "Scale 1-7 per subject; Total 45 points max including TOK+EE bonus" },
+            "A_LEVEL": { "exam_duration": "May–June (main series)", "evaluation": "Primarily written exams; coursework component in some subjects", "grading": "A*-E grades per subject; UCAS tariff points for UK university applications" }
+          },
+          "post_class_12_pathways": {
+            "Science_PCM": ["JEE Main + Advanced (IIT/NIT/IIIT)", "BITSAT (BITS Pilani)", "MHT-CET", "KEAM", "COMEDK", "NDA", "B.Sc. (Physics/Maths/CS)"],
+            "Science_PCB": ["NEET-UG (MBBS/BDS/BAMS/BHMS)", "AIIMS (via NEET)", "B.Sc. Nursing", "B.Pharm", "CUET (Sci)"],
+            "Commerce": ["CA Foundation (ICAI)", "CS Foundation (ICSI)", "CMA Foundation (ICMAI)", "BBA/BCom (CUET/DU/IPMAT)", "Hotel Management"],
+            "Arts_Humanities": ["CLAT (Law)", "CUET-Humanities", "BA (Hons) at DU/JNU/other Central Universities", "NID/NIFT (Design)", "BJMC (Journalism)", "BEd/Teaching"]
+          },
+          "key_notes": "Class 12 board marks are used for CUET (Common University Entrance Test) eligibility, NDA eligibility, direct college admissions, and as a cut-off for many entrance exams. IB Diploma is internationally recognised and accepted by universities worldwide."
+        }
+      ]
+    }
+  },
+
+  "per_board_breakdown": {
+    "CBSE": {
+      "full_name": "Central Board of Secondary Education",
+      "governing_body": "Ministry of Education, Government of India",
+      "website": "www.cbse.gov.in",
+      "medium_of_instruction": "English and Hindi (bilingual)",
+      "curriculum_framework": "National Curriculum Framework (NCF 2023)",
+      "structure": {
+        "pre_primary": { "grades": ["Nursery", "LKG", "UKG"], "governed_by": "School-level; NEP 2020 Balvatika framework" },
+        "primary": { "grades": ["Class 1", "Class 2", "Class 3", "Class 4", "Class 5"], "stage_name": "Primary Stage" },
+        "middle": { "grades": ["Class 6", "Class 7", "Class 8"], "stage_name": "Middle Stage" },
+        "secondary": { "grades": ["Class 9", "Class 10"], "stage_name": "Secondary Stage", "board_exam_at": "Class 10" },
+        "senior_secondary": { "grades": ["Class 11", "Class 12"], "stage_name": "Senior Secondary Stage", "board_exam_at": "Class 12", "credential": "AISSCE" }
+      },
+      "total_years": "14 years (Nursery to Class 12), 12 from Class 1",
+      "key_features": [
+        "NCERT textbooks used across the board",
+        "NEP 2020 being integrated — 5+3+3+4 structure",
+        "No detention policy till Class 8 (recently revised under NEP)",
+        "Competency-based assessment introduced from 2020",
+        "CUET (Common University Entrance Test) from 2022 for central university admissions",
+        "Two levels of Maths at Class 10: Standard (for science/commerce) and Basic (for arts/non-maths streams)"
+      ]
+    },
+    "ICSE_ISC": {
+      "full_name": "Indian Certificate of Secondary Education / Indian School Certificate",
+      "governing_body": "Council for the Indian School Certificate Examinations (CISCE)",
+      "website": "www.cisce.org",
+      "medium_of_instruction": "English (primary medium)",
+      "structure": {
+        "pre_primary": { "grades": ["Nursery", "LKG", "UKG"], "governed_by": "School-level" },
+        "primary": { "grades": ["Class 1–5"], "note": "School-based; CISCE regulates from Class 6 onwards in most schools" },
+        "middle": { "grades": ["Class 6", "Class 7", "Class 8"] },
+        "secondary": { "grades": ["Class 9", "Class 10"], "board_exam_at": "Class 10", "exam_name": "ICSE", "credential": "ICSE Certificate" },
+        "senior_secondary": { "grades": ["Class 11", "Class 12"], "programme_name": "ISC (Indian School Certificate)", "board_exam_at": "Class 12", "credential": "ISC Certificate" }
+      },
+      "total_years": "14 years from Nursery",
+      "key_features": [
+        "Known for rigorous English language education",
+        "Science taught as separate subjects (Physics, Chemistry, Biology) from Class 6",
+        "Project-based and practical-heavy assessment",
+        "Widely accepted for international university applications",
+        "Internal assessment carries significant weight (20-30%)",
+        "ISC (Class 11-12) has broad subject choices including humanities and arts"
+      ]
+    },
+    "IB": {
+      "full_name": "International Baccalaureate",
+      "governing_body": "International Baccalaureate Organization (IBO), Geneva",
+      "website": "www.ibo.org",
+      "programmes": {
+        "PYP": { "name": "Primary Years Programme", "grades": "Nursery/KG to Grade 5 (Age 3-12)", "approach": "Transdisciplinary inquiry-based learning; 6 subject areas + Units of Inquiry" },
+        "MYP": { "name": "Middle Years Programme", "grades": "Grade 6 to Grade 10 (Age 11-16)", "approach": "8 subject groups + Personal Project in Year 5 (Grade 10); interdisciplinary" },
+        "DP": { "name": "Diploma Programme", "grades": "Grade 11 and Grade 12 (Age 16-19)", "approach": "6 subjects (3 HL + 3 SL) + TOK + Extended Essay + CAS; internationally recognized" },
+        "CP": { "name": "Career-related Programme", "grades": "Grade 11 and Grade 12", "approach": "Combines DP courses with career-related studies; for vocationally-oriented students" }
+      },
+      "total_years": "14 years (PYP to DP)",
+      "key_features": [
+        "Holistic, inquiry-based international curriculum",
+        "IB Diploma accepted by 3,500+ universities in 150+ countries",
+        "Theory of Knowledge (TOK) — unique cross-curricular philosophy/epistemology course",
+        "Extended Essay — 4,000-word independent research paper",
+        "CAS (Creativity, Activity, Service) — mandatory co-curricular component",
+        "Internal Assessment + External Exams; 1-7 grading scale per subject",
+        "Available in English, French, and Spanish",
+        "Schools must be IB-authorized (accredited); ~200+ IB schools in India"
+      ]
+    },
+    "IGCSE_A_LEVEL": {
+      "full_name": "International General Certificate of Secondary Education / Cambridge International AS & A Levels",
+      "governing_body": "Cambridge Assessment International Education (CAIE), University of Cambridge",
+      "website": "www.cambridgeinternational.org",
+      "programmes": {
+        "Cambridge_Primary": { "name": "Cambridge Primary", "grades": "Grade 1 to Grade 6 (Age 5-11)", "subjects": "English, Mathematics, Science (core); schools may add others" },
+        "Cambridge_Lower_Secondary": { "name": "Cambridge Lower Secondary", "grades": "Grade 7 to Grade 9 (Age 11-14)", "checkpoint_exam": "Cambridge Lower Secondary Checkpoint at end of Grade 9" },
+        "IGCSE": { "name": "Cambridge IGCSE", "grades": "Grade 9 to Grade 10 (Age 14-16)", "approach": "Students choose 5-10 subjects; Core and Extended tiers per subject", "credential": "Cambridge IGCSE Certificate" },
+        "AS_Level": { "name": "Cambridge International AS Level", "grades": "Grade 11 (Age 16-17)", "approach": "Half of A Level; can be standalone credential" },
+        "A_Level": { "name": "Cambridge International A Level", "grades": "Grade 11 to Grade 12 (Age 16-18)", "approach": "3-4 subjects at depth; IA + External exams", "credential": "Cambridge International A Level Certificate" }
+      },
+      "total_years": "13 years (Primary to A Level)",
+      "key_features": [
+        "International curriculum recognised by 160+ countries",
+        "Rigorous assessment with dual-tier (Core/Extended) options in IGCSE",
+        "A Levels accepted for admission to UK, US, Australia, Canada, and Indian universities (CUET exemption for some)",
+        "Wide subject choice (50+ IGCSE subjects, 55+ A Level subjects)",
+        "Available in English only (primarily)",
+        "~500+ Cambridge schools in India"
+      ]
+    },
+    "GSEB": {
+      "full_name": "Gujarat Secondary and Higher Secondary Education Board",
+      "governing_body": "Government of Gujarat",
+      "website": "www.gseb.org",
+      "medium_of_instruction": "Gujarati, Hindi, English (separate mediums)",
+      "structure": {
+        "primary": { "grades": "Std. 1–8", "governed_by": "Gujarat Primary Education Board (GPEB)" },
+        "secondary": { "grades": "Std. 9–10", "board_exam_at": "Std. 10", "exam_name": "SSC", "credential": "SSC Certificate" },
+        "higher_secondary": { "grades": "Std. 11–12", "board_exam_at": "Std. 12", "exam_name": "HSC", "credential": "HSC Certificate", "streams": ["Science (A Group: PCM / B Group: PCB)", "Commerce", "Arts"] }
+      },
+      "key_features": ["SSC exam at Std. 10; HSC at Std. 12", "Gujarati as primary medium; English medium schools increasing", "Vocational stream available at HSC", "GSEB GUJCET for engineering/pharmacy admissions in Gujarat"]
+    },
+    "MSBSHSE": {
+      "full_name": "Maharashtra State Board of Secondary and Higher Secondary Education",
+      "governing_body": "Government of Maharashtra",
+      "website": "www.mahahsscboard.in",
+      "medium_of_instruction": "Marathi, Urdu, Semi-English, English",
+      "structure": {
+        "primary": { "grades": "Std. 1–5", "governed_by": "Maharashtra Primary Education board" },
+        "upper_primary": { "grades": "Std. 6–8" },
+        "secondary": { "grades": "Std. 9–10 (SSC)", "board_exam_at": "Std. 10", "exam_name": "SSC (Secondary School Certificate)", "divisions": "Pune, Mumbai, Nagpur, Aurangabad, Amravati, Konkan, Nashik, Latur, Kolhapur, Chhatrapati Sambhajinagar" },
+        "higher_secondary": { "grades": "Std. 11–12 (FYJC/SYJC — First/Second Year Junior College)", "board_exam_at": "Std. 12", "exam_name": "HSC (Higher Secondary Certificate)", "streams": ["Science (PCM / PCB / PCMB)", "Commerce", "Arts"] }
+      },
+      "key_features": ["Largest state board by student enrollment in India", "SSC at Std. 10; HSC at Std. 12 via Junior Colleges", "FYJC (First Year JC) and SYJC (Second Year JC) terminology unique to Maharashtra", "MHT-CET used for engineering/pharmacy admission in Maharashtra", "Marathi compulsory subject for Maharashtra students"]
+    },
+    "TNBSE": {
+      "full_name": "Tamil Nadu Board of Secondary Education (also: Tamil Nadu State Board)",
+      "governing_body": "Government of Tamil Nadu",
+      "website": "www.dge.tn.gov.in",
+      "medium_of_instruction": "Tamil, English",
+      "structure": {
+        "primary": { "grades": "Std. 1–5" },
+        "upper_primary": { "grades": "Std. 6–8" },
+        "secondary": { "grades": "Std. 9–10", "board_exam_at": "Std. 10", "exam_name": "SSLC (Secondary School Leaving Certificate)" },
+        "higher_secondary": { "grades": "Std. 11–12", "board_exam_at": "Std. 12", "exam_name": "HSC", "streams": ["Science (PCM/PCB)", "Commerce", "Arts", "Vocational"] }
+      },
+      "key_features": ["SSLC at Std. 10 is widely used for government job eligibility", "100% marks culture in Tamil Nadu HSC — very high-scoring board", "Tamil compulsory up to Class 12", "TNEA (Tamil Nadu Engineering Admissions) based on Class 12 marks without separate CET (recently changed)", "Samacheer Kalvi (Equitable Education) uniform curriculum from 2010"]
+    },
+    "KSEEB": {
+      "full_name": "Karnataka Secondary Education Examination Board",
+      "governing_body": "Government of Karnataka",
+      "website": "www.kseab.karnataka.gov.in",
+      "medium_of_instruction": "Kannada, English, Urdu, Telugu, Tamil, Marathi, Hindi",
+      "structure": {
+        "primary": { "grades": "Class 1–5" },
+        "upper_primary": { "grades": "Class 6–8" },
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "SSLC (Secondary School Leaving Certificate)", "governing_body": "KSEEB" },
+        "pre_university": { "grades": "1st PUC and 2nd PUC", "note": "Karnataka uses PUC (Pre-University Course) instead of HSC; governed by the Dept. of Pre-University Education, NOT KSEEB", "board_exam_at": "2nd PUC", "credential": "PUC Certificate", "streams": ["Science", "Commerce", "Arts"] }
+      },
+      "key_features": ["Unique PUC system (Pre-University Course) for Grades 11-12", "KCET (Karnataka Common Entrance Test) for professional course admissions", "Kannada compulsory subject", "KSEEB governs only up to Class 10; PUE Board governs 11-12"]
+    },
+    "WBBSE_WBCHSE": {
+      "full_name": "West Bengal Board of Secondary Education (WBBSE) / West Bengal Council of Higher Secondary Education (WBCHSE)",
+      "governing_body": "Government of West Bengal",
+      "secondary_website": "www.wbbse.wb.gov.in",
+      "higher_secondary_website": "www.wbchse.wb.gov.in",
+      "medium_of_instruction": "Bengali, English, Hindi, Urdu, Nepali, Santali, Odia, Punjabi",
+      "structure": {
+        "primary": { "grades": "Class 1–4", "governed_by": "Primary Education Board" },
+        "upper_primary": { "grades": "Class 5–8" },
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "Madhyamik Pariksha (Secondary Examination)", "credential": "Madhyamik Certificate", "governing_body": "WBBSE" },
+        "higher_secondary": { "grades": "Class 11–12", "board_exam_at": "Class 12", "exam_name": "Uchha Madhyamik (Higher Secondary)", "credential": "Higher Secondary Certificate", "governing_body": "WBCHSE", "streams": ["Science", "Commerce", "Arts"] }
+      },
+      "key_features": ["Madhyamik (Class 10) is a prestigious and widely-taken board exam in Bengal", "Separate boards for Secondary (WBBSE) and Higher Secondary (WBCHSE)", "Bengali compulsory for Bengali-medium students", "WBJEE for engineering admissions in West Bengal", "Strong tradition of academic excellence in science and arts"]
+    },
+    "BSEB": {
+      "full_name": "Bihar School Examination Board",
+      "governing_body": "Government of Bihar",
+      "website": "www.biharboardonline.com",
+      "medium_of_instruction": "Hindi, Urdu, Maithili, English",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "Matric (Secondary) Examination", "credential": "Matriculation Certificate" },
+        "higher_secondary": { "grades": "Class 11–12", "board_exam_at": "Class 12", "exam_name": "Intermediate Examination", "credential": "Intermediate Certificate", "streams": ["Science", "Commerce", "Arts"] }
+      },
+      "key_features": ["One of the largest board exams by enrollment in India", "Result controversies led to major reforms post-2016", "Hindi medium dominant; English medium growing", "BCECE for engineering/medical admissions in Bihar"]
+    },
+    "MPBSE": {
+      "full_name": "Madhya Pradesh Board of Secondary Education",
+      "governing_body": "Government of Madhya Pradesh",
+      "website": "www.mpbse.nic.in",
+      "medium_of_instruction": "Hindi, English",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "High School Examination", "credential": "High School Certificate" },
+        "higher_secondary": { "grades": "Class 11–12", "board_exam_at": "Class 12", "exam_name": "Higher Secondary Examination", "credential": "Higher Secondary Certificate", "streams": ["Science", "Commerce", "Arts"] }
+      },
+      "key_features": ["MP Board is Hindi-medium dominant", "One of the oldest state boards", "Ruk Jana Nahi scheme for failed students to reappear", "MP PET (Pre-Engineering Test) for state engineering colleges"]
+    },
+    "RBSE": {
+      "full_name": "Board of Secondary Education Rajasthan",
+      "governing_body": "Government of Rajasthan",
+      "website": "www.rajeduboard.rajasthan.gov.in",
+      "medium_of_instruction": "Hindi, English",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "Secondary Examination", "credential": "Secondary Certificate" },
+        "higher_secondary": { "grades": "Class 11–12", "board_exam_at": "Class 12", "exam_name": "Senior Secondary Examination", "credential": "Senior Secondary Certificate", "streams": ["Science", "Commerce", "Arts"] }
+      },
+      "key_features": ["Class 8 board exam is still conducted in Rajasthan", "Hindi as primary medium", "RPET for Rajasthan engineering admissions", "Strong preparation base for IAS/UPSC aspirants"]
+    },
+    "PSEB": {
+      "full_name": "Punjab School Education Board",
+      "governing_body": "Government of Punjab",
+      "website": "www.pseb.ac.in",
+      "medium_of_instruction": "Punjabi, Hindi, English",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "Matric Examination", "credential": "Matriculation Certificate" },
+        "higher_secondary": { "grades": "Class 11–12", "board_exam_at": "Class 12", "exam_name": "Senior Secondary Examination", "credential": "Senior Secondary Certificate", "streams": ["Science", "Commerce", "Arts", "Agriculture"] }
+      },
+      "key_features": ["Punjabi compulsory for all students", "Agriculture stream unique to Punjab", "PMET and JEE for higher education in Punjab"]
+    },
+    "BIEAP": {
+      "full_name": "Board of Intermediate Education Andhra Pradesh",
+      "governing_body": "Government of Andhra Pradesh",
+      "website": "www.bieap.gov.in",
+      "medium_of_instruction": "Telugu, English, Urdu, Hindi",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "AP SSC Examination", "credential": "SSC Certificate", "governing_body": "BSE Andhra Pradesh" },
+        "intermediate": { "grades": "Intermediate Year 1 and Year 2 (Class 11–12)", "board_exam_at": "Intermediate Year 2", "exam_name": "IPE (Intermediate Public Examination)", "credential": "Intermediate Certificate", "streams": ["MPC (Maths-Physics-Chemistry)", "BiPC (Biology-Physics-Chemistry)", "MEC (Maths-Economics-Commerce)", "CEC (Civics-Economics-Commerce)", "HEC (History-Economics-Civics)", "Vocational"] }
+      },
+      "key_features": ["Intermediate Board (BIEAP) separate from SSC Board (BSE AP) — two different bodies for 9-10 vs 11-12", "AP EAMCET for engineering and medical admissions", "Telugu compulsory; Telugu Medium dominant", "Bifurcated from Telangana in 2014"]
+    },
+    "BIETELANGANA": {
+      "full_name": "Telangana State Board of Intermediate Education",
+      "governing_body": "Government of Telangana",
+      "website": "www.tsbie.cgg.gov.in",
+      "medium_of_instruction": "Telugu, English, Urdu",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "TS SSC Examination", "credential": "SSC Certificate", "governing_body": "BSE Telangana" },
+        "intermediate": { "grades": "Intermediate Year 1 and Year 2", "board_exam_at": "Year 2", "exam_name": "Telangana Intermediate Public Examination", "credential": "Intermediate Certificate", "streams": ["MPC", "BiPC", "MEC", "CEC", "HEC", "Vocational"] }
+      },
+      "key_features": ["Created post-bifurcation from AP in 2014", "TS EAMCET for professional course admissions", "Strong focus on NEET/JEE coaching culture (Hyderabad coaching hub)", "Telugu medium dominant; English medium growing"]
+    },
+    "CHSE_ODISHA": {
+      "full_name": "Council of Higher Secondary Education, Odisha",
+      "governing_body": "Government of Odisha",
+      "website": "www.chseodisha.nic.in",
+      "medium_of_instruction": "Odia, English",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "HSC (High School Certificate) / Matric", "governing_body": "Board of Secondary Education, Odisha (BSE Odisha)" },
+        "higher_secondary": { "grades": "Class 11–12 (+2)", "board_exam_at": "Class 12", "exam_name": "+2 Annual Examination", "credential": "+2 Certificate", "streams": ["Science", "Commerce", "Arts"] }
+      },
+      "key_features": ["BSE Odisha handles Class 10; CHSE handles Class 11-12 (two separate bodies)", "Odia compulsory", "OJEE (Odisha Joint Entrance Examination) for engineering/MBA"]
+    },
+    "CGBSE": {
+      "full_name": "Chhattisgarh Board of Secondary Education",
+      "governing_body": "Government of Chhattisgarh",
+      "website": "www.cgbse.nic.in",
+      "medium_of_instruction": "Hindi, English, Chhattisgarhi",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "High School Examination" },
+        "higher_secondary": { "grades": "Class 11–12", "board_exam_at": "Class 12", "exam_name": "Higher Secondary Examination", "streams": ["Science", "Commerce", "Arts"] }
+      },
+      "key_features": ["Formed after Chhattisgarh was carved out of MP in 2000", "Hindi medium dominant", "CGPET for engineering admissions in CG"]
+    },
+    "JKBOSE": {
+      "full_name": "Jammu and Kashmir Board of School Education",
+      "governing_body": "Government of Jammu & Kashmir (UT)",
+      "website": "www.jkbose.nic.in",
+      "medium_of_instruction": "Urdu, English, Hindi, Kashmiri",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "Secondary School Examination" },
+        "higher_secondary": { "grades": "Class 11–12", "board_exam_at": "Class 12", "exam_name": "Higher Secondary Part II Examination", "streams": ["Science", "Commerce", "Arts"] }
+      },
+      "key_features": ["Two separate exam schedules: Jammu Division (Nov-Dec) and Kashmir Division (Mar-Apr) due to climate differences", "Converted to UT in 2019; board remains JKBOSE", "Urdu is the first language for most students in Kashmir division"]
+    },
+    "UPMSP": {
+      "full_name": "Uttar Pradesh Madhyamik Shiksha Parishad (UP Board)",
+      "governing_body": "Government of Uttar Pradesh",
+      "website": "www.upmsp.edu.in",
+      "medium_of_instruction": "Hindi, Urdu, English",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "High School Examination", "credential": "High School Certificate" },
+        "higher_secondary": { "grades": "Class 11–12", "board_exam_at": "Class 12", "exam_name": "Intermediate Examination", "credential": "Intermediate Certificate", "streams": ["Science", "Commerce", "Arts"] }
+      },
+      "key_features": ["Largest single state board in the world by student enrollment (~55 lakh students appear each year)", "Hindi medium dominant; many students shift to CBSE for better opportunities", "Class 8 board exam recently discontinued", "UP CPAT and JEE for admissions in UP"]
+    },
+    "BSEH_HARYANA": {
+      "full_name": "Board of School Education Haryana",
+      "governing_body": "Government of Haryana",
+      "website": "www.bseh.org.in",
+      "medium_of_instruction": "Hindi, English",
+      "structure": {
+        "secondary": { "grades": "Class 9–10", "board_exam_at": "Class 10", "exam_name": "Secondary Examination", "credential": "Secondary Certificate" },
+        "higher_secondary": { "grades": "Class 11–12", "board_exam_at": "Class 12", "exam_name": "Senior Secondary Examination", "credential": "Senior Secondary Certificate", "streams": ["Science", "Commerce", "Arts"] }
+      },
+      "key_features": ["Hindi and English bilingual board", "HSTES (Haryana State Technical Education Society) for polytechnic admissions", "Strong NDA/Military career tradition in Haryana — PE and physical subjects emphasized"]
+    }
+  },
+
+  "comparison_summary": {
+    "grade_equivalence_table": [
+      { "age": "2.5-3.5", "CBSE_ICSE_StateBoards": "Nursery", "IB": "PYP Year 1", "Cambridge": "N/A" },
+      { "age": "3.5-4.5", "CBSE_ICSE_StateBoards": "LKG", "IB": "PYP Year 2", "Cambridge": "N/A" },
+      { "age": "4.5-5.5", "CBSE_ICSE_StateBoards": "UKG", "IB": "PYP Year 3", "Cambridge": "N/A" },
+      { "age": "5.5-7", "CBSE_ICSE_StateBoards": "Class 1", "IB": "PYP Year 4", "Cambridge": "Primary Year 1" },
+      { "age": "6.5-8", "CBSE_ICSE_StateBoards": "Class 2", "IB": "PYP Year 5", "Cambridge": "Primary Year 2" },
+      { "age": "7.5-9", "CBSE_ICSE_StateBoards": "Class 3", "IB": "PYP Year 6", "Cambridge": "Primary Year 3" },
+      { "age": "8.5-10", "CBSE_ICSE_StateBoards": "Class 4", "IB": "PYP Year 7", "Cambridge": "Primary Year 4" },
+      { "age": "9.5-11", "CBSE_ICSE_StateBoards": "Class 5", "IB": "PYP Year 8 (Final PYP)", "Cambridge": "Primary Year 5" },
+      { "age": "10.5-12", "CBSE_ICSE_StateBoards": "Class 6", "IB": "MYP Year 1", "Cambridge": "Lower Secondary Year 7" },
+      { "age": "11.5-13", "CBSE_ICSE_StateBoards": "Class 7", "IB": "MYP Year 2", "Cambridge": "Lower Secondary Year 8" },
+      { "age": "12.5-14", "CBSE_ICSE_StateBoards": "Class 8", "IB": "MYP Year 3", "Cambridge": "Lower Secondary Year 9 (Checkpoint)" },
+      { "age": "13.5-15", "CBSE_ICSE_StateBoards": "Class 9", "IB": "MYP Year 4", "Cambridge": "IGCSE Year 1" },
+      { "age": "14.5-16", "CBSE_ICSE_StateBoards": "Class 10 (SSC/SSLC/Matric/Madhyamik)", "IB": "MYP Year 5 / MYP Certificate", "Cambridge": "IGCSE Year 2 / IGCSE Certificate" },
+      { "age": "15.5-17", "CBSE_ICSE_StateBoards": "Class 11 (HSC Year 1 / FYJC / +1 / PUC 1 / Intermediate Year 1)", "IB": "DP Year 1", "Cambridge": "AS Level Year 1" },
+      { "age": "16.5-18", "CBSE_ICSE_StateBoards": "Class 12 (HSC / ISC / +2 / PUC 2 / Intermediate Year 2)", "IB": "DP Year 2 / IB Diploma", "Cambridge": "A Level Year 2 / A Level Certificate" }
+    ],
+    "board_credential_at_class_10": {
+      "CBSE": "Secondary School Certificate (SSC)",
+      "ICSE": "ICSE Certificate",
+      "IB_MYP": "MYP Certificate (optional eAssessment)",
+      "Cambridge_IGCSE": "Cambridge IGCSE Certificate",
+      "GSEB": "SSC Certificate",
+      "MSBSHSE": "SSC Certificate",
+      "TNBSE": "SSLC Certificate",
+      "KSEEB": "SSLC Certificate",
+      "WBBSE": "Madhyamik Certificate",
+      "BSEB": "Matriculation Certificate",
+      "MPBSE": "High School Certificate",
+      "RBSE": "Secondary Certificate",
+      "PSEB": "Matriculation Certificate",
+      "BIEAP": "SSC Certificate",
+      "BIETELANGANA": "SSC Certificate",
+      "CHSE_ODISHA": "HSC Certificate",
+      "CGBSE": "High School Certificate",
+      "JKBOSE": "Secondary Certificate",
+      "UPMSP": "High School Certificate",
+      "BSEH_HARYANA": "Secondary Certificate"
+    },
+    "board_credential_at_class_12": {
+      "CBSE": "AISSCE (All India Senior School Certificate)",
+      "ISC": "ISC Certificate",
+      "IB_DP": "IB Diploma",
+      "Cambridge_A_Level": "Cambridge International A Level Certificate",
+      "GSEB": "HSC Certificate",
+      "MSBSHSE": "HSC Certificate",
+      "TNBSE": "HSC Certificate",
+      "KSEEB": "PUC Certificate",
+      "WBCHSE": "Higher Secondary Certificate",
+      "BSEB": "Intermediate Certificate",
+      "MPBSE": "Higher Secondary Certificate",
+      "RBSE": "Senior Secondary Certificate",
+      "PSEB": "Senior Secondary Certificate",
+      "BIEAP": "Intermediate Certificate",
+      "BIETELANGANA": "Intermediate Certificate",
+      "CHSE_ODISHA": "+2 Certificate",
+      "CGBSE": "Higher Secondary Certificate",
+      "JKBOSE": "Higher Secondary Certificate",
+      "UPMSP": "Intermediate Certificate",
+      "BSEH_HARYANA": "Senior Secondary Certificate"
+    }
+  }
+}

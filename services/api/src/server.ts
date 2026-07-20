@@ -1,5 +1,6 @@
 import "dotenv/config";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
@@ -8,11 +9,12 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { featureFlags, isFeatureEnabled, paletteConfig, roleThemes } from "@mytution/config";
 import { prisma } from "@mytution/db";
-import type { CommunityReactionType, MarketplaceBatchRecommendation, MarketplaceProgramRecommendation, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
+import type { CommunityReactionType, CurriculumCatalogueResponse, CurriculumSelection, MarketplaceBatchRecommendation, MarketplaceProgramRecommendation, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
 
 const app = express();
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
 const assetsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../assets");
+const curriculumAssetPath = path.join(assetsRoot, "curriculum", "school_boards.json");
 const mockOtp = "123456";
 const mobileClientId = "mytution_mobile_app";
 const isProduction = process.env.NODE_ENV === "production";
@@ -22,6 +24,108 @@ const accessTokenTtlMinutes = Number(process.env.ACCESS_TOKEN_TTL_MINUTES ?? 15)
 const refreshTokenTtlDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 30);
 const maxStaticAssetBytes = Number(process.env.AMS_MAX_STATIC_ASSET_BYTES ?? 25 * 1024 * 1024);
 const allowedAssetExtensions = new Set([".svg", ".png", ".jpg", ".jpeg", ".webp", ".vtt", ".md", ".json", ".mp4"]);
+
+let curriculumCatalogueCache: CurriculumCatalogueResponse | null = null;
+
+function uniqueStrings(values: unknown[]): string[] {
+  return Array.from(new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean)));
+}
+
+function subjectValues(input: unknown): string[] {
+  if (Array.isArray(input)) return uniqueStrings(input);
+  if (input && typeof input === "object") {
+    return uniqueStrings(Object.values(input as Record<string, unknown>).flatMap((value) => subjectValues(value)));
+  }
+  return input ? [String(input)] : [];
+}
+
+function subjectsForBoard(grade: any, boardId: string): string[] {
+  if (grade?.subjects) {
+    const subjects = grade.subjects;
+    const candidates = [boardId, boardId.replace(/_.*/, ""), boardId.includes("ICSE") ? "ICSE" : "", boardId.includes("IB") ? "IB_PYP" : "", boardId.includes("IGCSE") ? "IGCSE" : "", "State_Boards", "CBSE"];
+    for (const key of candidates) {
+      if (key && subjects[key]) return subjectValues(subjects[key]);
+    }
+    return subjectValues(subjects);
+  }
+  if (grade?.subjects_activities) return subjectValues(grade.subjects_activities);
+  if (grade?.streams) return subjectValues(grade.streams);
+  return [];
+}
+
+function loadCurriculumCatalogue(): CurriculumCatalogueResponse {
+  if (curriculumCatalogueCache) return curriculumCatalogueCache;
+  const raw = JSON.parse(fs.readFileSync(curriculumAssetPath, "utf8"));
+  const grades = Object.values(raw.unified_structure ?? {}).flatMap((stage: any) => (stage.grades ?? []).map((grade: any) => ({ ...grade, stage: stage.stage ?? "School" })));
+  const boardIds = uniqueStrings([...(raw.metadata?.boards_included ?? []), ...Object.keys(raw.per_board_breakdown ?? {})]);
+  const classes = grades.map((grade: any) => ({
+    id: String(grade.grade_id ?? grade.grade_name),
+    label: String(grade.grade_name ?? grade.grade_id),
+    stage: String(grade.stage ?? "School"),
+    subjects: uniqueStrings([subjectsForBoard(grade, "CBSE"), subjectValues(grade.streams)].flat())
+  }));
+  const boards = boardIds.map((boardId) => {
+    const board = raw.per_board_breakdown?.[boardId] ?? {};
+    return {
+      id: boardId,
+      label: boardId.replace(/_/g, " / "),
+      fullName: board.full_name ?? null,
+      classes: grades.map((grade: any) => ({
+        id: String(grade.grade_id ?? grade.grade_name),
+        label: String(grade.grade_name ?? grade.grade_id),
+        stage: String(grade.stage ?? "School"),
+        subjects: subjectsForBoard(grade, boardId)
+      }))
+    };
+  });
+  curriculumCatalogueCache = {
+    boards,
+    classes,
+    subjects: uniqueStrings(boards.flatMap((board) => board.classes.flatMap((item) => item.subjects))).sort((a, b) => a.localeCompare(b))
+  };
+  return curriculumCatalogueCache;
+}
+
+function normalizeCurriculumSelections(input: unknown): CurriculumSelection[] {
+  if (!Array.isArray(input)) return [];
+  return input.slice(0, 40).map((item) => {
+    const value = item && typeof item === "object" ? item as Record<string, unknown> : {};
+    return {
+      board: String(value.board ?? "").trim(),
+      classLevel: String(value.classLevel ?? value.grade ?? "").trim(),
+      subject: String(value.subject ?? "").trim(),
+      stage: stringOrNull(value.stage),
+      stream: stringOrNull(value.stream)
+    };
+  }).filter((item) => item.board && item.classLevel && item.subject);
+}
+
+function curriculumSelectionsFromJson(value: unknown): CurriculumSelection[] {
+  return normalizeCurriculumSelections(Array.isArray(value) ? value : []);
+}
+
+function curriculumJson(selections: CurriculumSelection[] | null | undefined) {
+  return selections?.length ? selections as unknown as any : undefined;
+}
+
+function profileLabelFromCurriculum(selections: CurriculumSelection[]) {
+  const first = selections[0];
+  if (!first) return null;
+  return `${first.board} ${first.classLevel} ${first.subject}`;
+}
+
+function curriculumMatches(selections: CurriculumSelection[], filters: { board?: unknown; grade?: unknown; subject?: unknown }) {
+  const board = String(filters.board ?? "").trim().toLowerCase();
+  const grade = String(filters.grade ?? "").trim().toLowerCase();
+  const subject = String(filters.subject ?? "").trim().toLowerCase();
+  if (!board && !grade && !subject) return true;
+  return selections.some((item) => {
+    const boardHit = !board || item.board.toLowerCase().includes(board) || board.includes(item.board.toLowerCase());
+    const gradeHit = !grade || item.classLevel.toLowerCase().includes(grade) || grade.includes(item.classLevel.toLowerCase());
+    const subjectHit = !subject || item.subject.toLowerCase().includes(subject) || subject.includes(item.subject.toLowerCase());
+    return boardHit && gradeHit && subjectHit;
+  });
+}
 
 function isMissingParentLinkTable(error: unknown) {
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined;
@@ -525,6 +629,8 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
   }
 
   const profileInput = req.body.profile ?? {};
+  const curriculumSelections = role === "parent" ? [] : normalizeCurriculumSelections(profileInput.curriculumSelections);
+  const curriculumLabel = profileLabelFromCurriculum(curriculumSelections);
   const activationCode = String(req.body.activationCode ?? "").replace(/\D/g, "").slice(0, 6);
   let activation = null;
   if (role === "parent") {
@@ -560,7 +666,8 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
           alternatePhone: stringOrNull(profileInput.alternatePhone),
           avatarUrl: stringOrNull(profileInput.avatarUrl),
           stream: role === "parent" ? null : stringOrNull(profileInput.stream),
-          specialization: role === "parent" ? null : stringOrNull(profileInput.specialization)
+          specialization: role === "parent" ? null : stringOrNull(profileInput.specialization) ?? curriculumLabel,
+          curriculumSelections: role === "parent" ? undefined : curriculumJson(curriculumSelections)
         }
       }
     },
@@ -581,7 +688,8 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
         alternatePhone: profile.alternatePhone,
         avatarUrl: profile.avatarUrl,
         stream: profile.stream,
-        specialization: profile.specialization
+        specialization: profile.specialization,
+        curriculumSelections: curriculumJson(curriculumSelectionsFromJson(profile.curriculumSelections))
       }
     });
     if (role === "parent" && activation) {
@@ -860,7 +968,8 @@ app.get("/api/v1/identity/linked-children", async (req, res) => {
       phone: link.studentProfile.user.phone,
       name: `${link.studentProfile.firstName} ${link.studentProfile.lastName}`.trim(),
       stream: link.studentProfile.stream,
-      specialization: link.studentProfile.specialization
+      specialization: link.studentProfile.specialization,
+      curriculumSelections: curriculumSelectionsFromJson(link.studentProfile.curriculumSelections)
     }))
   });
 });
@@ -868,9 +977,11 @@ app.get("/api/v1/identity/linked-children", async (req, res) => {
 app.put("/api/v1/identity/student-education-profile", async (req, res) => {
   const profile = await requireProfile(req, res, "student");
   if (!profile) return;
+  const curriculumSelections = normalizeCurriculumSelections(req.body.curriculumSelections);
   const data = {
     stream: stringOrNull(req.body.stream) ?? profile.stream,
-    specialization: stringOrNull(req.body.specialization) ?? profile.specialization,
+    specialization: stringOrNull(req.body.specialization) ?? profileLabelFromCurriculum(curriculumSelections) ?? profile.specialization,
+    ...(curriculumSelections.length ? { curriculumSelections: curriculumJson(curriculumSelections) } : {}),
     city: stringOrNull(req.body.city) ?? profile.city
   };
   const updated = await prisma.profile.update({ where: { id: profile.id }, data });
@@ -888,6 +999,13 @@ app.put("/api/v1/identity/student-education-profile", async (req, res) => {
 app.put("/api/v1/identity/tutor-profile", async (req, res) => {
   const profile = await requireProfile(req, res, "tutor");
   if (!profile) return;
+  const curriculumSelections = normalizeCurriculumSelections(req.body.curriculumSelections);
+  if (curriculumSelections.length) {
+    await prisma.profile.update({
+      where: { id: profile.id },
+      data: { curriculumSelections: curriculumJson(curriculumSelections), specialization: profileLabelFromCurriculum(curriculumSelections) ?? profile.specialization }
+    });
+  }
   const tutorProfile = await prisma.tutorProfile.upsert({
     where: { profileId: profile.id },
     update: {
@@ -901,7 +1019,9 @@ app.put("/api/v1/identity/tutor-profile", async (req, res) => {
       hourlyRate: Number(req.body.hourlyRate ?? 0) || 0,
       gender: String(req.body.gender ?? ""),
       location: String(req.body.location ?? ""),
-      bio: String(req.body.bio ?? "")
+      bio: String(req.body.bio ?? ""),
+      outreachEnabled: Boolean(req.body.outreachEnabled ?? true),
+      outreachPlan: stringOrNull(req.body.outreachPlan) ?? "paid_outreach"
     },
     create: {
       profileId: profile.id,
@@ -917,6 +1037,8 @@ app.put("/api/v1/identity/tutor-profile", async (req, res) => {
       gender: String(req.body.gender ?? ""),
       location: String(req.body.location ?? ""),
       bio: String(req.body.bio ?? ""),
+      outreachEnabled: Boolean(req.body.outreachEnabled ?? true),
+      outreachPlan: stringOrNull(req.body.outreachPlan) ?? "paid_outreach",
       sourceTag: "app"
     }
   });
@@ -2197,6 +2319,10 @@ app.get("/api/v1/usermanagement/profile", async (req, res) => {
   res.json({ data: profile });
 });
 
+app.get("/api/v1/usermanagement/curriculum", async (_req, res) => {
+  res.json({ data: loadCurriculumCatalogue() });
+});
+
 app.get("/api/v1/usermanagement/users", async (req, res) => {
   const role = readRole(req.query.Role ?? req.query.role);
   if (role === "tutor") await ensureSharedTutorFixture();
@@ -2251,6 +2377,7 @@ app.put("/api/v1/usermanagement/profile", async (req, res) => {
     return;
   }
 
+  const curriculumSelections = role === "parent" ? [] : normalizeCurriculumSelections(req.body.curriculumSelections);
   const data = {
     firstName: String(req.body.firstName ?? current.firstName),
     lastName: String(req.body.lastName ?? current.lastName),
@@ -2260,7 +2387,8 @@ app.put("/api/v1/usermanagement/profile", async (req, res) => {
     alternatePhone: stringOrNull(req.body.alternatePhone) ?? current.alternatePhone,
     avatarUrl: stringOrNull(req.body.avatarUrl) ?? current.avatarUrl,
     stream: role === "parent" ? null : stringOrNull(req.body.stream) ?? current.stream,
-    specialization: role === "parent" ? null : stringOrNull(req.body.specialization) ?? current.specialization
+    specialization: role === "parent" ? null : stringOrNull(req.body.specialization) ?? profileLabelFromCurriculum(curriculumSelections) ?? current.specialization,
+    ...(role !== "parent" && curriculumSelections.length ? { curriculumSelections: curriculumJson(curriculumSelections) } : {})
   };
 
   const [profile, userManagement] = await prisma.$transaction([
@@ -2302,7 +2430,8 @@ app.get("/api/v1/usermanagement/tutors", async (req, res) => {
   if (req.query.gender) tutorWhere.gender = textContains(req.query.gender);
   if (req.query.minExperience) tutorWhere.experienceYears = { gte: Number(req.query.minExperience) || 0 };
   if (req.query.minRating) tutorWhere.rating = { gte: Number(req.query.minRating) || 0 };
-  if (Object.keys(batchWhere).length) tutorWhere.batches = { some: batchWhere };
+  const hasCurriculumFilters = Boolean(req.query.subject || req.query.grade || req.query.board);
+  if (Object.keys(batchWhere).length && !hasCurriculumFilters) tutorWhere.batches = { some: batchWhere };
 
   const tutors = await prisma.tutorProfile.findMany({
     where: tutorWhere,
@@ -2325,7 +2454,13 @@ app.get("/api/v1/usermanagement/tutors", async (req, res) => {
     orderBy: [{ rating: "desc" }, { experienceYears: "desc" }],
     take: 40
   });
-  res.json({ data: tutors.map((tutor) => toTutorSearchResult(tutor, { studentProfileId: studentProfile?.id, selectedProgramIds })) });
+  const filteredTutors = tutors.filter((tutor) => {
+    if (!hasCurriculumFilters) return true;
+    const profileMatch = curriculumMatches(curriculumSelectionsFromJson(tutor.profile?.curriculumSelections), req.query);
+    const batchMatch = (tutor.batches ?? []).some((batch: any) => curriculumMatches([{ board: batch.board, classLevel: batch.grade, subject: batch.subject }], req.query));
+    return profileMatch || batchMatch;
+  });
+  res.json({ data: filteredTutors.map((tutor) => toTutorSearchResult(tutor, { studentProfileId: studentProfile?.id, selectedProgramIds })) });
 });
 
 app.get("/api/v1/marketplace/recommendations", async (req, res) => {
@@ -5005,6 +5140,9 @@ function toTutorSearchResult(tutor: any, context: { studentProfileId?: string | 
     gender: tutor.gender,
     location: tutor.location,
     bio: tutor.bio,
+    curriculumSelections: curriculumSelectionsFromJson(tutor.profile?.curriculumSelections),
+    outreachEnabled: tutor.outreachEnabled,
+    outreachPlan: tutor.outreachPlan,
     batches: tutor.batches.map((batch: any) => toBatchSummary(batch, context.studentProfileId)),
     programs: (tutor.profile.authoredPrograms ?? []).map((program: any) => toTutorProgramSummary(program, context.selectedProgramIds)),
     tutionDetails: tutor.batches.map((batch: any) => toTutionDetail(batch, tutor))
@@ -5036,9 +5174,12 @@ function marketplaceFitScore(tutor: any, studentProfile?: any | null) {
   const subjects = splitCsv(tutor.subjects).map((item) => item.toLowerCase());
   const boards = splitCsv(tutor.boards).map((item) => item.toLowerCase());
   const grades = splitCsv(tutor.grades).map((item) => item.toLowerCase());
+  const tutorSelections = curriculumSelectionsFromJson(tutor.profile?.curriculumSelections);
+  const studentSelections = curriculumSelectionsFromJson(studentProfile?.curriculumSelections);
   const specialization = String(studentProfile?.specialization ?? "").toLowerCase();
   const city = String(studentProfile?.city ?? "").toLowerCase();
   let score = 40 + Math.round((Number(tutor.rating) || 0) * 8) + Math.min(15, Number(tutor.experienceYears) || 0);
+  if (studentSelections.some((selection) => curriculumMatches(tutorSelections, { board: selection.board, grade: selection.classLevel, subject: selection.subject }))) score += 28;
   if (specialization && subjects.some((subject) => specialization.includes(subject))) score += 18;
   if (specialization && boards.some((board) => specialization.includes(board))) score += 10;
   if (specialization && grades.some((grade) => specialization.includes(grade.toLowerCase()))) score += 8;
@@ -5050,10 +5191,14 @@ function marketplaceFitScore(tutor: any, studentProfile?: any | null) {
 
 function marketplaceFitReasons(tutor: any, studentProfile?: any | null) {
   const reasons: string[] = [];
+  const tutorSelections = curriculumSelectionsFromJson(tutor.profile?.curriculumSelections);
+  const studentSelections = curriculumSelectionsFromJson(studentProfile?.curriculumSelections);
+  const curriculumMatch = studentSelections.find((selection) => curriculumMatches(tutorSelections, { board: selection.board, grade: selection.classLevel, subject: selection.subject }));
   const specialization = String(studentProfile?.specialization ?? "").toLowerCase();
   const city = String(studentProfile?.city ?? "").toLowerCase();
   const matchedSubject = splitCsv(tutor.subjects).find((subject) => specialization.includes(subject.toLowerCase()));
   const matchedBoard = splitCsv(tutor.boards).find((board) => specialization.includes(board.toLowerCase()));
+  if (curriculumMatch) reasons.push(`${curriculumMatch.subject} for ${curriculumMatch.classLevel}`);
   if (matchedSubject) reasons.push(`${matchedSubject} match`);
   if (matchedBoard) reasons.push(`${matchedBoard} board`);
   if (city && String(tutor.location ?? "").toLowerCase().includes(city)) reasons.push("near your city");
@@ -5123,6 +5268,9 @@ function toUserProfileDetails(profile: any) {
     gender: tutorProfile.gender,
     location: tutorProfile.location,
     bio: tutorProfile.bio,
+    curriculumSelections: curriculumSelectionsFromJson(profile.curriculumSelections),
+    outreachEnabled: tutorProfile.outreachEnabled,
+    outreachPlan: tutorProfile.outreachPlan,
     batches: tutorProfile.batches.map((batch: any) => toBatchSummary(batch)),
     programs: (profile.authoredPrograms ?? []).map(toTutorProgramSummary),
     tutionDetails: tutorProfile.batches.map((batch: any) => toTutionDetail(batch, tutorProfile))
@@ -5578,7 +5726,7 @@ function toPersona(profile: Awaited<ReturnType<typeof findProfile>>) {
     phone: profile.user.phone,
     profileLabel: profile.role === "parent"
       ? `Parent • Apoorv Gulati • Class 10`
-      : `${capitalize(profile.role)} • ${profile.stream ?? "Senior"} • ${profile.specialization ?? "myTution"}`
+      : `${capitalize(profile.role)} • ${profile.stream ?? "Senior"} • ${profileLabelFromCurriculum(curriculumSelectionsFromJson(profile.curriculumSelections)) ?? profile.specialization ?? "myTution"}`
   };
 }
 
@@ -5597,6 +5745,7 @@ function toIdentityProfile(profile: any) {
     avatarUrl: profile.avatarUrl,
     stream: profile.stream,
     specialization: profile.specialization,
+    curriculumSelections: curriculumSelectionsFromJson(profile.curriculumSelections),
     sourceTag: profile.sourceTag,
     profileCompletion: profileCompletionFor(profile),
     tutorProfile: profile.tutorProfile ? {
@@ -5614,7 +5763,9 @@ function toIdentityProfile(profile: any) {
       location: profile.tutorProfile.location,
       bio: profile.tutorProfile.bio,
       verificationStatus: profile.tutorProfile.verificationStatus,
-      profileStatus: profile.tutorProfile.profileStatus
+      profileStatus: profile.tutorProfile.profileStatus,
+      outreachEnabled: profile.tutorProfile.outreachEnabled,
+      outreachPlan: profile.tutorProfile.outreachPlan
     } : null,
     linkedParents: (profile.studentParentLinks ?? []).map((link: any) => ({
       id: link.id,
@@ -5718,6 +5869,7 @@ function fallbackPersona(role: Role) {
 async function ensureSharedTutorFixture() {
   const phone = "+917838920129";
   const passwordHash = await hashPassword("Tutor@123");
+  const curriculumSelections = [{ board: "CBSE", classLevel: "Class 10", subject: "Mathematics", stage: "Secondary" }];
   const user = await prisma.user.upsert({
     where: { phone },
     update: { passwordHash, sourceTag: "mock" },
@@ -5738,6 +5890,7 @@ async function ensureSharedTutorFixture() {
       alternatePhone: "7838920129",
       stream: "senior",
       specialization: "CBSE Class 10 Mathematics",
+      curriculumSelections: curriculumJson(curriculumSelections),
       sourceTag: "mock"
     }
   }) : await prisma.profile.create({
@@ -5752,6 +5905,7 @@ async function ensureSharedTutorFixture() {
       alternatePhone: "7838920129",
       stream: "senior",
       specialization: "CBSE Class 10 Mathematics",
+      curriculumSelections: curriculumJson(curriculumSelections),
       sourceTag: "mock"
     }
   });
@@ -5765,6 +5919,7 @@ async function ensureSharedTutorFixture() {
       alternatePhone: profile.alternatePhone,
       stream: profile.stream,
       specialization: profile.specialization,
+      curriculumSelections: curriculumJson(curriculumSelectionsFromJson(profile.curriculumSelections).length ? curriculumSelectionsFromJson(profile.curriculumSelections) : curriculumSelections),
       sourceTag: "mock"
     },
     create: {
@@ -5778,6 +5933,7 @@ async function ensureSharedTutorFixture() {
       alternatePhone: profile.alternatePhone,
       stream: profile.stream,
       specialization: profile.specialization,
+      curriculumSelections: curriculumJson(curriculumSelectionsFromJson(profile.curriculumSelections).length ? curriculumSelectionsFromJson(profile.curriculumSelections) : curriculumSelections),
       sourceTag: "mock"
     }
   });
@@ -5796,6 +5952,8 @@ async function ensureSharedTutorFixture() {
       gender: "Male",
       location: "Jabalpur",
       bio: "Board revision, previous-year papers, exam strategy, and structured answer practice.",
+      outreachEnabled: true,
+      outreachPlan: "paid_outreach",
       sourceTag: "mock"
     },
     create: {
@@ -5812,6 +5970,8 @@ async function ensureSharedTutorFixture() {
       gender: "Male",
       location: "Jabalpur",
       bio: "Board revision, previous-year papers, exam strategy, and structured answer practice.",
+      outreachEnabled: true,
+      outreachPlan: "paid_outreach",
       sourceTag: "mock"
     }
   });

@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, NotificationSummary, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
+import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, CurriculumCatalogueResponse, CurriculumSelection, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, NotificationSummary, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -158,7 +158,32 @@ type ProfileDraft = {
   city: string;
   communicationAddress: string;
   alternatePhone: string;
+  curriculumBoards: string[];
+  curriculumClasses: string[];
+  curriculumSubjects: string[];
+  curriculumSelections: CurriculumSelection[];
 };
+
+const fallbackCurriculum: CurriculumCatalogueResponse = {
+  boards: ["CBSE", "ICSE_ISC", "IB", "IGCSE_A_LEVEL", "State_Boards"].map((id) => ({
+    id,
+    label: id.replace(/_/g, " / "),
+    fullName: null,
+    classes: ["Class 1", "Class 2", "Class 3", "Class 4", "Class 5", "Class 6", "Class 7", "Class 8", "Class 9", "Class 10", "Class 11", "Class 12"].map((label) => ({
+      id: label.toLowerCase().replace(/\s+/g, "_"),
+      label,
+      stage: label === "Class 11" || label === "Class 12" ? "Higher Secondary" : "School",
+      subjects: ["Mathematics", "Science", "Physics", "Chemistry", "Biology", "English", "Social Science", "Computer Science", "Accountancy", "Economics"]
+    }))
+  })),
+  classes: [],
+  subjects: ["Mathematics", "Science", "Physics", "Chemistry", "Biology", "English", "Social Science", "Computer Science", "Accountancy", "Economics"]
+};
+
+function curriculumLabel(selections?: CurriculumSelection[]) {
+  const first = selections?.[0];
+  return first ? `${first.board} ${first.classLevel} ${first.subject}` : null;
+}
 
 function personaFromIdentity(profile: IdentityProfile | null | undefined, phone = ""): Persona | null {
   if (!profile) return null;
@@ -170,7 +195,7 @@ function personaFromIdentity(profile: IdentityProfile | null | undefined, phone 
     phone,
     profileLabel: profile.role === "parent"
       ? `Parent • ${profile.linkedStudents[0]?.name ?? "Linked student"}`
-      : `${capitalize(profile.role)} • ${profile.stream ?? "Senior"} • ${profile.specialization ?? "myTution"}`
+      : `${capitalize(profile.role)} • ${profile.stream ?? "Senior"} • ${curriculumLabel(profile.curriculumSelections) ?? profile.specialization ?? "myTution"}`
   };
 }
 
@@ -315,13 +340,18 @@ export default function Index() {
   const [resetRequested, setResetRequested] = useState(false);
   const [stream, setStream] = useState<StreamKey>("senior");
   const [specialization, setSpecialization] = useState("CBSE Class 10 Mathematics");
+  const [curriculumCatalogue, setCurriculumCatalogue] = useState<CurriculumCatalogueResponse>(fallbackCurriculum);
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>({
     firstName: "",
     lastName: "",
     dob: "",
     city: "",
     communicationAddress: "",
-    alternatePhone: ""
+    alternatePhone: "",
+    curriculumBoards: [],
+    curriculumClasses: [],
+    curriculumSubjects: [],
+    curriculumSelections: []
   });
   const [apiNotice, setApiNotice] = useState("");
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
@@ -369,6 +399,18 @@ export default function Index() {
   const [learnerProgress, setLearnerProgress] = useState<LearnerProgressSummary[]>([]);
   const [parentMonitoring, setParentMonitoring] = useState<ParentMonitoringResponse | null>(null);
   const [tutorSupply, setTutorSupply] = useState<TutorSupplyState | null>(null);
+
+  useEffect(() => {
+    let ignore = false;
+    apiGet<{ data: CurriculumCatalogueResponse }>("/api/v1/usermanagement/curriculum")
+      .then((response) => {
+        if (!ignore && response.data?.boards?.length) setCurriculumCatalogue(response.data);
+      })
+      .catch(() => {
+        if (!ignore) setCurriculumCatalogue(fallbackCurriculum);
+      });
+    return () => { ignore = true; };
+  }, []);
   const [tutorBatchDraft, setTutorBatchDraft] = useState<TutorBatchDraft>(defaultTutorBatchDraft);
   const [tutorSearchLoading, setTutorSearchLoading] = useState(false);
   const [classHubLoading, setClassHubLoading] = useState(false);
@@ -1072,7 +1114,7 @@ export default function Index() {
   function restartPrototype() {
     setRole("student");
     setPhoneNumber("");
-    setProfileDraft({ firstName: "", lastName: "", dob: "", city: "", communicationAddress: "", alternatePhone: "" });
+    setProfileDraft({ firstName: "", lastName: "", dob: "", city: "", communicationAddress: "", alternatePhone: "", curriculumBoards: [], curriculumClasses: [], curriculumSubjects: [], curriculumSelections: [] });
     setValueIndex(0);
     setConsent(false);
     setOtp(["", "", "", "", "", ""]);
@@ -1087,6 +1129,7 @@ export default function Index() {
     setActivationCode("");
     setActivationCodesByRelationship({});
     setActivationSeconds(0);
+    setProfileDraft({ firstName: "", lastName: "", dob: "", city: "", communicationAddress: "", alternatePhone: "", curriculumBoards: [], curriculumClasses: [], curriculumSubjects: [], curriculumSelections: [] });
     setStream("senior");
     setSpecialization("CBSE Class 10 Mathematics");
     setAvatarUri(null);
@@ -1142,7 +1185,8 @@ export default function Index() {
           communicationAddress: profileDraft.communicationAddress.trim(),
           alternatePhone: profileDraft.alternatePhone.trim(),
           stream,
-          specialization
+          specialization,
+          curriculumSelections: role === "parent" ? [] : profileDraft.curriculumSelections
         }
       });
       setAuthSession(response.data);
@@ -1152,7 +1196,7 @@ export default function Index() {
         lastName: profileDraft.lastName.trim(),
         initials: `${profileDraft.firstName.charAt(0)}${profileDraft.lastName.charAt(0)}`.toUpperCase() || role.charAt(0).toUpperCase(),
         phone: phoneForApi,
-        profileLabel: role === "parent" ? "Parent • myTution" : `${capitalize(role)} • ${stream} • ${specialization}`
+        profileLabel: role === "parent" ? "Parent • myTution" : `${capitalize(role)} • ${stream} • ${curriculumLabel(profileDraft.curriculumSelections) ?? specialization}`
       });
       setApiNotice("");
       setProgramModalSeen(false);
@@ -1502,7 +1546,7 @@ export default function Index() {
             <Card key={item} role={role} selected={role === item} onPress={() => {
               setRole(item);
               setPhoneNumber("");
-              setProfileDraft({ firstName: "", lastName: "", dob: "", city: "", communicationAddress: "", alternatePhone: "" });
+              setProfileDraft({ firstName: "", lastName: "", dob: "", city: "", communicationAddress: "", alternatePhone: "", curriculumBoards: [], curriculumClasses: [], curriculumSubjects: [], curriculumSelections: [] });
               setSelectedProgramId(null);
               setConsent(false);
             }}>
@@ -1624,6 +1668,7 @@ export default function Index() {
           openDatePicker={() => setPicker({ target: "dob", mode: "date", value: parseDisplayDate(profileDraft.dob) ?? new Date(2010, 5, 24) })}
           stream={stream}
           specialization={specialization}
+          curriculumCatalogue={curriculumCatalogue}
           setStream={(value) => {
             setStream(value);
             setSpecialization(specializationOptions[value][0]);
@@ -1650,6 +1695,7 @@ export default function Index() {
           openDatePicker={() => setPicker({ target: "dob", mode: "date", value: parseDisplayDate(profileDraft.dob) ?? new Date(2010, 5, 24) })}
           stream={stream}
           specialization={specialization}
+          curriculumCatalogue={curriculumCatalogue}
           setStream={(value) => {
             setStream(value);
             setSpecialization(specializationOptions[value][0]);
@@ -1672,7 +1718,8 @@ export default function Index() {
                 communicationAddress: profileDraft.communicationAddress.trim(),
                 alternatePhone: profileDraft.alternatePhone.trim(),
                 stream,
-                specialization
+                specialization,
+                curriculumSelections: role === "parent" ? [] : profileDraft.curriculumSelections
               }, authSession?.accessToken);
               setApiPersona({
                 role,
@@ -1680,7 +1727,7 @@ export default function Index() {
                 lastName: profileDraft.lastName.trim(),
                 initials: `${profileDraft.firstName.charAt(0)}${profileDraft.lastName.charAt(0)}`.toUpperCase() || role.charAt(0).toUpperCase(),
                 phone: phoneForApi,
-                profileLabel: role === "parent" ? "Parent • myTution" : `${capitalize(role)} • ${stream} • ${specialization}`
+                profileLabel: role === "parent" ? "Parent • myTution" : `${capitalize(role)} • ${stream} • ${curriculumLabel(profileDraft.curriculumSelections) ?? specialization}`
               });
               setApiNotice("");
             } catch {
@@ -1852,7 +1899,27 @@ export default function Index() {
     if (screen === "payments") return <Payments role={role} accessToken={authSession?.accessToken} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} refreshSupply={refreshTutorSupply} />;
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
-    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationSeconds={activationSeconds} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
+    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} onEditProfile={() => {
+      const profile = identityContext?.activeProfile;
+      if (profile) {
+        setProfileDraft({
+          firstName: profile.firstName ?? "",
+          lastName: profile.lastName ?? "",
+          dob: profile.dob ? formatDisplayDate(new Date(profile.dob)) : "",
+          city: profile.city ?? "",
+          communicationAddress: profile.communicationAddress ?? "",
+          alternatePhone: profile.alternatePhone ?? "",
+          curriculumBoards: dedupe((profile.curriculumSelections ?? []).map((item) => item.board)),
+          curriculumClasses: dedupe((profile.curriculumSelections ?? []).map((item) => item.classLevel)),
+          curriculumSubjects: dedupe((profile.curriculumSelections ?? []).map((item) => item.subject)),
+          curriculumSelections: profile.curriculumSelections ?? []
+        });
+        const firstSelection = profile.curriculumSelections?.[0];
+        setStream((profile.stream as StreamKey) ?? "senior");
+        setSpecialization(profile.specialization ?? (firstSelection ? `${firstSelection.board} ${firstSelection.classLevel} ${firstSelection.subject}` : specialization));
+      }
+      setScreen("editProfile");
+    }} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationSeconds={activationSeconds} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
     if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} programDataReady={!authSession?.accessToken || apiMilestones !== null || programs.length > 0} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} restoreProgram={restoreTutorProgram} archiveModalVisible={programArchiveModalVisible} setArchiveModalVisible={setProgramArchiveModalVisible} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
@@ -2155,6 +2222,7 @@ function ProfileForm({
   openDatePicker,
   stream,
   specialization,
+  curriculumCatalogue,
   setStream,
   setSpecialization,
   title,
@@ -2173,6 +2241,7 @@ function ProfileForm({
   openDatePicker: () => void;
   stream: StreamKey;
   specialization: string;
+  curriculumCatalogue: CurriculumCatalogueResponse;
   setStream: (value: StreamKey) => void;
   setSpecialization: (value: string) => void;
   title: string;
@@ -2186,6 +2255,29 @@ function ProfileForm({
   const streamLabel = streamOptions.find((item) => item.value === stream)?.label ?? "Senior";
   const initials = `${draft.firstName.charAt(0)}${draft.lastName.charAt(0)}`.toUpperCase() || persona.initials;
   const updateDraft = (patch: Partial<ProfileDraft>) => setDraft({ ...draft, ...patch });
+  const selectedBoards = draft.curriculumBoards.length ? draft.curriculumBoards : dedupe(draft.curriculumSelections.map((item) => item.board));
+  const selectedClasses = draft.curriculumClasses.length ? draft.curriculumClasses : dedupe(draft.curriculumSelections.map((item) => item.classLevel));
+  const selectedSubjects = draft.curriculumSubjects.length ? draft.curriculumSubjects : dedupe(draft.curriculumSelections.map((item) => item.subject));
+  const boardOptions = curriculumCatalogue.boards.map((board) => board.id);
+  const classOptions = dedupe(curriculumCatalogue.boards
+    .filter((board) => !selectedBoards.length || selectedBoards.includes(board.id))
+    .flatMap((board) => board.classes.map((item) => item.label)));
+  const subjectOptions = dedupe(curriculumCatalogue.boards
+    .filter((board) => !selectedBoards.length || selectedBoards.includes(board.id))
+    .flatMap((board) => board.classes)
+    .filter((item) => !selectedClasses.length || selectedClasses.includes(item.label))
+    .flatMap((item) => item.subjects));
+  const updateCurriculum = (next: { boards?: string[]; classes?: string[]; subjects?: string[] }) => {
+    const boards = next.boards ?? selectedBoards;
+    const classes = next.classes ?? selectedClasses;
+    const subjects = next.subjects ?? selectedSubjects;
+    const selections = boards.flatMap((board) => classes.flatMap((classLevel) => subjects.map((subject) => {
+      const stage = curriculumCatalogue.boards.find((item) => item.id === board)?.classes.find((item) => item.label === classLevel)?.stage ?? null;
+      return { board, classLevel, subject, stage } satisfies CurriculumSelection;
+    })));
+    updateDraft({ curriculumBoards: boards, curriculumClasses: classes, curriculumSubjects: subjects, curriculumSelections: selections.slice(0, 40) });
+    if (selections[0]) setSpecialization(`${selections[0].board} ${selections[0].classLevel} ${selections[0].subject}`);
+  };
   return (
     <>
       <TopBar title="Profile" left={back ? "‹" : undefined} onLeft={back} />
@@ -2230,6 +2322,12 @@ function ProfileForm({
             options={specializationOptions[stream]}
             onSelect={setSpecialization}
           />
+          <FieldLabel>Board</FieldLabel>
+          <MultiSelectField value={selectedBoards} options={boardOptions} onChange={(values) => updateCurriculum({ boards: values })} placeholder="Select boards" />
+          <FieldLabel>Class / grade</FieldLabel>
+          <MultiSelectField value={selectedClasses} options={classOptions} onChange={(values) => updateCurriculum({ classes: values })} placeholder="Select classes" />
+          <FieldLabel>Subjects</FieldLabel>
+          <MultiSelectField value={selectedSubjects} options={subjectOptions} onChange={(values) => updateCurriculum({ subjects: values })} placeholder="Select subjects" />
         </>
       )}
       <Button role={role} label={cta} onPress={onSubmit} loading={loading} disabled={disabled} />
@@ -2259,6 +2357,43 @@ function DropdownField({ value, options, onSelect }: { value: string; options: s
               <Text style={styles.dropdownOptionText}>{option}</Text>
             </Pressable>
           ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function MultiSelectField({ value, options, onChange, placeholder }: { value: string[]; options: string[]; onChange: (value: string[]) => void; placeholder: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const cleanOptions = dedupe(options).filter(Boolean);
+  const toggle = (option: string) => {
+    onChange(value.includes(option) ? value.filter((item) => item !== option) : [...value, option]);
+  };
+  return (
+    <View style={styles.dropdownWrap}>
+      <Pressable style={styles.dropdownField} onPress={() => setExpanded(!expanded)}>
+        <Text style={styles.dropdownText}>{value.length ? value.join(", ") : placeholder}</Text>
+        <Text style={styles.dropdownCaret}>{expanded ? "⌃" : "⌄"}</Text>
+      </Pressable>
+      {value.length ? (
+        <View style={styles.multiSelectChips}>
+          {value.map((item) => (
+            <Pressable key={item} style={styles.multiSelectChip} onPress={() => toggle(item)}>
+              <Text style={styles.multiSelectChipText}>{item} ×</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      {expanded && (
+        <View style={styles.dropdownList}>
+          {cleanOptions.map((option) => {
+            const selected = value.includes(option);
+            return (
+              <Pressable key={option} style={({ pressed }) => [styles.dropdownOption, selected && styles.dropdownOptionSelected, pressed && styles.pressed]} onPress={() => toggle(option)}>
+                <Text style={styles.dropdownOptionText}>{selected ? "✓ " : ""}{option}</Text>
+              </Pressable>
+            );
+          })}
         </View>
       )}
     </View>
@@ -5190,6 +5325,7 @@ function Account({
   avatarUri,
   signOut,
   setScreen,
+  onEditProfile,
   requests,
   approveRequest,
   requestAction,
@@ -5206,6 +5342,7 @@ function Account({
   avatarUri: string | null;
   signOut: () => void;
   setScreen: (screen: AppScreen) => void;
+  onEditProfile: () => void;
   requests: BatchRequestSummary[];
   approveRequest: (id: string) => void;
   requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void;
@@ -5237,7 +5374,7 @@ function Account({
         </View>
         <Text style={styles.accountProgressText}>Profile completion 86%</Text>
       </View>
-      <Button role={role} variant="secondary" label="Edit profile" onPress={() => setScreen("editProfile")} />
+      <Button role={role} variant="secondary" label="Edit profile" onPress={onEditProfile} />
       <Button role={role} variant="secondary" label="Payments" onPress={() => setScreen("payments")} />
       {role === "tutor" ? (
         <>
@@ -5360,11 +5497,12 @@ function combineReminderDateTime(date: string, time: string) {
 
 function buildTutorFilterOptions(tutors: TutorSearchResult[]): TutorFilterOptions {
   const details = tutors.flatMap((tutor) => tutor.tutionDetails ?? []);
+  const curriculum = tutors.flatMap((tutor) => tutor.curriculumSelections ?? []);
   return {
-    subjects: dedupe(details.map((item) => item.subject)),
+    subjects: dedupe([...details.map((item) => item.subject), ...curriculum.map((item) => item.subject)]),
     locations: dedupe(details.map((item) => item.location)),
-    grades: dedupe(details.map((item) => item.grade)),
-    boards: dedupe(details.map((item) => item.board)),
+    grades: dedupe([...details.map((item) => item.grade), ...curriculum.map((item) => item.classLevel)]),
+    boards: dedupe([...details.map((item) => item.board), ...curriculum.map((item) => item.board)]),
     modes: dedupe(details.map((item) => item.mode)),
     languages: dedupe(details.flatMap((item) => item.language)),
     genders: dedupe(details.map((item) => item.gender)),
@@ -5516,6 +5654,9 @@ const styles = StyleSheet.create({
   dropdownOption: { borderBottomColor: "#EEF3F7", borderBottomWidth: 1, minHeight: 44, justifyContent: "center", paddingHorizontal: 14 },
   dropdownOptionSelected: { backgroundColor: "#F2FAFC" },
   dropdownOptionText: { color: "#111827", fontSize: 14, fontWeight: "700" },
+  multiSelectChips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  multiSelectChip: { backgroundColor: "#F2FAFC", borderColor: "#C9D6E4", borderRadius: 999, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7 },
+  multiSelectChipText: { color: "#263444", fontSize: 12, fontWeight: "800" },
   trackCard: {
     alignItems: "center",
     borderRadius: 18,

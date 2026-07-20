@@ -52,6 +52,36 @@ export interface IdentityTutorProfile {
   bio: string;
   verificationStatus?: string;
   profileStatus?: string;
+  outreachEnabled?: boolean;
+  outreachPlan?: string | null;
+}
+
+export interface CurriculumSelection {
+  board: string;
+  classLevel: string;
+  subject: string;
+  stage?: string | null;
+  stream?: string | null;
+}
+
+export interface CurriculumClassOption {
+  id: string;
+  label: string;
+  stage: string;
+  subjects: string[];
+}
+
+export interface CurriculumBoardOption {
+  id: string;
+  label: string;
+  fullName?: string | null;
+  classes: CurriculumClassOption[];
+}
+
+export interface CurriculumCatalogueResponse {
+  boards: CurriculumBoardOption[];
+  classes: CurriculumClassOption[];
+  subjects: string[];
 }
 
 export interface IdentityProfile {
@@ -68,6 +98,7 @@ export interface IdentityProfile {
   avatarUrl: string | null;
   stream: string | null;
   specialization: string | null;
+  curriculumSelections?: CurriculumSelection[];
   sourceTag: string;
   profileCompletion: number;
   tutorProfile: IdentityTutorProfile | null;
@@ -477,6 +508,9 @@ export interface TutorSearchResult {
   batches: TutorBatchSummary[];
   programs?: TutorProgramSummary[];
   tutionDetails?: TutionDetail[];
+  curriculumSelections?: CurriculumSelection[];
+  outreachEnabled?: boolean;
+  outreachPlan?: string | null;
 }
 
 export interface MarketplaceProgramRecommendation {
@@ -564,6 +598,9 @@ export interface UserProfileDetails extends UserListItem {
   gender?: string;
   location?: string;
   bio?: string;
+  curriculumSelections?: CurriculumSelection[];
+  outreachEnabled?: boolean;
+  outreachPlan?: string | null;
   tutionDetails: TutionDetail[];
   batches?: TutorBatchSummary[];
   programs?: TutorProgramSummary[];

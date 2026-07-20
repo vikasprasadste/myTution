@@ -146,6 +146,7 @@ model Profile {
   avatarUrl          String?
   stream             String?
   specialization     String?
+  curriculumSelections Json?
   sourceTag          String             @default("app")
   user               User               @relation(fields: [userId], references: [id])
   reminders          Reminder[]
@@ -326,6 +327,7 @@ model UserManagement {
   avatarUrl            String?
   stream               String?
   specialization       String?
+  curriculumSelections Json?
   sourceTag            String   @default("app")
   user                 User     @relation(fields: [userId], references: [id])
   createdAt            DateTime @default(now())
@@ -352,6 +354,8 @@ model TutorProfile {
   bio             String
   verificationStatus String    @default("unverified")
   profileStatus   String       @default("active")
+  outreachEnabled Boolean      @default(false)
+  outreachPlan    String?
   sourceTag       String       @default("app")
   profile         Profile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
   batches         TutorBatch[]
