@@ -3,6 +3,7 @@ import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
+import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import { useVideoPlayer, VideoView } from "expo-video";
@@ -128,7 +129,8 @@ type QuizQuestion = {
   correctOptionIndexes?: number[];
   answerText?: string;
 };
-type QuizPayload = { resourceId: string; title: string; description: string; questions: QuizQuestion[] };
+type QuizCheckpointPayload = { answers?: unknown; submitted?: unknown; currentIndex?: number; completed?: boolean; updatedAt?: string };
+type QuizPayload = { resourceId: string; title: string; description: string; questions: QuizQuestion[]; checkpoint?: QuizCheckpointPayload | null };
 type SignInMode = "fresh" | "returning";
 type TutorFilterOptions = { subjects: string[]; locations: string[]; grades: string[]; boards: string[]; modes: string[]; languages: string[]; genders: string[]; experience: string[]; ratings: string[] };
 type TutorSupplyState = { profile: IdentityProfile; programs: ProgramSummary[]; batches: TutorBatchSummary[]; analytics?: TutorSupplyAnalytics };
@@ -420,7 +422,8 @@ export default function Index() {
   const [flashAnswer, setFlashAnswer] = useState(false);
   const [quizPayload, setQuizPayload] = useState<QuizPayload | null>(null);
   const [quizIndex, setQuizIndex] = useState(0);
-  const [quizAnswers, setQuizAnswers] = useState<number[]>([]);
+  const [quizAnswers, setQuizAnswers] = useState<number[][]>([]);
+  const [quizSubmitted, setQuizSubmitted] = useState<boolean[]>([]);
   const [completedMilestone, setCompletedMilestone] = useState(0);
   const programTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const theme = useRoleTheme(role);
@@ -1375,11 +1378,27 @@ export default function Index() {
     if (resource.type === "quiz") {
       setQuizPayload(null);
       setQuizAnswers([]);
+      setQuizSubmitted([]);
       setQuizIndex(0);
       setScreen("quizIntro");
       return;
     }
     setScreen("resource");
+  }
+
+  function normalizeQuizAnswers(input: unknown, total: number): number[][] {
+    const raw = Array.isArray(input) ? input : [];
+    return Array.from({ length: total }, (_, index) => {
+      const value = raw[index];
+      if (Array.isArray(value)) return value.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item >= 0);
+      const numeric = Number(value);
+      return Number.isFinite(numeric) && numeric >= 0 ? [numeric] : [];
+    });
+  }
+
+  function normalizeQuizSubmitted(input: unknown, total: number, answers: number[][]): boolean[] {
+    const raw = Array.isArray(input) ? input : [];
+    return Array.from({ length: total }, (_, index) => Boolean(raw[index]) || answers[index]?.length > 0 && Boolean(raw[index]));
   }
 
   async function startQuiz(resource: SelectedActivity) {
@@ -1388,9 +1407,14 @@ export default function Index() {
       const response = await apiGet<{ data: QuizPayload }>(`/api/v1/resources/${resource.id}/quiz?role=${role}`, authSession?.accessToken);
       if (!response.data?.questions?.length) throw new Error("Quiz has no questions");
       const payload = response.data;
+      const total = payload.questions.length;
+      const checkpointAnswers = normalizeQuizAnswers(payload.checkpoint?.answers, total);
+      const checkpointSubmitted = normalizeQuizSubmitted(payload.checkpoint?.submitted, total, checkpointAnswers);
+      const firstUnsubmitted = checkpointSubmitted.findIndex((submitted) => !submitted);
       setQuizPayload(payload);
-      setQuizAnswers(Array.from({ length: payload.questions.length }, () => -1));
-      setQuizIndex(0);
+      setQuizAnswers(checkpointAnswers);
+      setQuizSubmitted(checkpointSubmitted);
+      setQuizIndex(firstUnsubmitted >= 0 ? firstUnsubmitted : Math.min(Math.max(0, Number(payload.checkpoint?.currentIndex) || 0), total - 1));
       setScreen("quizPlay");
       setApiNotice("");
     } catch {
@@ -1400,9 +1424,32 @@ export default function Index() {
     }
   }
 
+  function quizCorrectIndexes(question: QuizQuestion): number[] {
+    return question.correctOptionIndexes?.length ? question.correctOptionIndexes : [question.answerIndex ?? 0];
+  }
+
+  function quizAnswerMatches(question: QuizQuestion, answer: number[]) {
+    const expected = quizCorrectIndexes(question).slice().sort((a, b) => a - b);
+    const actual = answer.slice().sort((a, b) => a - b);
+    return expected.length === actual.length && expected.every((item, index) => item === actual[index]);
+  }
+
+  async function submitQuizCheckpoint(nextAnswers: number[][], nextSubmitted: boolean[], currentIndex: number) {
+    if (!selectedResource || selectedResource.type !== "quiz" || role !== "student") return;
+    await apiPost(`/api/v1/resources/${selectedResource.id}/quiz-checkpoint`, {
+      role,
+      answers: nextAnswers,
+      submitted: nextSubmitted,
+      currentIndex,
+      completed: false
+    }, authSession?.accessToken).catch(() => {
+      setApiNotice("Quiz checkpoint could not be saved. Please check API deployment and login state.");
+    });
+  }
+
   async function submitQuizAttemptAndComplete() {
     if (selectedResource?.type === "quiz" && quizPayload) {
-      const score = quizPayload.questions.reduce((total, question, index) => total + (quizAnswers[index] === question.answerIndex ? 1 : 0), 0);
+      const score = quizPayload.questions.reduce((total, question, index) => total + (quizAnswerMatches(question, quizAnswers[index] ?? []) ? 1 : 0), 0);
       await apiPost<{ data: QuizAttemptSummary }>(`/api/v1/resources/${selectedResource.id}/quiz-attempts`, {
         role,
         answers: quizAnswers,
@@ -1937,7 +1984,21 @@ export default function Index() {
       }} complete={markComplete} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
     }
     if (screen === "quizIntro" && selectedResource) return <QuizIntro role={role} resource={resourceDetail ?? selectedResource} loading={loadingAction === "startQuiz"} start={() => startQuiz(selectedResource)} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
-    if (screen === "quizPlay" && selectedResource && quizPayload) return <QuizPlay role={role} payload={quizPayload} index={quizIndex} answers={quizAnswers} setAnswer={(answer) => setQuizAnswers((items) => items.map((item, itemIndex) => itemIndex === quizIndex ? answer : item))} next={() => { if (quizIndex === quizPayload.questions.length - 1) setScreen("quizResult"); else setQuizIndex(quizIndex + 1); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
+    if (screen === "quizPlay" && selectedResource && quizPayload) return <QuizPlay
+      role={role}
+      payload={quizPayload}
+      index={quizIndex}
+      answers={quizAnswers}
+      submitted={quizSubmitted}
+      setAnswer={(answer) => setQuizAnswers((items) => items.map((item, itemIndex) => itemIndex === quizIndex ? answer : item))}
+      submit={() => {
+        const nextSubmitted = quizSubmitted.map((item, itemIndex) => itemIndex === quizIndex ? true : item);
+        setQuizSubmitted(nextSubmitted);
+        void submitQuizCheckpoint(quizAnswers, nextSubmitted, quizIndex);
+      }}
+      next={() => { if (quizIndex === quizPayload.questions.length - 1) setScreen("quizResult"); else setQuizIndex(quizIndex + 1); }}
+      back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")}
+    />;
     if (screen === "quizResult" && selectedResource && quizPayload) return <QuizResult role={role} payload={quizPayload} answers={quizAnswers} complete={submitQuizAttemptAndComplete} loading={loadingAction === "markComplete"} backToTopic={() => { refreshProgramFromApi(); setScreen("sessions"); }} />;
 
     return null;
@@ -3319,12 +3380,24 @@ function QuizIntro({ role, resource, loading, start, back }: { role: Role; resou
   );
 }
 
-function QuizPlay({ role, payload, index, answers, setAnswer, next, back }: { role: Role; payload: QuizPayload; index: number; answers: number[]; setAnswer: (answer: number) => void; next: () => void; back: () => void }) {
+function QuizPlay({ role, payload, index, answers, submitted, setAnswer, submit, next, back }: { role: Role; payload: QuizPayload; index: number; answers: number[][]; submitted: boolean[]; setAnswer: (answer: number[]) => void; submit: () => void; next: () => void; back: () => void }) {
   const theme = useRoleTheme(role);
   const question = payload.questions[index];
-  const selected = answers[index];
-  const answered = selected >= 0;
+  const selected = answers[index] ?? [];
+  const isMulti = question.questionType === "multi";
+  const locked = role === "student" ? Boolean(submitted[index]) : selected.length > 0;
+  const canSubmit = role === "student" && selected.length > 0 && !locked;
+  const canGoNext = role === "student" ? locked : selected.length > 0;
+  const correctIndexes = question.correctOptionIndexes?.length ? question.correctOptionIndexes : [question.answerIndex ?? 0];
   const progressWidth = (String(Math.round(((index + 1) / payload.questions.length) * 100)) + "%") as any;
+  const updateSelection = (optionIndex: number) => {
+    if (role === "student" && locked) return;
+    if (isMulti) {
+      setAnswer(selected.includes(optionIndex) ? selected.filter((item) => item !== optionIndex) : [...selected, optionIndex].sort((a, b) => a - b));
+      return;
+    }
+    setAnswer([optionIndex]);
+  };
   return (
     <>
       <TopBar title="QUIZ" left="‹" onLeft={back} />
@@ -3333,24 +3406,33 @@ function QuizPlay({ role, payload, index, answers, setAnswer, next, back }: { ro
       <Text style={styles.quizPrompt}>{question.prompt}</Text>
       <View style={styles.quizOptions}>
         {question.options.map((option, optionIndex) => {
-          const correct = answered && optionIndex === question.answerIndex;
-          const wrong = answered && selected === optionIndex && optionIndex !== question.answerIndex;
+          const selectedOption = selected.includes(optionIndex);
+          const correct = locked && correctIndexes.includes(optionIndex);
+          const wrong = locked && selectedOption && !correctIndexes.includes(optionIndex);
           return (
-            <Pressable key={option} onPress={() => setAnswer(optionIndex)} style={({ pressed }) => [styles.quizOption, selected === optionIndex && { borderColor: theme.accentStrong, backgroundColor: theme.accent }, pressed && styles.pressed]}>
+            <Pressable key={`${option}-${optionIndex}`} disabled={role === "student" && locked} onPress={() => updateSelection(optionIndex)} style={({ pressed }) => [styles.quizOption, selectedOption && { borderColor: theme.accentStrong, backgroundColor: theme.accent }, correct && styles.quizOptionCorrect, wrong && styles.quizOptionWrong, pressed && !(role === "student" && locked) && styles.pressed]}>
               <Text style={styles.quizOptionText}>{option}</Text>
               {correct ? <Text style={styles.quizCorrect}>✓</Text> : wrong ? <Text style={styles.quizWrong}>×</Text> : null}
             </Pressable>
           );
         })}
       </View>
-      {answered ? <View style={styles.quizLearnMore}><Text style={styles.quizLearnMoreText}>💡 {question.learnMore}</Text></View> : null}
-      <View style={styles.resourceBottomCta}><Button role={role} label={index === payload.questions.length - 1 ? "See score" : "Next"} onPress={next} disabled={!answered} /></View>
+      {locked ? <View style={styles.quizLearnMore}><Text style={styles.quizLearnMoreText}>💡 {question.learnMore}</Text></View> : null}
+      <View style={styles.resourceBottomCta}>
+        {role === "student" && !locked
+          ? <Button role={role} label="Submit" onPress={submit} disabled={!canSubmit} />
+          : <Button role={role} label={index === payload.questions.length - 1 ? "See score" : "Next"} onPress={next} disabled={!canGoNext} />}
+      </View>
     </>
   );
 }
 
-function QuizResult({ role, payload, answers, complete, loading, backToTopic }: { role: Role; payload: QuizPayload; answers: number[]; complete: () => void; loading?: boolean; backToTopic: () => void }) {
-  const correct = payload.questions.reduce((total, question, index) => total + (answers[index] === question.answerIndex ? 1 : 0), 0);
+function arraysEqual(left: number[], right: number[]) {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function QuizResult({ role, payload, answers, complete, loading, backToTopic }: { role: Role; payload: QuizPayload; answers: number[][]; complete: () => void; loading?: boolean; backToTopic: () => void }) {
+  const correct = payload.questions.reduce((total, question, index) => total + (arraysEqual((question.correctOptionIndexes?.length ? question.correctOptionIndexes : [question.answerIndex ?? 0]).slice().sort((a, b) => a - b), (answers[index] ?? []).slice().sort((a, b) => a - b)) ? 1 : 0), 0);
   const percent = payload.questions.length ? Math.round((correct / payload.questions.length) * 100) : 0;
   const result = percent === 100
     ? ["🏅", "Amazing work!", "You got every question right. Keep this momentum going."]
@@ -3606,6 +3688,8 @@ function Sessions({
           const completedActivities = milestone.activities?.filter((activity) => activity.status === "complete").length ?? (complete ? 4 : 0);
           const totalActivities = milestone.activities?.length ?? 4;
           const progress = complete ? 1 : totalActivities ? completedActivities / totalActivities : 0;
+          const progressPercent = Math.round(progress * 100);
+          const tutorMode = role === "tutor";
           const hasStarted = completedActivities > 0;
           const ctaLabel = locked ? "Coming soon" : role === "parent" ? "View progress" : role === "tutor" ? "Review" : complete ? "Review" : hasStarted ? "Continue" : "Start";
           const chipLabel = !complete && hasStarted ? "Keep learning" : null;
@@ -3640,18 +3724,34 @@ function Sessions({
                     <Text style={[styles.mileChipText, { color: theme.text }]}>{chipLabel}</Text>
                   </View>
                 ) : null}
-                <Text style={[styles.mileCardTitle, locked ? styles.mileCardTitleLocked : null]}>{milestone.title}</Text>
-                {!locked && !complete ? (
-                  <>
-                    <View style={styles.mileProgressTrack}>
-                      <View style={[styles.mileProgressFill, { backgroundColor: theme.accentStrong, width: (String(Math.max(8, Math.round(progress * 100))) + "%") as `${number}%` }]} />
+                <View style={tutorMode ? styles.mileCardTopRowTutor : styles.mileCardTopRow}>
+                  {!tutorMode ? (
+                    <View style={[styles.mileIconTile, { backgroundColor: locked ? "#F2EEFF" : "#F2EEFF" }]}>
+                      <Text style={[styles.mileIconText, { color: locked ? "#9CA3AF" : "#5B3DF5" }]}>◎</Text>
                     </View>
-                    <Text style={styles.mileProgressText}>{completedActivities} of {totalActivities} complete</Text>
-                  </>
-                ) : null}
+                  ) : null}
+                  <View style={styles.flex}>
+                    <View style={styles.mileTitleRow}>
+                      <Text style={[styles.mileCardTitle, locked ? styles.mileCardTitleLocked : null]} numberOfLines={2}>{milestone.title}</Text>
+                      {!locked && !tutorMode ? <Text style={styles.mileCountPill}>{completedActivities} of {totalActivities}</Text> : null}
+                    </View>
+                    {!locked ? (
+                      <>
+                        <View style={styles.mileProgressTrack}>
+                          <View style={[styles.mileProgressFill, { backgroundColor: tutorMode ? theme.text : "#5B3DF5", width: (String(Math.max(progress > 0 ? 8 : 0, progressPercent)) + "%") as `${number}%` }]} />
+                        </View>
+                        {!tutorMode ? <Text style={styles.mileProgressText}>{progressPercent}% complete</Text> : null}
+                      </>
+                    ) : <Text style={styles.mileActivityText}>Unlocks after previous milestone</Text>}
+                  </View>
+                </View>
                 {!locked && complete ? <Text style={styles.mileActivityText}>{activityText}</Text> : null}
-                <View style={[styles.mileCta, locked ? styles.mileCtaLocked : complete ? styles.mileCtaOutline : { backgroundColor: theme.text, borderColor: theme.text }]}>
-                  <Text style={[styles.mileCtaText, { color: locked ? "#8F8A9D" : complete ? theme.text : "#FFFFFF" }]}>{ctaLabel}</Text>
+                <View style={[styles.mileCta, locked ? styles.mileCtaLocked : null]}>
+                  {!locked ? (
+                    <LinearGradient colors={[theme.text, theme.accentStrong]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.mileCtaGradient}>
+                      <Text style={styles.mileCtaText}>{ctaLabel}</Text>
+                    </LinearGradient>
+                  ) : <Text style={[styles.mileCtaText, { color: "#8F8A9D" }]}>{ctaLabel}</Text>}
                 </View>
               </Pressable>
             </View>
@@ -3677,18 +3777,24 @@ function Sessions({
 function TutorProgramEmptyState({ role, onCreate }: { role: Role; onCreate: () => void }) {
   const theme = useRoleTheme(role);
   return (
-    <View style={[styles.tutorEmptyProgramCard, { backgroundColor: theme.card }]}>
-      <View style={[styles.tutorEmptyIcon, { backgroundColor: theme.cardAlt }]}>
-        <Text style={[styles.tutorEmptyIconText, { color: theme.text }]}>＋</Text>
+    <View style={[styles.tutorEmptyProgramCard, { backgroundColor: "#FFFFFF" }]}>
+      <View style={[styles.tutorEmptyIllustration, { backgroundColor: theme.cardAlt }]}>
+        <Text style={styles.tutorEmptySparkle}>✦</Text>
+        <Text style={styles.tutorEmptyBooks}>🎓</Text>
+        <Text style={styles.tutorEmptyBookBase}>▰</Text>
       </View>
-      <Text style={styles.tutorEmptyTitle}>Design your first learning path</Text>
-      <Text style={styles.tutorEmptyCopy}>
-        Create a program with milestones, videos, articles, flashcards, and quizzes. Publish it when it is ready for students to discover.
-      </Text>
-      <Pressable style={({ pressed }) => [styles.tutorEmptyCta, pressed && styles.pressed]} onPress={onCreate}>
-        <LinearGradient colors={buttonGradient(role)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.tutorEmptyCtaGradient}>
-          <Text style={styles.tutorEmptyCtaText}>Create new program</Text>
-        </LinearGradient>
+      <View style={styles.tutorEmptyBody}>
+        <View style={[styles.tutorEmptyChip, { backgroundColor: theme.cardAlt }]}>
+          <Text style={[styles.tutorEmptyChipText, { color: theme.text }]}>⚑ Educator programs</Text>
+        </View>
+        <Text style={styles.tutorEmptyTitle}>Create your first program</Text>
+        <Text style={styles.tutorEmptyCopy}>Add a program and configure milestones with your own education content.</Text>
+      </View>
+      <Pressable style={({ pressed }) => [styles.tutorEmptyAddTile, { borderColor: theme.accentStrong }, pressed && styles.pressed]} onPress={onCreate}>
+        <View style={[styles.tutorEmptyAddIcon, { backgroundColor: theme.cardAlt }]}>
+          <Text style={[styles.tutorEmptyAddIconText, { color: theme.text }]}>＋</Text>
+        </View>
+        <Text style={[styles.tutorEmptyAddText, { color: theme.text }]}>Add a program</Text>
       </Pressable>
     </View>
   );
@@ -3844,6 +3950,32 @@ function TutorProgramAuthoring({
         : milestone)
     }));
   };
+  const pickAuthoringFile = async (onPicked: (uri: string) => void) => {
+    const result = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+      type: "*/*"
+    });
+    if (!result.canceled && result.assets[0]?.uri) onPicked(result.assets[0].uri);
+  };
+  const pickAuthoringImage = async (onPicked: (uri: string) => void) => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.85
+    });
+    if (!result.canceled && result.assets[0]?.uri) onPicked(result.assets[0].uri);
+  };
+  const moveActivity = (milestoneIndex: number, resourceIndex: number, direction: -1 | 1) => {
+    const nextIndex = resourceIndex + direction;
+    const resources = milestones[milestoneIndex]?.resources ?? [];
+    if (nextIndex < 0 || nextIndex >= resources.length) return;
+    const reordered = [...resources];
+    const [item] = reordered.splice(resourceIndex, 1);
+    reordered.splice(nextIndex, 0, item);
+    updateMilestone(milestoneIndex, { resources: reordered });
+    setActiveEditor({ milestoneIndex, resourceIndex: nextIndex });
+  };
   const updateFlashcard = (milestoneIndex: number, resourceIndex: number, cardIndex: number, patch: { question?: string; answer?: string; learnMore?: string }) => {
     setDraft((current) => ({
       ...current,
@@ -3902,6 +4034,39 @@ function TutorProgramAuthoring({
       })
     }));
   };
+  const updateQuizOption = (milestoneIndex: number, resourceIndex: number, questionIndex: number, optionIndex: number, value: string) => {
+    const question = milestones[milestoneIndex]?.resources[resourceIndex]?.quizQuestions?.[questionIndex] ?? emptyQuizQuestions[0];
+    const options = [...(question.options?.length ? question.options : ["", ""] )];
+    options[optionIndex] = value;
+    updateQuizQuestion(milestoneIndex, resourceIndex, questionIndex, { options });
+  };
+  const addQuizOption = (milestoneIndex: number, resourceIndex: number, questionIndex: number) => {
+    const question = milestones[milestoneIndex]?.resources[resourceIndex]?.quizQuestions?.[questionIndex] ?? emptyQuizQuestions[0];
+    updateQuizQuestion(milestoneIndex, resourceIndex, questionIndex, { options: [...(question.options?.length ? question.options : ["", ""]), ""] });
+  };
+  const removeQuizOption = (milestoneIndex: number, resourceIndex: number, questionIndex: number, optionIndex: number) => {
+    const question = milestones[milestoneIndex]?.resources[resourceIndex]?.quizQuestions?.[questionIndex] ?? emptyQuizQuestions[0];
+    const options = (question.options?.length ? question.options : ["", ""]).filter((_, index) => index !== optionIndex);
+    const correctOptionIndexes = (question.correctOptionIndexes?.length ? question.correctOptionIndexes : [question.answerIndex ?? 0])
+      .filter((index) => index !== optionIndex)
+      .map((index) => index > optionIndex ? index - 1 : index)
+      .filter((index) => index >= 0 && index < options.length);
+    updateQuizQuestion(milestoneIndex, resourceIndex, questionIndex, {
+      options,
+      correctOptionIndexes,
+      answerIndex: correctOptionIndexes[0] ?? 0
+    });
+  };
+  const toggleQuizCorrectOption = (milestoneIndex: number, resourceIndex: number, questionIndex: number, optionIndex: number) => {
+    const question = milestones[milestoneIndex]?.resources[resourceIndex]?.quizQuestions?.[questionIndex] ?? emptyQuizQuestions[0];
+    if (question.questionType === "multi") {
+      const current = question.correctOptionIndexes?.length ? question.correctOptionIndexes : [];
+      const correctOptionIndexes = current.includes(optionIndex) ? current.filter((index) => index !== optionIndex) : [...current, optionIndex].sort((a, b) => a - b);
+      updateQuizQuestion(milestoneIndex, resourceIndex, questionIndex, { correctOptionIndexes, answerIndex: correctOptionIndexes[0] ?? 0 });
+      return;
+    }
+    updateQuizQuestion(milestoneIndex, resourceIndex, questionIndex, { correctOptionIndexes: [optionIndex], answerIndex: optionIndex });
+  };
   const addQuizQuestion = (milestoneIndex: number, resourceIndex: number) => {
     setDraft((current) => ({
       ...current,
@@ -3934,6 +4099,15 @@ function TutorProgramAuthoring({
     milestones.length &&
     milestones.every((milestone) => milestone.title.trim() && milestone.sequence > 0 && milestone.resources.length && milestone.resources.every((resource) => resource.title.trim() && resource.description.trim()))
   );
+  const [activeEditor, setActiveEditor] = useState<{ milestoneIndex: number; resourceIndex: number } | null>(null);
+  const addActivityOfType = (type: ResourceType) => {
+    const milestoneIndex = 0;
+    const resources = milestones[milestoneIndex]?.resources ?? [];
+    updateMilestone(milestoneIndex, { resources: [...resources, defaultActivity(type)] });
+    setActiveEditor({ milestoneIndex, resourceIndex: resources.length });
+  };
+  const activeMilestone = activeEditor ? milestones[activeEditor.milestoneIndex] : null;
+  const activeResource = activeMilestone && activeEditor ? activeMilestone.resources[activeEditor.resourceIndex] : null;
 
   return (
     <View style={styles.tutorProgramPanel}>
@@ -3970,7 +4144,7 @@ function TutorProgramAuthoring({
           <Button role={role} label="Add a program" onPress={() => { setDraft(defaultTutorProgramDraft); setEditingProgramId(null); setOpen(true); }} />
         </View>
       )}
-      {open && composerEditable ? (
+      {false && open && composerEditable ? (
         <View style={[styles.tutorComposerCard, { backgroundColor: theme.cardAlt }]}>
           <Text style={styles.tutorComposerTitle}>{editingProgramId ? "Edit program" : "Add a program"}</Text>
           <FieldLabel>Program title</FieldLabel>
@@ -4098,7 +4272,216 @@ function TutorProgramAuthoring({
           <Button role={role} label={editingProgramId ? "Save updates" : "Create program"} onPress={createProgram} disabled={!canCreate} loading={loading} />
         </View>
       ) : null}
+      <Modal visible={open && composerEditable} transparent animationType="slide">
+        <BlurView intensity={90} tint="light" style={styles.authoringBackdrop}>
+          <View style={styles.authoringModalShell}>
+            <View style={styles.authoringHeader}>
+              <Text style={styles.authoringTitle}>{editingProgramId ? "Edit Program" : "Add New Program"}</Text>
+              <Pressable style={({ pressed }) => [styles.authoringClose, pressed && styles.pressed]} onPress={() => setOpen(false)}>
+                <Text style={styles.authoringCloseText}>×</Text>
+              </Pressable>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.authoringContent}>
+              <FieldLabel>1. Title of Program *</FieldLabel>
+              <Input value={draft.title} onChangeText={(title) => updateDraft({ title })} placeholder="Enter program title" />
+              <FieldLabel>2. Description of Program *</FieldLabel>
+              <TextInput multiline value={draft.description} onChangeText={(description) => updateDraft({ description })} placeholder="Enter program description..." placeholderTextColor="#94A3B8" style={styles.authoringDescription} maxLength={1000} />
+              <Text style={styles.authoringCounter}>{draft.description.length}/1000</Text>
+              <FieldLabel>3. Add Program Items</FieldLabel>
+              <Text style={styles.authoringHint}>Add different types of content and arrange them in your desired sequence.</Text>
+              <View style={styles.authoringItemTypeGrid}>
+                {resourceTypeOptions.map((type) => (
+                  <Pressable key={type} style={({ pressed }) => [styles.authoringTypeButton, pressed && styles.pressed]} onPress={() => addActivityOfType(type)}>
+                    <View style={[styles.authoringTypeIcon, { backgroundColor: type === "video" ? "#EDE9FE" : type === "article" ? "#DCFCE7" : type === "flashcard" ? "#FFEDD5" : "#DBEAFE" }]}>
+                      <Text style={[styles.authoringTypeIconText, { color: type === "video" ? theme.text : type === "article" ? "#16A34A" : type === "flashcard" ? "#F97316" : "#2563EB" }]}>{type === "video" ? "▶" : type === "article" ? "▤" : type === "flashcard" ? "▣" : "?"}</Text>
+                    </View>
+                    <Text style={styles.authoringTypeLabel}>{capitalize(type)}</Text>
+                    <Text style={styles.authoringPlus}>＋</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <View style={styles.authoringMilestoneToolbar}>
+                <Text style={styles.authoringSectionTitle}>Milestones & items</Text>
+                <Pressable style={({ pressed }) => [styles.authoringSmallAction, pressed && styles.pressed]} onPress={addMilestone}>
+                  <Text style={[styles.authoringSmallActionText, { color: theme.text }]}>＋ Milestone</Text>
+                </Pressable>
+              </View>
+              {milestones.map((milestone, milestoneIndex) => (
+                <View key={`${milestone.sequence}-${milestoneIndex}`} style={styles.authoringMilestoneBlock}>
+                  <View style={styles.authoringMilestoneHeader}>
+                    <View style={styles.flex}>
+                      <FieldLabel>Milestone {milestoneIndex + 1}</FieldLabel>
+                      <Input value={milestone.title} onChangeText={(title) => updateMilestone(milestoneIndex, { title })} />
+                    </View>
+                    {milestones.length > 1 ? <Pressable onPress={() => removeMilestone(milestoneIndex)}><Text style={styles.authoringDelete}>Delete</Text></Pressable> : null}
+                  </View>
+                  {milestone.resources.length ? milestone.resources.map((resource, resourceIndex) => {
+                    const selected = activeEditor?.milestoneIndex === milestoneIndex && activeEditor.resourceIndex === resourceIndex;
+                    return (
+                      <Pressable key={`${resource.type}-${resourceIndex}`} style={({ pressed }) => [styles.authoringResourceRow, selected && { borderColor: theme.text }, pressed && styles.pressed]} onPress={() => setActiveEditor({ milestoneIndex, resourceIndex })}>
+                        <View style={styles.authoringMoveStack}>
+                          <Pressable onPress={() => moveActivity(milestoneIndex, resourceIndex, -1)}><Text style={styles.authoringMoveText}>↑</Text></Pressable>
+                          <Pressable onPress={() => moveActivity(milestoneIndex, resourceIndex, 1)}><Text style={styles.authoringMoveText}>↓</Text></Pressable>
+                        </View>
+                        <View style={styles.authoringSequence}><Text style={styles.authoringSequenceText}>{resourceIndex + 1}</Text></View>
+                        <View style={styles.flex}>
+                          <Text style={styles.authoringResourceTitle}>{resource.title || `${capitalize(resource.type)} title`}</Text>
+                          <Text style={styles.authoringResourceMeta}>{resource.description || "Tap to add details"}</Text>
+                        </View>
+                        <Text style={[styles.authoringTypeBadge, { color: typeColor(resource.type), backgroundColor: typeBg(resource.type) }]}>{capitalize(resource.type)}</Text>
+                        <Text style={styles.authoringResourceMeta}>{resource.type === "flashcard" ? `${resource.flashcards?.length ?? 0} cards` : resource.type === "quiz" ? `${resource.quizQuestions?.length ?? 0} questions` : ""}</Text>
+                        <Pressable onPress={() => { removeActivity(milestoneIndex, resourceIndex); setActiveEditor(null); }}><Text style={styles.authoringKebab}>×</Text></Pressable>
+                      </Pressable>
+                    );
+                  }) : <Text style={styles.authoringHint}>No items yet. Use Video, Article, Flashcards, or Quiz above.</Text>}
+                </View>
+              ))}
+              {activeResource && activeEditor ? (
+                <View style={styles.authoringEditorPanel}>
+                  <View style={styles.authoringHeader}>
+                    <Text style={styles.authoringSectionTitle}>Add {capitalize(activeResource.type)}</Text>
+                    <Pressable onPress={() => setActiveEditor(null)}><Text style={styles.authoringCloseText}>×</Text></Pressable>
+                  </View>
+                  <FieldLabel>Title *</FieldLabel>
+                  <Input value={activeResource.title} onChangeText={(title) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { title })} placeholder={`Enter ${activeResource.type} title`} />
+                  <FieldLabel>Description *</FieldLabel>
+                  <TextInput multiline value={activeResource.description} onChangeText={(description) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { description })} placeholder={`Enter ${activeResource.type} description`} placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                  <FieldLabel>Thumbnail</FieldLabel>
+                  {activeResource.thumbnailPath ? <Image source={{ uri: activeResource.thumbnailPath }} style={styles.authoringImagePreview} resizeMode="cover" /> : null}
+                  <UploadOption title={activeResource.thumbnailPath ? "Change thumbnail" : "Upload thumbnail"} action="Image" onPress={() => pickAuthoringImage((thumbnailPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { thumbnailPath }))} />
+                  <FieldLabel>Banner</FieldLabel>
+                  {activeResource.bannerPath ? <Image source={{ uri: activeResource.bannerPath }} style={styles.authoringBannerPreview} resizeMode="cover" /> : null}
+                  <UploadOption title={activeResource.bannerPath ? "Change banner" : "Upload banner"} action="Image" onPress={() => pickAuthoringImage((bannerPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { bannerPath }))} />
+                  {activeResource.type === "video" ? (
+                    <View style={styles.authoringUploadGrid}>
+                      <FieldLabel>Video file</FieldLabel>
+                      <UploadOption title="Upload video" action={activeResource.mediaUrl ? "Selected" : "MP4"} onPress={() => pickAuthoringFile((mediaUrl) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { mediaUrl }))} />
+                      {activeResource.mediaUrl ? <Text style={styles.authoringUploadNote} numberOfLines={1}>{activeResource.mediaUrl}</Text> : null}
+                      <Text style={styles.authoringUploadNote}>Supported file type: mp4</Text>
+                      <FieldLabel>Subtitle file</FieldLabel>
+                      <UploadOption title="Upload captions" action={activeResource.vttPath ? "Selected" : "VTT"} onPress={() => pickAuthoringFile((vttPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { vttPath }))} />
+                      {activeResource.vttPath ? <Text style={styles.authoringUploadNote} numberOfLines={1}>{activeResource.vttPath}</Text> : null}
+                      <Text style={styles.authoringUploadNote}>Supported file type: vtt</Text>
+                      <FieldLabel>Body</FieldLabel>
+                      <UploadOption title="Upload notes" action={activeResource.metadataPath ? "Selected" : "Document"} onPress={() => pickAuthoringFile((metadataPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { metadataPath }))} />
+                      {activeResource.metadataPath ? <Text style={styles.authoringUploadNote} numberOfLines={1}>{activeResource.metadataPath}</Text> : null}
+                      <Text style={styles.authoringUploadNote}>Supported file types: pdf, word, md</Text>
+                    </View>
+                  ) : null}
+                  {activeResource.type === "article" ? (
+                    <View style={styles.authoringUploadGrid}>
+                      <FieldLabel>Article body</FieldLabel>
+                      <UploadOption title="Upload body" action={activeResource.metadataPath ? "Selected" : "Document"} onPress={() => pickAuthoringFile((metadataPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { metadataPath }))} />
+                      {activeResource.metadataPath ? <Text style={styles.authoringUploadNote} numberOfLines={1}>{activeResource.metadataPath}</Text> : null}
+                      <Text style={styles.authoringUploadNote}>Supported file types: pdf, word</Text>
+                      <TextInput multiline value={activeResource.body ?? ""} onChangeText={(body) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { body })} placeholder="Notes, examples, and board-style guidance" placeholderTextColor="#94A3B8" style={styles.textArea} />
+                    </View>
+                  ) : null}
+                  {activeResource.type === "flashcard" ? (
+                    <View style={styles.authoringSplitEditor}>
+                      {(activeResource.flashcards?.length ? activeResource.flashcards : emptyFlashcards).map((card, cardIndex) => (
+                        <View key={cardIndex} style={styles.authoringNestedCard}>
+                          <View style={styles.rowBetween}><FieldLabel>Card {cardIndex + 1}</FieldLabel><Pressable onPress={() => removeFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex, cardIndex)}><Text style={styles.authoringDelete}>Delete</Text></Pressable></View>
+                          <Input value={card.question} onChangeText={(question) => updateFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex, cardIndex, { question })} placeholder="Front question or term" />
+                          <Input value={card.answer} onChangeText={(answer) => updateFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex, cardIndex, { answer })} placeholder="Back answer" />
+                          <FieldLabel>More details</FieldLabel>
+                          <UploadOption title="Upload details" action="Document" onPress={() => pickAuthoringFile((learnMore) => updateFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex, cardIndex, { learnMore }))} />
+                          <Text style={styles.authoringUploadNote}>Supported file types: pdf, word, md</Text>
+                          <TextInput multiline value={card.learnMore ?? ""} onChangeText={(learnMore) => updateFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex, cardIndex, { learnMore })} placeholder="More details" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                        </View>
+                      ))}
+                      <Button role={role} variant="secondary" label="Add Card" onPress={() => addFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex)} />
+                    </View>
+                  ) : null}
+                  {activeResource.type === "quiz" ? (
+                    <View style={styles.authoringSplitEditor}>
+                      {(activeResource.quizQuestions?.length ? activeResource.quizQuestions : emptyQuizQuestions).map((question, questionIndex) => (
+                        <View key={questionIndex} style={styles.authoringNestedCard}>
+                          <View style={styles.rowBetween}><FieldLabel>Question {questionIndex + 1}</FieldLabel><Pressable onPress={() => removeQuizQuestion(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex)}><Text style={styles.authoringDelete}>Delete</Text></Pressable></View>
+                          <FieldLabel>Question Type</FieldLabel>
+                          <DropdownField value={question.questionType === "multi" ? "Multiple Choice" : question.questionType === "free_text" ? "Free Text" : "Single Choice"} options={["Single Choice", "Multiple Choice", "Free Text"]} onSelect={(value) => {
+                            const questionType = value === "Multiple Choice" ? "multi" : value === "Free Text" ? "free_text" : "single";
+                            const firstCorrect = question.correctOptionIndexes?.[0] ?? question.answerIndex ?? 0;
+                            updateQuizQuestion(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, {
+                              questionType,
+                              correctOptionIndexes: questionType === "multi" ? (question.correctOptionIndexes?.length ? question.correctOptionIndexes : [firstCorrect]) : [firstCorrect],
+                              answerIndex: firstCorrect
+                            });
+                          }} />
+                          <FieldLabel>Question *</FieldLabel>
+                          <TextInput multiline value={question.prompt} onChangeText={(prompt) => updateQuizQuestion(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, { prompt })} placeholder="Enter your question" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                          {question.questionType === "free_text" ? (
+                            <>
+                              <FieldLabel>Expected answer</FieldLabel>
+                              <TextInput multiline value={question.answerText ?? ""} onChangeText={(answerText) => updateQuizQuestion(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, { answerText })} placeholder="Model answer or accepted phrase" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                            </>
+                          ) : (
+                            <View style={styles.quizOptionGroup}>
+                              <FieldLabel>Options</FieldLabel>
+                              {(question.options?.length ? question.options : ["", ""]).map((option, optionIndex) => {
+                                const correctIndexes = question.correctOptionIndexes?.length ? question.correctOptionIndexes : [question.answerIndex ?? 0];
+                                const selected = correctIndexes.includes(optionIndex);
+                                return (
+                                  <View key={optionIndex} style={styles.quizOptionRow}>
+                                    <TextInput value={option} onChangeText={(value) => updateQuizOption(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, optionIndex, value)} placeholder={`Option ${optionIndex + 1}`} placeholderTextColor="#94A3B8" style={styles.quizOptionInput} />
+                                    <Pressable style={({ pressed }) => [styles.quizCorrectToggle, selected ? styles.quizCorrectToggleOn : styles.quizCorrectToggleOff, pressed && styles.pressed]} onPress={() => toggleQuizCorrectOption(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, optionIndex)}>
+                                      <Text style={[styles.quizCorrectToggleText, selected ? styles.quizCorrectToggleTextOn : styles.quizCorrectToggleTextOff]}>{selected ? "Correct" : "Incorrect"}</Text>
+                                    </Pressable>
+                                    {(question.options?.length ?? 0) > 2 ? <Pressable style={({ pressed }) => [styles.quizOptionDelete, pressed && styles.pressed]} onPress={() => removeQuizOption(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, optionIndex)}><Text style={styles.quizOptionDeleteText}>×</Text></Pressable> : null}
+                                  </View>
+                                );
+                              })}
+                              <Pressable style={({ pressed }) => [styles.quizAddOption, pressed && styles.pressed]} onPress={() => addQuizOption(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex)}>
+                                <Text style={[styles.quizAddOptionText, { color: theme.text }]}>＋ Add Option</Text>
+                              </Pressable>
+                            </View>
+                          )}
+                          <FieldLabel>Explanation</FieldLabel>
+                          <UploadOption title="Upload explanation" action="Document" onPress={() => pickAuthoringFile((learnMore) => updateQuizQuestion(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, { learnMore }))} />
+                          <Text style={styles.authoringUploadNote}>Supported file types: pdf, word, md</Text>
+                          <TextInput multiline value={question.learnMore ?? ""} onChangeText={(learnMore) => updateQuizQuestion(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, { learnMore })} placeholder="Explanation" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
+                        </View>
+                      ))}
+                      <Button role={role} variant="secondary" label="Add Question" onPress={() => addQuizQuestion(activeEditor.milestoneIndex, activeEditor.resourceIndex)} />
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+            </ScrollView>
+            <View style={styles.authoringFooter}>
+              <Button role={role} variant="secondary" label="Cancel" onPress={() => setOpen(false)} />
+              <Button role={role} label={editingProgramId ? "Save Program" : "Create Program"} onPress={createProgram} disabled={!canCreate} loading={loading} />
+            </View>
+          </View>
+        </BlurView>
+      </Modal>
     </View>
+  );
+}
+
+function typeBg(type: ResourceType) {
+  if (type === "video") return "#EDE9FE";
+  if (type === "article") return "#DCFCE7";
+  if (type === "flashcard") return "#FFEDD5";
+  return "#DBEAFE";
+}
+
+function typeColor(type: ResourceType) {
+  if (type === "video") return "#6D4CE8";
+  if (type === "article") return "#16A34A";
+  if (type === "flashcard") return "#F97316";
+  return "#2563EB";
+}
+
+function UploadOption({ title, action, onPress }: { title: string; action: string; onPress?: () => void }) {
+  return (
+    <Pressable style={({ pressed }) => [styles.authoringUploadOption, pressed && styles.pressed]} onPress={onPress}>
+      <View style={styles.authoringUploadIcon}><Text style={styles.authoringUploadIconText}>⇧</Text></View>
+      <View style={styles.flex}>
+        <Text style={styles.authoringUploadTitle}>{title}</Text>
+        <Text style={styles.authoringUploadMeta}>{action}</Text>
+      </View>
+    </Pressable>
   );
 }
 
@@ -5858,14 +6241,25 @@ const styles = StyleSheet.create({
   programStatusLine: { alignItems: "flex-start", marginTop: -2 },
   programStatusPill: { backgroundColor: "rgba(255,255,255,0.82)", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, fontSize: 12, fontWeight: "900", overflow: "hidden", paddingHorizontal: 12, paddingVertical: 7 },
   programLifecycleActions: { gap: 8, marginTop: 10 },
-  tutorEmptyProgramCard: { alignItems: "center", borderColor: "#DDE7EF", borderRadius: 24, borderWidth: 1, gap: 14, justifyContent: "center", marginTop: 10, minHeight: 360, padding: 24, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.08, shadowRadius: 22, elevation: 2 },
+  tutorEmptyProgramCard: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E7DFFF", borderRadius: 18, borderWidth: 1, flexDirection: "row", gap: 14, marginTop: 10, minHeight: 150, padding: 14, shadowColor: "#5B3DF5", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 22, elevation: 2 },
+  tutorEmptyIllustration: { alignItems: "center", borderRadius: 18, height: 108, justifyContent: "center", overflow: "hidden", width: 88 },
+  tutorEmptySparkle: { color: "#8C7BFF", fontSize: 15, fontWeight: "900", left: 10, position: "absolute", top: 10 },
+  tutorEmptyBooks: { fontSize: 42, lineHeight: 48, marginTop: 4 },
+  tutorEmptyBookBase: { color: "#8C7BFF", fontSize: 34, lineHeight: 34, marginTop: -10 },
+  tutorEmptyBody: { flex: 1, gap: 6, minWidth: 0 },
+  tutorEmptyChip: { alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5 },
+  tutorEmptyChipText: { fontSize: 10, fontWeight: "900" },
   tutorEmptyIcon: { alignItems: "center", borderRadius: 28, height: 78, justifyContent: "center", width: 78 },
   tutorEmptyIconText: { fontSize: 34, fontWeight: "900", lineHeight: 40 },
-  tutorEmptyTitle: { color: "#202A35", fontSize: 22, fontWeight: "900", lineHeight: 28, marginTop: 4, textAlign: "center" },
-  tutorEmptyCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 21, maxWidth: 310, textAlign: "center" },
+  tutorEmptyTitle: { color: "#202A35", fontSize: 20, fontWeight: "900", lineHeight: 25 },
+  tutorEmptyCopy: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 18 },
   tutorEmptyCta: { alignSelf: "center", borderRadius: 14, height: 48, marginTop: 4, overflow: "hidden", width: 230 },
   tutorEmptyCtaGradient: { alignItems: "center", height: 48, justifyContent: "center", paddingHorizontal: 18 },
   tutorEmptyCtaText: { color: "#201A00", fontSize: 14, fontWeight: "900" },
+  tutorEmptyAddTile: { alignItems: "center", borderRadius: 16, borderStyle: "dashed", borderWidth: 1, gap: 8, height: 108, justifyContent: "center", width: 86 },
+  tutorEmptyAddIcon: { alignItems: "center", borderRadius: 999, height: 38, justifyContent: "center", width: 38 },
+  tutorEmptyAddIconText: { fontSize: 24, fontWeight: "800", lineHeight: 28 },
+  tutorEmptyAddText: { fontSize: 10, fontWeight: "900", textAlign: "center" },
   tutorProgramPanel: { gap: 14 },
   tutorProgramSummary: { borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, flexDirection: "row", gap: 12, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
   tutorProgramEyebrow: { color: "#64748B", fontSize: 12, fontWeight: "900", letterSpacing: 0 },
@@ -5880,6 +6274,64 @@ const styles = StyleSheet.create({
   tutorResourceEditor: { backgroundColor: "rgba(255,255,255,0.86)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, marginTop: 8, padding: 12 },
   tutorResourceTitle: { color: "#202A35", fontSize: 16, fontWeight: "900" },
   tutorResourcePill: { backgroundColor: "#F2F7FB", borderRadius: 999, color: "#536A86", fontSize: 11, fontWeight: "900", overflow: "hidden", paddingHorizontal: 10, paddingVertical: 5 },
+  authoringBackdrop: { flex: 1, justifyContent: "center", padding: 14 },
+  authoringModalShell: { alignSelf: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, maxHeight: "92%", overflow: "hidden", shadowColor: "#0F172A", shadowOffset: { width: 0, height: 18 }, shadowOpacity: 0.16, shadowRadius: 30, width: "100%" },
+  authoringHeader: { alignItems: "center", flexDirection: "row", gap: 12, justifyContent: "space-between" },
+  authoringTitle: { color: "#111827", fontSize: 20, fontWeight: "900", lineHeight: 26, padding: 18, paddingBottom: 8 },
+  authoringClose: { alignItems: "center", borderRadius: 999, height: 36, justifyContent: "center", marginRight: 10, width: 36 },
+  authoringCloseText: { color: "#111827", fontSize: 24, fontWeight: "300", lineHeight: 28 },
+  authoringContent: { gap: 10, padding: 16, paddingTop: 4 },
+  authoringDescription: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 8, borderWidth: 1, color: "#111827", minHeight: 94, padding: 12, textAlignVertical: "top" },
+  authoringCounter: { alignSelf: "flex-end", color: "#64748B", fontSize: 11, fontWeight: "700", marginTop: -6 },
+  authoringHint: { color: "#64748B", fontSize: 12, fontWeight: "600", lineHeight: 17 },
+  authoringItemTypeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  authoringTypeButton: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 10, borderWidth: 1, flexDirection: "row", gap: 10, minHeight: 54, minWidth: "47%", paddingHorizontal: 12 },
+  authoringTypeIcon: { alignItems: "center", borderRadius: 999, height: 30, justifyContent: "center", width: 30 },
+  authoringTypeIconText: { fontSize: 15, fontWeight: "900" },
+  authoringTypeLabel: { color: "#111827", flex: 1, fontSize: 13, fontWeight: "900" },
+  authoringPlus: { color: "#4338CA", fontSize: 20, fontWeight: "700" },
+  authoringMilestoneToolbar: { alignItems: "center", flexDirection: "row", gap: 10, justifyContent: "space-between", marginTop: 8 },
+  authoringSectionTitle: { color: "#111827", fontSize: 16, fontWeight: "900", lineHeight: 22 },
+  authoringSmallAction: { backgroundColor: "#F8FAFC", borderColor: "#DDE7EF", borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 8 },
+  authoringSmallActionText: { fontSize: 12, fontWeight: "900" },
+  authoringMilestoneBlock: { backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: 12, borderWidth: 1, gap: 8, padding: 10 },
+  authoringMilestoneHeader: { alignItems: "flex-end", flexDirection: "row", gap: 10 },
+  authoringDelete: { color: "#EF4444", fontSize: 12, fontWeight: "900" },
+  authoringResourceRow: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 8, borderWidth: 1, flexDirection: "row", gap: 9, minHeight: 52, paddingHorizontal: 9, paddingVertical: 8 },
+  authoringMoveStack: { alignItems: "center", gap: 2, justifyContent: "center", width: 22 },
+  authoringMoveText: { color: "#64748B", fontSize: 14, fontWeight: "900", lineHeight: 16 },
+  authoringSequence: { alignItems: "center", backgroundColor: "#F1F5F9", borderRadius: 6, height: 28, justifyContent: "center", width: 28 },
+  authoringSequenceText: { color: "#475569", fontSize: 12, fontWeight: "900" },
+  authoringResourceTitle: { color: "#111827", fontSize: 13, fontWeight: "900", lineHeight: 17 },
+  authoringResourceMeta: { color: "#64748B", fontSize: 11, fontWeight: "700" },
+  authoringTypeBadge: { borderRadius: 999, fontSize: 11, fontWeight: "900", overflow: "hidden", paddingHorizontal: 9, paddingVertical: 5 },
+  authoringKebab: { color: "#334155", fontSize: 20, fontWeight: "600" },
+  authoringEditorPanel: { backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: 14, borderWidth: 1, gap: 10, marginTop: 8, padding: 12 },
+  authoringUploadGrid: { gap: 9 },
+  authoringImagePreview: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 12, borderWidth: 1, height: 120, width: "100%" },
+  authoringBannerPreview: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 12, borderWidth: 1, height: 150, width: "100%" },
+  authoringUploadOption: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: 10, borderWidth: 1, flexDirection: "row", gap: 12, minHeight: 58, padding: 12 },
+  authoringUploadIcon: { alignItems: "center", backgroundColor: "#EEF2FF", borderRadius: 8, height: 36, justifyContent: "center", width: 36 },
+  authoringUploadIconText: { color: "#4338CA", fontSize: 18, fontWeight: "900" },
+  authoringUploadTitle: { color: "#111827", fontSize: 13, fontWeight: "900" },
+  authoringUploadMeta: { color: "#64748B", fontSize: 11, fontWeight: "700" },
+  authoringUploadNote: { color: "#64748B", fontSize: 11, fontWeight: "700", marginTop: -5 },
+  authoringSplitEditor: { gap: 10 },
+  authoringNestedCard: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 12, borderWidth: 1, gap: 8, padding: 10 },
+  quizOptionGroup: { gap: 8 },
+  quizOptionRow: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: 10, borderWidth: 1, flexDirection: "row", gap: 8, minHeight: 46, paddingHorizontal: 10, paddingVertical: 7 },
+  quizOptionInput: { color: "#111827", flex: 1, fontSize: 13, fontWeight: "700", minHeight: 34, paddingVertical: 6 },
+  quizCorrectToggle: { alignItems: "center", borderRadius: 999, borderWidth: 1, minHeight: 28, justifyContent: "center", minWidth: 78, paddingHorizontal: 10, paddingVertical: 5 },
+  quizCorrectToggleOn: { backgroundColor: "#DCFCE7", borderColor: "#BBF7D0" },
+  quizCorrectToggleOff: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0" },
+  quizCorrectToggleText: { fontSize: 10, fontWeight: "900" },
+  quizCorrectToggleTextOn: { color: "#16A34A" },
+  quizCorrectToggleTextOff: { color: "#64748B" },
+  quizOptionDelete: { alignItems: "center", backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 999, borderWidth: 1, height: 26, justifyContent: "center", width: 26 },
+  quizOptionDeleteText: { color: "#64748B", fontSize: 16, fontWeight: "900", lineHeight: 18 },
+  quizAddOption: { alignSelf: "flex-start", paddingHorizontal: 2, paddingVertical: 5 },
+  quizAddOptionText: { fontSize: 12, fontWeight: "900" },
+  authoringFooter: { backgroundColor: "#FFFFFF", borderTopColor: "#E2E8F0", borderTopWidth: 1, flexDirection: "row", gap: 10, justifyContent: "flex-end", padding: 14 },
   tutorProgramSectionTitle: { color: "#202A35", fontSize: 15, fontWeight: "900", marginTop: 4 },
   rowBetween: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   textAreaSmall: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 16, borderWidth: 1, color: "#111827", minHeight: 64, padding: 14, textAlignVertical: "top" },
@@ -5895,21 +6347,29 @@ const styles = StyleSheet.create({
   mileNode: { alignItems: "center", borderColor: "#FFFFFF", borderRadius: 999, borderWidth: 3, height: 40, justifyContent: "center", marginTop: 26, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.10, shadowRadius: 12, width: 40, zIndex: 2 },
   mileNodeLocked: { backgroundColor: "#F1ECF8", borderColor: "#E1D9EC" },
   mileNodeText: { fontSize: 15, fontWeight: "900" },
-  mileCard: { alignItems: "center", alignSelf: "flex-start", backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#E4DDED", borderRadius: 17, borderWidth: 1, flex: 1, gap: 10, marginBottom: 24, minHeight: 112, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.06, shadowRadius: 14, elevation: 2 },
-  mileCardActive: { minHeight: 142, shadowOpacity: 0.09 },
+  mileCard: { alignSelf: "flex-start", backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#EEE8FF", borderRadius: 18, borderWidth: 1, flex: 1, gap: 12, marginBottom: 24, minHeight: 132, padding: 14, shadowColor: "#5B3DF5", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.08, shadowRadius: 18, elevation: 2 },
+  mileCardActive: { minHeight: 148, shadowOpacity: 0.11 },
   mileCardLocked: { backgroundColor: "rgba(221,211,233,0.72)", borderColor: "rgba(221,211,233,0.72)", shadowOpacity: 0.02 },
   mileChip: { alignSelf: "center", borderRadius: 8, marginTop: -28, paddingHorizontal: 13, paddingVertical: 5 },
   mileChipText: { fontSize: 12, fontWeight: "900" },
-  mileCardTitle: { color: "#202A35", fontSize: 18, fontWeight: "800", lineHeight: 23, textAlign: "center" },
+  mileCardTopRow: { alignItems: "flex-start", flexDirection: "row", gap: 12 },
+  mileCardTopRowTutor: { alignItems: "flex-start", flexDirection: "row", gap: 0 },
+  mileIconTile: { alignItems: "center", borderColor: "#E7DFFF", borderRadius: 14, borderWidth: 1, height: 52, justifyContent: "center", width: 52 },
+  mileIconText: { fontSize: 24, fontWeight: "900", lineHeight: 28 },
+  mileTitleRow: { alignItems: "flex-start", flexDirection: "row", gap: 8, justifyContent: "space-between" },
+  mileCardTitle: { color: "#202A35", flex: 1, fontSize: 15, fontWeight: "900", lineHeight: 20 },
   mileCardTitleLocked: { color: "#6F687C" },
-  mileProgressTrack: { backgroundColor: "#E5E7EB", borderRadius: 999, height: 4, overflow: "hidden", width: "78%" },
-  mileProgressFill: { borderRadius: 999, height: 4 },
-  mileProgressText: { color: "#3F4754", fontSize: 12, fontWeight: "800" },
-  mileActivityText: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17, textAlign: "center" },
-  mileCta: { alignItems: "center", borderColor: "transparent", borderRadius: 999, borderWidth: 1.5, justifyContent: "center", minHeight: 44, paddingHorizontal: 18, width: "100%" },
+  mileCountPill: { backgroundColor: "#F2EEFF", borderRadius: 999, color: "#5B3DF5", fontSize: 11, fontWeight: "900", overflow: "hidden", paddingHorizontal: 9, paddingVertical: 5 },
+  mileProgressTrack: { backgroundColor: "#E8E5EF", borderRadius: 999, height: 5, marginTop: 10, overflow: "hidden", width: "100%" },
+  mileProgressFill: { borderRadius: 999, height: 5 },
+  mileProgressText: { color: "#6B7280", fontSize: 12, fontWeight: "800", marginTop: 7 },
+  mileActivityText: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17 },
+  mileCta: { alignItems: "center", borderColor: "transparent", borderRadius: 12, borderWidth: 1.5, justifyContent: "center", minHeight: 44, overflow: "hidden", width: "100%" },
+  mileCtaGradient: { alignItems: "center", flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 44, paddingHorizontal: 18, width: "100%" },
+  mileCtaIcon: { color: "#FFFFFF", fontSize: 15, fontWeight: "900" },
   mileCtaOutline: { backgroundColor: "#FFFFFF" },
   mileCtaLocked: { backgroundColor: "rgba(198,188,211,0.72)", borderColor: "transparent" },
-  mileCtaText: { fontSize: 14, fontWeight: "900" },
+  mileCtaText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
   row: { flexDirection: "row", gap: 10 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   metric: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.045, shadowRadius: 12, elevation: 1, width: "47%" },
@@ -6229,6 +6689,8 @@ const styles = StyleSheet.create({
   quizPrompt: { color: "#111827", fontSize: 19, fontWeight: "800", lineHeight: 27, marginTop: 8 },
   quizOptions: { gap: 11, marginTop: 20 },
   quizOption: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE3EA", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 12, justifyContent: "space-between", minHeight: 50, paddingHorizontal: 14, paddingVertical: 12 },
+  quizOptionCorrect: { backgroundColor: "#ECFDF3", borderColor: "#35B34A" },
+  quizOptionWrong: { backgroundColor: "#FEF2F2", borderColor: "#D53F3F" },
   quizOptionText: { color: "#111827", flex: 1, fontSize: 15, fontWeight: "700", lineHeight: 21 },
   quizCorrect: { color: "#35B34A", fontSize: 18, fontWeight: "900" },
   quizWrong: { color: "#D53F3F", fontSize: 18, fontWeight: "900" },

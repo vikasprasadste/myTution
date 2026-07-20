@@ -3841,6 +3841,7 @@ app.get("/api/v1/ams/assets/:id/file/:kind", async (req, res) => {
 });
 
 app.get("/api/v1/resources/:id/quiz", async (req, res) => {
+  const role = req.query.role ? readRole(req.query.role) : null;
   const resource = await prisma.resource.findUnique({
     where: { id: req.params.id },
     include: { milestoneActivities: { include: { milestone: { include: { program: true } } } } }
@@ -3860,12 +3861,77 @@ app.get("/api/v1/resources/:id/quiz", async (req, res) => {
   const resourceQuestions = contentJson && Array.isArray(contentJson.questions)
     ? contentJson.questions
     : null;
+  let checkpoint = null;
+  if (resource && role === "student") {
+    const userId = await readUserId(req).catch(() => null);
+    const profile = userId ? await findProfile("student", userId) : null;
+    if (profile) {
+      const saved = await prisma.quizCheckpoint.findUnique({
+        where: { profileId_resourceId: { profileId: profile.id, resourceId: resource.id } }
+      });
+      if (saved && !saved.completed) {
+        checkpoint = {
+          answers: saved.answers,
+          submitted: saved.submitted,
+          currentIndex: saved.currentIndex,
+          completed: saved.completed,
+          updatedAt: saved.updatedAt.toISOString()
+        };
+      }
+    }
+  }
   res.json({
     data: {
       resourceId: req.params.id,
       title: resource?.title ?? "Diagnostic MCQ quiz",
       description: resource?.description ?? "Answer each question to calculate your score and unlock the next learning step.",
-      questions: resourceQuestions ?? quizQuestionBank
+      questions: resourceQuestions ?? quizQuestionBank,
+      checkpoint
+    }
+  });
+});
+
+app.post("/api/v1/resources/:id/quiz-checkpoint", async (req, res) => {
+  const role = readRole(req.body.role);
+  if (role !== "student") {
+    res.status(403).json({ error: "Only students can save quiz checkpoints" });
+    return;
+  }
+  const userId = await readUserId(req);
+  const profile = await findProfile("student", userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+  const resource = await prisma.resource.findUnique({
+    where: { id: req.params.id },
+    include: { milestoneActivities: { include: { milestone: { include: { program: true } } } } }
+  });
+  if (!resource || resource.type !== "quiz") {
+    res.status(404).json({ error: "Quiz resource not found" });
+    return;
+  }
+  const entitlement = await resolveResourceEntitlement(req, resource);
+  if (!entitlement.entitled || entitlement.readonly) {
+    res.status(403).json({ error: "Quiz is not available for this profile" });
+    return;
+  }
+  const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
+  const submitted = Array.isArray(req.body.submitted) ? req.body.submitted.map(Boolean) : [];
+  const currentIndex = Math.max(0, Number(req.body.currentIndex) || 0);
+  const completed = Boolean(req.body.completed);
+  const checkpoint = await prisma.quizCheckpoint.upsert({
+    where: { profileId_resourceId: { profileId: profile.id, resourceId: resource.id } },
+    update: { answers, submitted, currentIndex, completed, sourceTag: "app" },
+    create: { profileId: profile.id, resourceId: resource.id, answers, submitted, currentIndex, completed, sourceTag: "app" }
+  });
+  res.json({
+    data: {
+      answers: checkpoint.answers,
+      submitted: checkpoint.submitted,
+      currentIndex: checkpoint.currentIndex,
+      completed: checkpoint.completed,
+      updatedAt: checkpoint.updatedAt.toISOString()
     }
   });
 });
@@ -3930,6 +3996,11 @@ app.post("/api/v1/resources/:id/quiz-attempts", async (req, res) => {
       answers,
       sourceTag: "app"
     }
+  });
+  await prisma.quizCheckpoint.upsert({
+    where: { profileId_resourceId: { profileId: profile.id, resourceId: resource.id } },
+    update: { answers, submitted: answers.map(() => true), currentIndex: Math.max(0, total - 1), completed: true, sourceTag: "app" },
+    create: { profileId: profile.id, resourceId: resource.id, answers, submitted: answers.map(() => true), currentIndex: Math.max(0, total - 1), completed: true, sourceTag: "app" }
   });
   res.status(201).json({ data: toQuizAttemptSummary(attempt) });
 });
