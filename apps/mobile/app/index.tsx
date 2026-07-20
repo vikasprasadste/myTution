@@ -42,6 +42,7 @@ type AppScreen =
   | "otp"
   | "createPassword"
   | "activation"
+  | "forgotPassword"
   | "profile"
   | "editProfile"
   | "signin"
@@ -304,7 +305,14 @@ export default function Index() {
   const [parentActivationCode, setParentActivationCode] = useState("");
   const [activationRelationship, setActivationRelationship] = useState("Mother");
   const [activationCode, setActivationCode] = useState("");
+  const [activationCodesByRelationship, setActivationCodesByRelationship] = useState<Record<string, { code: string; expiresAt: number }>>({});
+  const [activationSeconds, setActivationSeconds] = useState(0);
   const [linkedParents, setLinkedParents] = useState<ParentLink[]>([]);
+  const [resetCode, setResetCode] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
+  const [resetSeconds, setResetSeconds] = useState(0);
+  const [resetRequested, setResetRequested] = useState(false);
   const [stream, setStream] = useState<StreamKey>("senior");
   const [specialization, setSpecialization] = useState("CBSE Class 10 Mathematics");
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>({
@@ -380,6 +388,7 @@ export default function Index() {
   const otpComplete = otp.every((digit) => /^\d$/.test(digit));
   const otpValue = otp.join("");
   const passwordValid = password.length >= 8 && password === confirmPassword;
+  const resetPasswordValid = resetPassword.length >= 8 && resetPassword === resetConfirmPassword;
   const emptyPersona = useMemo<Persona>(() => ({
     role,
     firstName: "",
@@ -410,6 +419,40 @@ export default function Index() {
     const timer = setInterval(() => setOtpSeconds((value) => Math.max(0, value - 1)), 1000);
     return () => clearInterval(timer);
   }, [screen]);
+
+  useEffect(() => {
+    if (!resetRequested || resetSeconds <= 0) return undefined;
+    const timer = setInterval(() => setResetSeconds((value) => Math.max(0, value - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [resetRequested, resetSeconds]);
+
+  useEffect(() => {
+    if (resetRequested && resetSeconds === 0) setResetCode("");
+  }, [resetRequested, resetSeconds]);
+
+  useEffect(() => {
+    const active = activationCodesByRelationship[activationRelationship];
+    if (!active) {
+      setActivationCode("");
+      setActivationSeconds(0);
+      return undefined;
+    }
+    const sync = () => {
+      const seconds = Math.max(0, Math.ceil((active.expiresAt - Date.now()) / 1000));
+      setActivationSeconds(seconds);
+      setActivationCode(seconds > 0 ? active.code : "");
+      if (seconds <= 0) {
+        setActivationCodesByRelationship((items) => {
+          const next = { ...items };
+          delete next[activationRelationship];
+          return next;
+        });
+      }
+    };
+    sync();
+    const timer = setInterval(sync, 1000);
+    return () => clearInterval(timer);
+  }, [activationCodesByRelationship, activationRelationship]);
 
   useEffect(() => {
     if (screen !== "home") return undefined;
@@ -1036,6 +1079,14 @@ export default function Index() {
     setPassword("");
     setConfirmPassword("");
     setSigninPassword("");
+    setResetCode("");
+    setResetPassword("");
+    setResetConfirmPassword("");
+    setResetSeconds(0);
+    setResetRequested(false);
+    setActivationCode("");
+    setActivationCodesByRelationship({});
+    setActivationSeconds(0);
     setStream("senior");
     setSpecialization("CBSE Class 10 Mathematics");
     setAvatarUri(null);
@@ -1125,6 +1176,50 @@ export default function Index() {
       setApiNotice("");
       setProgramModalSeen(false);
       setScreen("home");
+    } catch {
+      setApiNotice("Something went wrong");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function requestPasswordReset() {
+    if (!phoneComplete) return;
+    setLoadingAction("forgotPassword");
+    try {
+      const response = await apiPost<{ data: { resetSent: boolean; expiresInSeconds: number; resetHint?: string } }>("/api/v1/auth/password/forgot", {
+        phone: phoneForApi,
+        role
+      });
+      setResetRequested(true);
+      setResetSeconds(response.data.expiresInSeconds ?? 60);
+      setResetCode(response.data.resetHint ?? "");
+      setApiNotice("");
+    } catch {
+      setApiNotice("Something went wrong");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function resetPasswordWithCode() {
+    if (!phoneComplete || resetCode.replace(/\D/g, "").length !== 6 || !resetPasswordValid) return;
+    setLoadingAction("resetPassword");
+    try {
+      await apiPost("/api/v1/auth/password/reset", {
+        phone: phoneForApi,
+        role,
+        code: resetCode,
+        password: resetPassword
+      });
+      setSigninPassword("");
+      setResetCode("");
+      setResetPassword("");
+      setResetConfirmPassword("");
+      setResetRequested(false);
+      setResetSeconds(0);
+      setApiNotice("Password reset. Sign in with your new password.");
+      setScreen("signin");
     } catch {
       setApiNotice("Something went wrong");
     } finally {
@@ -1365,13 +1460,15 @@ export default function Index() {
   async function loadParentActivation() {
     if (!authSession || role !== "student") return;
     try {
-      const response = await apiGet<{ data: { parents: ParentLink[]; codes: Array<{ code: string; relationship: string; status: string }> } }>("/api/v1/parent-activation?role=student", authSession.accessToken);
+      const response = await apiGet<{ data: { parents: ParentLink[]; codes: Array<{ code: string; relationship: string; status: string; expiresAt?: string | null }> } }>("/api/v1/parent-activation?role=student", authSession.accessToken);
       setLinkedParents(response.data.parents ?? []);
-      const latest = response.data.codes?.find((item) => item.status === "active");
-      if (latest) {
-        setActivationCode(latest.code);
-        setActivationRelationship(latest.relationship);
-      }
+      const now = Date.now();
+      const nextCodes = (response.data.codes ?? []).reduce<Record<string, { code: string; expiresAt: number }>>((items, item) => {
+        const expiresAt = item.expiresAt ? new Date(item.expiresAt).getTime() : now + 60000;
+        if (item.status === "active" && expiresAt > now) items[item.relationship] = { code: item.code, expiresAt };
+        return items;
+      }, {});
+      setActivationCodesByRelationship(nextCodes);
     } catch {
       // Account invite data is optional for local previews.
     }
@@ -1381,8 +1478,9 @@ export default function Index() {
     if (!authSession || role !== "student") return;
     setLoadingAction("generateActivation");
     try {
-      const response = await apiPost<{ data: { code: string; relationship: string } }>("/api/v1/parent-activation", { relationship: activationRelationship }, authSession.accessToken);
-      setActivationCode(response.data.code);
+      const response = await apiPost<{ data: { code: string; relationship: string; expiresAt?: string | null } }>("/api/v1/parent-activation", { relationship: activationRelationship }, authSession.accessToken);
+      const expiresAt = response.data.expiresAt ? new Date(response.data.expiresAt).getTime() : Date.now() + 60000;
+      setActivationCodesByRelationship((items) => ({ ...items, [response.data.relationship]: { code: response.data.code, expiresAt } }));
       await loadParentActivation();
       setApiNotice("");
     } catch {
@@ -1612,7 +1710,41 @@ export default function Index() {
           loading={loadingAction === "signin"}
           apiNotice={apiNotice}
           signIn={signInWithPassword}
+          forgotPassword={() => {
+            setResetRequested(false);
+            setResetCode("");
+            setResetPassword("");
+            setResetConfirmPassword("");
+            setResetSeconds(0);
+            setApiNotice("");
+            setScreen("forgotPassword");
+          }}
           register={() => { setValueIndex(0); setScreen("value"); }}
+        />
+      );
+    }
+
+    if (screen === "forgotPassword") {
+      return (
+        <ForgotPasswordScreen
+          role={role}
+          phoneNumber={phoneNumber}
+          setPhoneNumber={(value) => setPhoneNumber(value.replace(/\D/g, "").slice(0, 10))}
+          resetRequested={resetRequested}
+          resetCode={resetCode}
+          setResetCode={(value) => setResetCode(value.replace(/\D/g, "").slice(0, 6))}
+          resetSeconds={resetSeconds}
+          resetPassword={resetPassword}
+          setResetPassword={setResetPassword}
+          resetConfirmPassword={resetConfirmPassword}
+          setResetConfirmPassword={setResetConfirmPassword}
+          canRequest={phoneComplete}
+          canReset={phoneComplete && resetCode.length === 6 && resetPasswordValid && resetSeconds > 0}
+          loadingAction={loadingAction}
+          apiNotice={apiNotice}
+          requestReset={requestPasswordReset}
+          submitReset={resetPasswordWithCode}
+          back={() => setScreen("signin")}
         />
       );
     }
@@ -1720,7 +1852,7 @@ export default function Index() {
     if (screen === "payments") return <Payments role={role} accessToken={authSession?.accessToken} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} refreshSupply={refreshTutorSupply} />;
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
-    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
+    if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationSeconds={activationSeconds} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
     if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} programDataReady={!authSession?.accessToken || apiMilestones !== null || programs.length > 0} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} restoreProgram={restoreTutorProgram} archiveModalVisible={programArchiveModalVisible} setArchiveModalVisible={setProgramArchiveModalVisible} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
@@ -1842,6 +1974,7 @@ function SignInScreen({
   loading,
   apiNotice,
   signIn,
+  forgotPassword,
   register
 }: {
   role: Role;
@@ -1857,8 +1990,10 @@ function SignInScreen({
   loading: boolean;
   apiNotice: string;
   signIn: () => void;
+  forgotPassword: () => void;
   register: () => void;
 }) {
+  const theme = useRoleTheme(role);
   return (
     <>
       <View style={styles.signinFormBrand}>
@@ -1886,6 +2021,9 @@ function SignInScreen({
       />
       <FieldLabel>Password</FieldLabel>
       <Input secureTextEntry value={password} onChangeText={setPassword} placeholder="Password" />
+      <Pressable style={({ pressed }) => [styles.forgotPasswordLink, pressed && styles.pressed]} onPress={forgotPassword}>
+        <Text style={[styles.forgotPasswordText, { color: theme.text }]}>Forgot password?</Text>
+      </Pressable>
       {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
       <View style={styles.signinActions}>
         <Button disabled={!canSignIn} loading={loading} role={role} label="Sign in" onPress={signIn} />
@@ -1897,6 +2035,71 @@ function SignInScreen({
           <Button role={role} variant="secondary" label="Restart prototype" onPress={restart} />
         )}
       </View>
+    </>
+  );
+}
+
+function ForgotPasswordScreen({
+  role,
+  phoneNumber,
+  setPhoneNumber,
+  resetRequested,
+  resetCode,
+  setResetCode,
+  resetSeconds,
+  resetPassword,
+  setResetPassword,
+  resetConfirmPassword,
+  setResetConfirmPassword,
+  canRequest,
+  canReset,
+  loadingAction,
+  apiNotice,
+  requestReset,
+  submitReset,
+  back
+}: {
+  role: Role;
+  phoneNumber: string;
+  setPhoneNumber: (value: string) => void;
+  resetRequested: boolean;
+  resetCode: string;
+  setResetCode: (value: string) => void;
+  resetSeconds: number;
+  resetPassword: string;
+  setResetPassword: (value: string) => void;
+  resetConfirmPassword: string;
+  setResetConfirmPassword: (value: string) => void;
+  canRequest: boolean;
+  canReset: boolean;
+  loadingAction: string | null;
+  apiNotice: string;
+  requestReset: () => void;
+  submitReset: () => void;
+  back: () => void;
+}) {
+  const expired = resetRequested && resetSeconds === 0;
+  return (
+    <>
+      <TopBar title="Reset password" left="‹" onLeft={back} />
+      <Title>Forgot password?</Title>
+      <Muted>Enter your registered phone number. We will generate a 6 digit reset code valid for 60 seconds.</Muted>
+      <FieldLabel>Phone number</FieldLabel>
+      <Input value={phoneNumber} onChangeText={setPhoneNumber} keyboardType="phone-pad" maxLength={10} placeholder="9876543210" />
+      <Button role={role} label={resetRequested && resetSeconds > 0 ? `Code sent • ${resetSeconds}s` : "Send reset code"} disabled={!canRequest || (resetRequested && resetSeconds > 0)} loading={loadingAction === "forgotPassword"} onPress={requestReset} />
+      {resetRequested ? (
+        <>
+          <FieldLabel>Reset code</FieldLabel>
+          <Input value={resetCode} onChangeText={setResetCode} keyboardType="number-pad" maxLength={6} placeholder={expired ? "Code expired" : "6 digit code"} />
+          {expired ? <Muted>Code expired. Generate a new reset code.</Muted> : <Muted>Use the latest reset code before the timer ends.</Muted>}
+          <FieldLabel>New password</FieldLabel>
+          <Input secureTextEntry value={resetPassword} onChangeText={setResetPassword} placeholder="Minimum 8 characters" />
+          <FieldLabel>Confirm new password</FieldLabel>
+          <Input secureTextEntry value={resetConfirmPassword} onChangeText={setResetConfirmPassword} placeholder="Confirm password" />
+          <Button role={role} label="Reset password" disabled={!canReset} loading={loadingAction === "resetPassword"} onPress={submitReset} />
+        </>
+      ) : null}
+      {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
     </>
   );
 }
@@ -4993,6 +5196,7 @@ function Account({
   actionLoading,
   generateActivationCode,
   activationCode,
+  activationSeconds,
   activationRelationship,
   setActivationRelationship,
   parents
@@ -5008,6 +5212,7 @@ function Account({
   actionLoading: string | null;
   generateActivationCode: () => void;
   activationCode: string;
+  activationSeconds: number;
   activationRelationship: string;
   setActivationRelationship: (value: string) => void;
   parents: ParentLink[];
@@ -5046,7 +5251,12 @@ function Account({
           <View style={styles.accountInviteCard}>
             <FieldLabel>Relationship</FieldLabel>
             <DropdownField value={activationRelationship} options={["Mother", "Father", "Guardian", "Grandparent"]} onSelect={setActivationRelationship} />
-            {activationCode ? <Text style={styles.activationCodeText}>{activationCode}</Text> : <Muted>Generate an activation code to invite a parent.</Muted>}
+            {activationCode ? (
+              <>
+                <Text style={styles.activationCodeText}>{activationCode}</Text>
+                <Text style={styles.activationTimerText}>Code disappears in {activationSeconds}s</Text>
+              </>
+            ) : <Muted>Generate an activation code to invite a parent.</Muted>}
             <Button role={role} label={activationCode ? "Regenerate code" : "Generate activation code"} loading={actionLoading === "generateActivation"} onPress={generateActivationCode} />
           </View>
           {parents.length ? parents.map((parent) => (
@@ -5280,6 +5490,8 @@ const styles = StyleSheet.create({
   signinCopy: { color: "#536A86", flexBasis: "100%", fontSize: 14, fontWeight: "600", lineHeight: 22 },
   registerLink: { alignItems: "center", justifyContent: "center", minHeight: 28 },
   registerLinkText: { color: "#0F5560", fontSize: 14, fontWeight: "900", textDecorationLine: "underline" },
+  forgotPasswordLink: { alignItems: "flex-end", justifyContent: "center", minHeight: 28 },
+  forgotPasswordText: { fontSize: 13, fontWeight: "900", textDecorationLine: "underline" },
   consentCard: { alignItems: "flex-start", backgroundColor: "rgba(255,255,255,0.88)", borderColor: "#D8E4EE", borderRadius: 19, borderWidth: 1, flexDirection: "row", gap: 12, padding: 18, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.06, shadowRadius: 18 },
   consentCheck: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#8A99A8", borderRadius: 3, borderWidth: 1, height: 13, justifyContent: "center", marginTop: 2, width: 13 },
   consentCheckText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900", lineHeight: 12 },
@@ -5927,6 +6139,7 @@ const styles = StyleSheet.create({
   pressablePressed: { opacity: 0.76, transform: [{ scale: 0.99 }] },
   accountInviteCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15 },
   activationCodeText: { color: "#202A35", fontSize: 30, fontWeight: "900", letterSpacing: 6, textAlign: "center" },
+  activationTimerText: { color: "#536A86", fontSize: 12, fontWeight: "900", textAlign: "center" },
   parentRow: { backgroundColor: "rgba(255,255,255,0.92)", borderColor: "#DDE7EF", borderRadius: 14, borderWidth: 1, padding: 13 },
   parentRowName: { color: "#202A35", fontSize: 15, fontWeight: "900" },
   parentRowMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", marginTop: 2 },

@@ -72,6 +72,7 @@ model User {
   userManagementRecords UserManagement[]
   reminders   Reminder[]
   authSessions AuthSession[]
+  passwordResetCodes PasswordResetCode[]
   deviceRegistrations DeviceRegistration[]
   notifications Notification[]
   paymentOrders PaymentOrder[]
@@ -84,6 +85,23 @@ model User {
   updatedAt   DateTime  @updatedAt
 
   @@index([status, createdAt])
+}
+
+model PasswordResetCode {
+  id          String    @id @default(cuid())
+  userId      String
+  role        Role
+  code        String
+  status      String    @default("active")
+  expiresAt   DateTime
+  usedAt      DateTime?
+  sourceTag   String    @default("app")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, role, status])
+  @@index([code, status, expiresAt])
 }
 
 model MobileClient {

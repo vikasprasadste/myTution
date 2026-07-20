@@ -667,6 +667,106 @@ app.post("/api/v1/auth/login", async (req, res) => {
   res.json({ data: { userId: user.id, profileId: user.profiles[0]?.id, role, ...session } });
 });
 
+app.post("/api/v1/auth/password/forgot", async (req, res) => {
+  const phone = normalizePhone(req.body.phone);
+  const role = readRole(req.body.role);
+  if (!phone) {
+    res.status(400).json({ error: "Something went wrong" });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { phone },
+    include: { profiles: { where: { role }, take: 1 } }
+  });
+  let resetHint: string | undefined;
+  if (user?.status === "active" && user.profiles.length > 0) {
+    const code = generateSixDigitCode();
+    await prisma.passwordResetCode.updateMany({
+      where: { userId: user.id, role, status: "active" },
+      data: { status: "expired" }
+    });
+    await prisma.passwordResetCode.create({
+      data: {
+        userId: user.id,
+        role,
+        code,
+        expiresAt: new Date(Date.now() + 1000 * 60),
+        sourceTag: "app"
+      }
+    });
+    resetHint = code;
+    await logAudit({
+      userId: user.id,
+      profileId: user.profiles[0]?.id,
+      role,
+      action: "auth.password_reset.request",
+      entityType: "User",
+      entityId: user.id
+    });
+  }
+  res.json({ data: { resetSent: true, expiresInSeconds: 60, resetHint } });
+});
+
+app.post("/api/v1/auth/password/reset", async (req, res) => {
+  const phone = normalizePhone(req.body.phone);
+  const role = readRole(req.body.role);
+  const code = String(req.body.code ?? "").replace(/\D/g, "").slice(0, 6);
+  const password = String(req.body.password ?? "");
+  if (!phone || code.length !== 6 || !isValidPassword(password)) {
+    res.status(400).json({ error: "Something went wrong" });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { phone },
+    include: { profiles: { where: { role }, take: 1 } }
+  });
+  if (!user?.passwordHash || user.status !== "active" || user.profiles.length === 0) {
+    res.status(400).json({ error: "Something went wrong" });
+    return;
+  }
+  const resetCode = await prisma.passwordResetCode.findFirst({
+    where: {
+      userId: user.id,
+      role,
+      code,
+      status: "active",
+      expiresAt: { gt: new Date() }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  if (!resetCode) {
+    res.status(400).json({ error: "Something went wrong" });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: user.id },
+      data: { passwordHash: await hashPassword(password) }
+    });
+    await tx.passwordResetCode.update({
+      where: { id: resetCode.id },
+      data: { status: "used", usedAt: new Date() }
+    });
+    await tx.passwordResetCode.updateMany({
+      where: { userId: user.id, role, status: "active" },
+      data: { status: "expired" }
+    });
+    await tx.authSession.updateMany({
+      where: { userId: user.id },
+      data: { revokedAt: new Date() }
+    });
+  });
+  await logAudit({
+    userId: user.id,
+    profileId: user.profiles[0]?.id,
+    role,
+    action: "auth.password_reset.complete",
+    entityType: "User",
+    entityId: user.id
+  });
+  res.json({ data: { passwordReset: true } });
+});
+
 app.post("/api/v1/auth/refresh", async (req, res) => {
   const refreshToken = String(req.body.refreshToken ?? "");
   const session = await prisma.authSession.findUnique({ where: { refreshToken }, include: { user: true } });
@@ -1660,6 +1760,10 @@ function generateActivationCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
+function generateSixDigitCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
 async function uniqueActivationCode() {
   for (let index = 0; index < 8; index += 1) {
     const code = generateActivationCode();
@@ -1687,7 +1791,11 @@ app.get("/api/v1/parent-activation", async (req, res) => {
   }
   if (role === "student") {
     const codes = await prisma.parentActivationCode.findMany({
-      where: { studentProfileId: profile.id },
+      where: {
+        studentProfileId: profile.id,
+        status: "active",
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }]
+      },
       orderBy: { createdAt: "desc" },
       include: { parentProfile: true }
     });
@@ -1697,7 +1805,7 @@ app.get("/api/v1/parent-activation", async (req, res) => {
       orderBy: { createdAt: "asc" }
     });
     res.json({ data: {
-      codes: codes.map((item) => ({ id: item.id, code: item.code, relationship: item.relationship, status: item.status, acceptedAt: item.acceptedAt })),
+      codes: codes.map((item) => ({ id: item.id, code: item.code, relationship: item.relationship, status: item.status, acceptedAt: item.acceptedAt, expiresAt: item.expiresAt })),
       parents: parents.map((item) => ({ id: item.parentProfileId, name: item.parentProfile.firstName + " " + item.parentProfile.lastName, relationship: item.relationship, status: item.status }))
     } });
     return;
@@ -1727,13 +1835,17 @@ app.post("/api/v1/parent-activation", async (req, res) => {
   }
   const relationship = String(req.body.relationship ?? "Parent").trim() || "Parent";
   const code = await uniqueActivationCode();
+  await prisma.parentActivationCode.updateMany({
+    where: { studentProfileId: student.id, relationship, status: "active" },
+    data: { status: "expired" }
+  });
   const invite = await prisma.parentActivationCode.create({
     data: {
       code,
       studentUserId: userId,
       studentProfileId: student.id,
       relationship,
-      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      expiresAt: new Date(Date.now() + 1000 * 60),
       sourceTag: "app"
     }
   });
@@ -1747,7 +1859,7 @@ app.post("/api/v1/parent-activation", async (req, res) => {
     data: { codeId: invite.id, relationship },
     priority: "normal"
   });
-  res.status(201).json({ data: { id: invite.id, code: invite.code, relationship: invite.relationship, status: invite.status } });
+  res.status(201).json({ data: { id: invite.id, code: invite.code, relationship: invite.relationship, status: invite.status, expiresAt: invite.expiresAt } });
 });
 
 app.get("/api/v1/bootstrap", async (req, res) => {
