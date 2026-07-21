@@ -2773,7 +2773,8 @@ app.get("/api/v1/events-reminders", async (req, res) => {
 
 app.post("/api/v1/events-reminders", async (req, res) => {
   const role = readRole(req.body.role);
-  const userId = await readUserId(req);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
   const profile = await findProfile(role, userId);
   if (!profile) {
     res.status(404).json({ error: "Profile not found" });

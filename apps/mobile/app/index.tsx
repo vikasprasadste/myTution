@@ -800,8 +800,16 @@ export default function Index() {
           setProgramToast("Your program is ready.");
         }
         setApiNotice("");
-      } catch {
+      } catch (error) {
         if (ignore) return;
+        if (isApiStatus(error, 401)) {
+          setAuthSession(null);
+          setIdentityContext(null);
+          setSignInMode("returning");
+          setScreen("signin");
+          setApiNotice("Your session expired. Please sign in again.");
+          return;
+        }
         setApiNotice("Something went wrong. Please try again.");
         setIdentityContext(null);
         setApiRecommendations([]);
@@ -6033,9 +6041,19 @@ async function apiRequest<T = unknown>(path: string, options: RequestInit & { ac
       ...options.headers
     }
   });
-  if (!response.ok) throw new Error(`API ${response.status}`);
+  if (!response.ok) throw new ApiStatusError(response.status);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+class ApiStatusError extends Error {
+  constructor(readonly status: number) {
+    super(`API ${status}`);
+  }
+}
+
+function isApiStatus(error: unknown, status: number) {
+  return error instanceof ApiStatusError && error.status === status;
 }
 
 const styles = StyleSheet.create({
