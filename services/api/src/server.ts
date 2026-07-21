@@ -181,31 +181,7 @@ function validateStaticAssetRequest(req: express.Request, res: express.Response,
   next();
 }
 
-const medicalProgramCatalog = [
-  { id: "medical-neet-full-12", role: "student", title: "12 month NEET full course", description: "Full syllabus plan with monthly Biology, Chemistry, and Physics milestones", milestones: 12 },
-  { id: "medical-neet-crash-90", role: "student", title: "NEET 90 day crash course", description: "High-intensity revision plan for high-yield chapters and mock practice", milestones: 6 },
-  { id: "medical-biology-masterclass", role: "student", title: "NEET Biology masterclass", description: "Botany and Zoology focused program with NCERT recall drills", milestones: 8 },
-  { id: "medical-chemistry-sprint", role: "student", title: "NEET Chemistry revision sprint", description: "Physical, Organic, and Inorganic Chemistry revision with quizzes", milestones: 6 },
-  { id: "medical-physics-problem-solving", role: "student", title: "NEET Physics problem solving", description: "Mechanics, electrodynamics, optics, and modern physics practice", milestones: 8 },
-  { id: "medical-aiims-nursing", role: "student", title: "AIIMS nursing entrance prep", description: "Medical aptitude, biology basics, and exam readiness milestones", milestones: 6 },
-  { id: "medical-class-11-foundation", role: "student", title: "Class 11 medical foundation", description: "Early foundation for future NEET aspirants", milestones: 10 },
-  { id: "medical-class-12-bridge", role: "student", title: "Class 12 board plus NEET bridge", description: "Board exam alignment with NEET-style topic practice", milestones: 8 }
-] as const;
-
 type QuizQuestion = { id: string; prompt: string; options: string[]; answerIndex: number; learnMore: string };
-
-const motionFlashcardDeck = [
-  ["What is displacement?", "Displacement is the change in position from start to finish, measured with direction."],
-  ["How is distance different from displacement?", "Distance is total path length. Displacement depends only on initial and final position."],
-  ["What is average speed?", "Average speed equals total distance divided by total time."],
-  ["What is average velocity?", "Average velocity equals displacement divided by total time."],
-  ["What does acceleration measure?", "Acceleration measures the rate of change of velocity with time."],
-  ["What is the SI unit of acceleration?", "Metre per second squared, written as m/s²."],
-  ["What does slope on a position-time graph represent?", "The slope of a position-time graph represents velocity."],
-  ["What does slope on a velocity-time graph represent?", "The slope of a velocity-time graph represents acceleration."],
-  ["What does area under a velocity-time graph represent?", "The signed area under a velocity-time graph represents displacement."],
-  ["Can speed be negative?", "No. Speed is a scalar path-rate and is never negative."]
-];
 
 const quizQuestionBank: QuizQuestion[] = [
   {
@@ -397,34 +373,6 @@ function withAssetUrls<T extends ResourceAssetShape>(resource: T, entitlement?: 
     ...resource,
     assetUrls: assetUrlsFor(resource, { private: true, role: entitlement?.role, accessToken: entitlement?.accessToken }),
     assetMetadata: assetMetadataFor(resource, entitlement)
-  };
-}
-
-function hasPlaceholderFlashcards(resource: { type?: string | null; flashcards?: Array<{ question: string; answer: string }> }) {
-  if (resource.type !== "flashcard") return false;
-  if (!resource.flashcards?.length) return true;
-  return resource.flashcards.some((card) => {
-    const value = `${card.question} ${card.answer}`.toLowerCase();
-    return /question\s*\d+/.test(value) || /answer\s*\d+/.test(value) || value.includes("quadratic question");
-  });
-}
-
-function withFlashcardFallback<T extends { id: string; type?: string | null; title?: string; description?: string; flashcards?: Array<{ id?: string; resourceId?: string; sequence: number; question: string; answer: string; learnMore?: string | null; relatedArticleId?: string | null; sourceTag?: string }> }>(resource: T) {
-  if (!hasPlaceholderFlashcards(resource)) return resource;
-  return {
-    ...resource,
-    title: "Motion active recall cards",
-    description: "10 flashcards for one-dimensional motion definitions, units, and graphs.",
-    flashcards: motionFlashcardDeck.map(([question, answer], index) => ({
-      id: `${resource.id}-fallback-card-${index + 1}`,
-      resourceId: resource.id,
-      sequence: index + 1,
-      question,
-      answer,
-      learnMore: "Review the linked concept notes and connect this answer back to the current milestone.",
-      relatedArticleId: null,
-      sourceTag: "mock"
-    }))
   };
 }
 
@@ -2818,7 +2766,8 @@ app.get("/api/v1/events-reminders", async (req, res) => {
     res.json({ data: [] });
     return;
   }
-  const userId = await readUserId(req);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
   res.json({ data: await listReminders(role, userId) });
 });
 
@@ -2856,6 +2805,16 @@ app.post("/api/v1/events-reminders", async (req, res) => {
 });
 
 app.patch("/api/v1/events-reminders/:id", async (req, res) => {
+  const role = readRole(req.body.role ?? req.query.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const existing = await prisma.reminder.findFirst({
+    where: { id: req.params.id, role, userId, status: "active" }
+  });
+  if (!existing) {
+    res.status(404).json({ error: "Reminder not found" });
+    return;
+  }
   const reminder = await prisma.reminder.update({
     where: { id: req.params.id },
     data: {
@@ -2878,6 +2837,16 @@ app.patch("/api/v1/events-reminders/:id", async (req, res) => {
 });
 
 app.delete("/api/v1/events-reminders/:id", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const existing = await prisma.reminder.findFirst({
+    where: { id: req.params.id, role, userId, status: "active" }
+  });
+  if (!existing) {
+    res.status(404).json({ error: "Reminder not found" });
+    return;
+  }
   await prisma.reminder.update({
     where: { id: req.params.id },
     data: { status: "cancelled" }
@@ -2887,7 +2856,15 @@ app.delete("/api/v1/events-reminders/:id", async (req, res) => {
 
 app.get("/api/v1/reminders", async (req, res) => {
   const role = readRole(req.query.role);
-  const userId = await readUserId(req);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  res.json({ data: await listReminders(role, userId) });
+});
+
+app.get("/api/v1/reminders/sync", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
   res.json({ data: await listReminders(role, userId) });
 });
 
@@ -3784,7 +3761,7 @@ app.get("/api/v1/resources/:id", async (req, res) => {
     res.status(403).json({ error: "Resource access denied" });
     return;
   }
-  res.json({ data: withAssetUrls(withFlashcardFallback(resource), { ...entitlement, accessToken: readRequestAccessToken(req) }) });
+  res.json({ data: withAssetUrls(resource, { ...entitlement, accessToken: readRequestAccessToken(req) }) });
 });
 
 app.get("/api/v1/ams/assets/:id", async (req, res) => {
@@ -3804,7 +3781,7 @@ app.get("/api/v1/ams/assets/:id", async (req, res) => {
     res.status(403).json({ error: "Asset access denied" });
     return;
   }
-  res.json({ data: withAssetUrls(withFlashcardFallback(resource), { ...entitlement, accessToken: readRequestAccessToken(req) }) });
+  res.json({ data: withAssetUrls(resource, { ...entitlement, accessToken: readRequestAccessToken(req) }) });
 });
 
 app.get("/api/v1/ams/assets/:id/file/:kind", async (req, res) => {
@@ -4688,8 +4665,9 @@ async function findUserManagement(role: Role, userId?: string | null) {
 }
 
 async function listReminders(role: Role, userId?: string | null) {
+  if (!userId) return [];
   const reminders = await prisma.reminder.findMany({
-    where: { role, status: "active", ...(userId ? { userId } : {}) },
+    where: { role, userId, status: "active" },
     orderBy: { startsAt: "asc" }
   });
   return reminders.map(toReminder);
@@ -5532,12 +5510,7 @@ async function listProgramSummaries(role: Role, profileId?: string | null): Prom
   if (programs.length) {
     return programs.map((program) => ({ ...program, role: readRole(program.role), selected: selectedIds.has(program.id) }));
   }
-  if (role !== "student") return [];
-  return medicalProgramCatalog.map(({ milestones: _milestones, ...program }) => ({
-    ...program,
-    role: "student" as const,
-    selected: selectedIds.has(program.id)
-  }));
+  return [];
 }
 
 async function getEducationPlan(role: Role, userId?: string | null, programId?: string | null) {
@@ -5549,7 +5522,7 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
       await ensureParentStudentFixture();
     } catch (error) {
       if (!isMissingParentLinkTable(error)) throw error;
-      return fallbackEducationPlan("student", programId);
+      return null;
     }
     const link = await prisma.parentStudentLink.findFirst({
       where: { parentProfileId: scopedProfile.id, status: "active" },
@@ -5579,7 +5552,7 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
       progress: true
     }
   });
-  if (!program) return fallbackEducationPlan(effectiveRole, programId);
+  if (!program) return null;
   const progress = scopedProfile
     ? program.progress.find((item) => item.profileId === scopedProfile.id)
     : null;
@@ -5756,37 +5729,6 @@ function dashboardCards(role: Role, reminderCount: number, completedMilestones: 
   ];
 }
 
-function fallbackEducationPlan(role: Role, programId?: string | null) {
-  if (role !== "student") return null;
-  const program = medicalProgramCatalog.find((item) => item.id === programId) ?? medicalProgramCatalog[0];
-  return {
-    id: program.id,
-    role: program.role,
-    title: program.title,
-    description: program.description,
-    unlockedMilestoneSequence: 1,
-    completedMilestoneSequence: 0,
-    milestones: Array.from({ length: program.milestones }).map((_, index) => {
-      const sequence = index + 1;
-      return {
-        id: `${program.id}-milestone-${sequence}`,
-        sequence,
-        title: `${program.title.split(" ")[0]} milestone ${sequence}`,
-        locked: sequence > 1,
-        resources: ["video", "article", "flashcard", "article", "quiz", "quiz"] as ResourceType[],
-        activities: [
-          { id: `${program.id}-m${sequence}-video`, resourceId: `${program.id}-video`, sequence: 1, type: "video", title: "Concept video: high-yield foundation", description: "An 8-15 minute focused lesson introducing one core concept with diagrams and examples.", status: "pending" },
-          { id: `${program.id}-m${sequence}-notes`, resourceId: `${program.id}-article`, sequence: 2, type: "article", title: "Interactive article and micro-notes", description: "Bold keywords, derivations, labeled diagrams, and board-ready summaries.", status: "pending" },
-          { id: `${program.id}-m${sequence}-flashcard`, resourceId: `${program.id}-flashcard`, sequence: 3, type: "flashcard", title: "Digital flashcards for active recall", description: "Formulae, reactions, biology labels, units, and definitions for memorization.", status: "pending" },
-          { id: `${program.id}-m${sequence}-cheatsheet`, resourceId: `${program.id}-cheatsheet`, sequence: 4, type: "article", title: "Formula and concept cheat sheet", description: "A one-page milestone summary to review before assessment.", status: "pending" },
-          { id: `${program.id}-m${sequence}-diagnostic`, resourceId: `${program.id}-quiz`, sequence: 5, type: "quiz", title: "Diagnostic MCQ quiz", description: "5-10 conceptual MCQs to prove readiness.", status: "pending" },
-          { id: `${program.id}-m${sequence}-subjective`, resourceId: `${program.id}-board-questions`, sequence: 6, type: "quiz", title: "Board-style subjective questions", description: "Past board-style long answers with topper-style marking guidance.", status: "pending" }
-        ]
-      };
-    })
-  };
-}
-
 function toPersona(profile: Awaited<ReturnType<typeof findProfile>>) {
   if (!profile) return fallbackPersona("student");
   return {
@@ -5929,9 +5871,9 @@ function permissionsForRole(role: Role) {
 function fallbackPersona(role: Role) {
   return {
     role,
-    firstName: role === "tutor" ? "Ankit" : role === "parent" ? "Sarmishtha" : "Apoorv",
-    lastName: role === "tutor" ? "Sharma" : "Gulati",
-    initials: role === "tutor" ? "AS" : role === "parent" ? "SG" : "AG",
+    firstName: "",
+    lastName: "",
+    initials: role.charAt(0).toUpperCase(),
     phone: "",
     profileLabel: `${capitalize(role)} • myTution`
   };
@@ -6376,13 +6318,15 @@ function toReminder(item: {
   title: string;
   startsAt: Date;
   status: string;
+  sourceTag?: string | null;
 }) {
   return {
     id: item.id,
     role: item.role,
     title: item.title,
     startsAt: item.startsAt.toISOString(),
-    status: item.status
+    status: item.status,
+    sourceTag: item.sourceTag ?? undefined
   };
 }
 

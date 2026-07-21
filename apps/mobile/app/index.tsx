@@ -6,6 +6,7 @@ import { BlurView } from "expo-blur";
 import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
+import * as Notifications from "expo-notifications";
 import { useVideoPlayer, VideoView } from "expo-video";
 import type { ComponentType, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -20,6 +21,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View
 } from "react-native";
 import { SvgXml, type SvgProps } from "react-native-svg";
@@ -33,7 +35,7 @@ import HomeActiveIcon from "../assets/nav/Home_active.svg";
 import HomeInactiveIcon from "../assets/nav/Home_inactive.svg";
 import MilesActiveIcon from "../assets/nav/myMiles_active.svg";
 import MilesInactiveIcon from "../assets/nav/myMiles_inactive.svg";
-import { roleValueProps, personas, programMilestones, recommendations } from "@/data/mockData";
+import { roleValueProps } from "@/data/mockData";
 import { useRoleTheme } from "@/theme/useRoleTheme";
 
 type AppScreen =
@@ -85,9 +87,9 @@ const valuePropImages: Record<Role, number[]> = {
 };
 
 const roleCarouselCardBg: Record<Role, string> = {
-  student: "#F2E1E5",
-  parent: "#E4EFF0",
-  tutor: "#EEF0E4"
+  student: "#FFFFFF",
+  parent: "#FFFFFF",
+  tutor: "#FFFFFF"
 };
 
 type StreamKey = "junior" | "senior" | "ug" | "pg";
@@ -166,21 +168,7 @@ type ProfileDraft = {
   curriculumSelections: CurriculumSelection[];
 };
 
-const fallbackCurriculum: CurriculumCatalogueResponse = {
-  boards: ["CBSE", "ICSE_ISC", "IB", "IGCSE_A_LEVEL", "State_Boards"].map((id) => ({
-    id,
-    label: id.replace(/_/g, " / "),
-    fullName: null,
-    classes: ["Class 1", "Class 2", "Class 3", "Class 4", "Class 5", "Class 6", "Class 7", "Class 8", "Class 9", "Class 10", "Class 11", "Class 12"].map((label) => ({
-      id: label.toLowerCase().replace(/\s+/g, "_"),
-      label,
-      stage: label === "Class 11" || label === "Class 12" ? "Higher Secondary" : "School",
-      subjects: ["Mathematics", "Science", "Physics", "Chemistry", "Biology", "English", "Social Science", "Computer Science", "Accountancy", "Economics"]
-    }))
-  })),
-  classes: [],
-  subjects: ["Mathematics", "Science", "Physics", "Chemistry", "Biology", "English", "Social Science", "Computer Science", "Accountancy", "Economics"]
-};
+const emptyCurriculum: CurriculumCatalogueResponse = { boards: [], classes: [], subjects: [] };
 
 function curriculumLabel(selections?: CurriculumSelection[]) {
   const first = selections?.[0];
@@ -214,13 +202,6 @@ const specializationOptions: Record<StreamKey, string[]> = {
   ug: ["B.Com Accounting", "B.Tech Computer Science", "BA Economics", "B.Sc Mathematics"],
   pg: ["MBA Finance", "M.Sc Statistics", "MA English", "M.Tech Data Science"]
 };
-
-const fallbackFlashcards: FlashcardPayload[] = [
-  { sequence: 1, question: "What is displacement?", answer: "Displacement is the change in position from start to finish, measured with direction." },
-  { sequence: 2, question: "How is distance different from displacement?", answer: "Distance is total path length. Displacement depends only on initial and final position." },
-  { sequence: 3, question: "What is average speed?", answer: "Average speed equals total distance divided by total time." },
-  { sequence: 4, question: "What is average velocity?", answer: "Average velocity equals displacement divided by total time." }
-];
 
 const defaultAssetPathsByType: Record<string, { thumbnail: string; banner: string }> = {
   video: {
@@ -342,7 +323,7 @@ export default function Index() {
   const [resetRequested, setResetRequested] = useState(false);
   const [stream, setStream] = useState<StreamKey>("senior");
   const [specialization, setSpecialization] = useState("CBSE Class 10 Mathematics");
-  const [curriculumCatalogue, setCurriculumCatalogue] = useState<CurriculumCatalogueResponse>(fallbackCurriculum);
+  const [curriculumCatalogue, setCurriculumCatalogue] = useState<CurriculumCatalogueResponse>(emptyCurriculum);
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>({
     firstName: "",
     lastName: "",
@@ -388,6 +369,7 @@ export default function Index() {
   const [reminderTime, setReminderTime] = useState("06:30 PM");
   const [connectedPeople, setConnectedPeople] = useState("");
   const [connectedPeopleByReminder, setConnectedPeopleByReminder] = useState<Record<string, string>>({});
+  const [editingReminderId, setEditingReminderId] = useState<string | null>(null);
   const [picker, setPicker] = useState<null | { target: "dob" | "reminderDate" | "reminderTime"; mode: "date" | "time"; value: Date }>(null);
   const [recommendationsReady, setRecommendationsReady] = useState(false);
   const [selectedMilestone, setSelectedMilestone] = useState<ProgramMilestone | null>(null);
@@ -409,7 +391,10 @@ export default function Index() {
         if (!ignore && response.data?.boards?.length) setCurriculumCatalogue(response.data);
       })
       .catch(() => {
-        if (!ignore) setCurriculumCatalogue(fallbackCurriculum);
+        if (!ignore) {
+          setCurriculumCatalogue(emptyCurriculum);
+          setApiNotice("Something went wrong. Please try again.");
+        }
       });
     return () => { ignore = true; };
   }, []);
@@ -446,12 +431,12 @@ export default function Index() {
   const persona = (authSession || screen === "signin") && identityPersona?.role === role ? identityPersona : (authSession || screen === "signin") && apiPersona?.role === role ? apiPersona : emptyPersona;
 
   const roleRecommendations = useMemo(
-    () => (apiRecommendations ?? recommendations.filter((item) => item.role === role)).filter((item) => !completedRecommendations.includes(item.id)),
+    () => (apiRecommendations ?? []).filter((item) => !completedRecommendations.includes(item.id)),
     [apiRecommendations, completedRecommendations, role]
   );
 
   const roleReminders = reminders.filter((item) => item.role === role && item.status === "active");
-  const homeMilestones = apiMilestones ?? programMilestones;
+  const homeMilestones = apiMilestones ?? [];
   const journeyActivities = useMemo(() => buildJourneyActivities(role, homeMilestones), [homeMilestones, role]);
   const carouselLimit = Number.isFinite(appConfig.home?.maxActivitiesPerCarousel) ? appConfig.home.maxActivitiesPerCarousel : 5;
   const reminderPreviewLimit = Number.isFinite(appConfig.home?.maxRemindersPreview) ? appConfig.home.maxRemindersPreview : 2;
@@ -734,6 +719,32 @@ export default function Index() {
     }
   }
 
+  async function syncDeviceReminders(apiReminders: Reminder[]) {
+    const permission = await Notifications.getPermissionsAsync();
+    const hasPermission = permission.granted || (await Notifications.requestPermissionsAsync()).granted;
+    if (!hasPermission) return;
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(
+      scheduled
+        .filter((item) => item.content.data?.myTutionKind === "reminder")
+        .map((item) => Notifications.cancelScheduledNotificationAsync(item.identifier))
+    );
+    const now = Date.now();
+    const activeFutureReminders = apiReminders.filter((item) => item.status === "active" && new Date(item.startsAt).getTime() > now);
+    await Promise.all(
+      activeFutureReminders.map((item) =>
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: "myTution reminder",
+            body: item.title,
+            data: { myTutionKind: "reminder", reminderId: item.id, role: item.role }
+          },
+          trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(item.startsAt) }
+        })
+      )
+    );
+  }
+
   useEffect(() => {
     let ignore = false;
     async function loadRoleData() {
@@ -744,7 +755,7 @@ export default function Index() {
           apiGet<{ persona: Persona }>(`/api/v1/bootstrap?role=${role}`, token),
           apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`),
           role === "student" ? apiGet<{ data: MarketplaceRecommendationResponse }>(`/api/v1/marketplace/recommendations?role=student`, token) : Promise.resolve({ data: null as MarketplaceRecommendationResponse | null }),
-          token ? apiGet<{ data: Reminder[] }>(`/api/v1/events-reminders?role=${role}`, token) : Promise.resolve({ data: [] }),
+          token ? apiGet<{ data: Reminder[] }>(`/api/v1/reminders/sync?role=${role}`, token) : Promise.resolve({ data: [] }),
           token ? apiGet<{ data: NotificationSummary[] }>(`/api/v1/notifications?role=${role}&limit=12`, token) : Promise.resolve({ data: [] }),
           token ? apiGet<{ data: { cards: DashboardCard[] } }>(`/api/v1/dis/dashboard?role=${role}`, token) : Promise.resolve({ data: { cards: [] } }),
           apiGet<{ data: ProgramSummary[]; selectedPrograms?: ProgramSummary[]; maxSelectedPrograms?: number }>(`/api/v1/education-plan/programs?role=${role}`, token),
@@ -767,6 +778,7 @@ export default function Index() {
           setTutorFilterOptions((items) => items.subjects.length ? items : buildTutorFilterOptions(marketplace.data?.tutors ?? []));
         }
         setReminders(eventData.data);
+        void syncDeviceReminders(eventData.data).catch(() => setApiNotice("Something went wrong. Please try again."));
         setNotifications(notificationData.data);
         setDashboardCards(dashboard.data.cards);
         setParentMonitoring(monitoring.data);
@@ -790,13 +802,17 @@ export default function Index() {
         setApiNotice("");
       } catch {
         if (ignore) return;
-        setApiNotice("Using local fallback data because API is unavailable.");
+        setApiNotice("Something went wrong. Please try again.");
         setIdentityContext(null);
-        setApiRecommendations(null);
+        setApiRecommendations([]);
         setDashboardCards(null);
         setNotifications([]);
         setParentMonitoring(null);
-        setApiMilestones(null);
+        setApiMilestones([]);
+        setMarketplaceRecommendations(null);
+        setPrograms([]);
+        setSelectedPrograms([]);
+        setSelectedProgramId(null);
         if (pendingProgramId) {
           if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
           setProgramPreparing(false);
@@ -1277,66 +1293,73 @@ export default function Index() {
   async function createReminder() {
     setLoadingAction("createReminder");
     const startsAt = combineReminderDateTime(reminderDate, reminderTime);
-    const optimistic: Reminder = {
-      id: `rem_${Date.now()}`,
-      role,
-      title: reminderTitle || "Untitled reminder",
-      startsAt,
-      status: "active"
-    };
-    setReminders((items) => [...items, optimistic]);
-    if (connectedPeople.trim()) {
-      setConnectedPeopleByReminder((items) => ({ ...items, [optimistic.id]: connectedPeople.trim() }));
-    }
+    const title = reminderTitle || "Untitled reminder";
+    let saved = false;
     try {
-      const response = await apiPost<{ data: Reminder }>("/api/v1/events-reminders", {
+      const payload = {
         role,
-        title: optimistic.title,
+        title,
         startsAt,
         connectedPeople: connectedPeople.trim()
-      }, authSession?.accessToken);
-      setReminders((items) => items.map((item) => item.id === optimistic.id ? response.data : item));
-      setConnectedPeopleByReminder((items) => {
-        const next = { ...items };
-        if (next[optimistic.id]) {
-          next[response.data.id] = next[optimistic.id];
-          delete next[optimistic.id];
-        }
-        return next;
-      });
+      };
+      const response = editingReminderId
+        ? await apiPatch<{ data: Reminder }>(`/api/v1/events-reminders/${editingReminderId}`, payload, authSession?.accessToken)
+        : await apiPost<{ data: Reminder }>("/api/v1/events-reminders", payload, authSession?.accessToken);
+      const nextReminders = editingReminderId
+        ? reminders.map((item) => item.id === editingReminderId ? response.data : item)
+        : [...reminders, response.data];
+      setReminders(nextReminders);
+      setConnectedPeopleByReminder((items) => ({
+        ...items,
+        [response.data.id]: connectedPeople.trim()
+      }));
+      setEditingReminderId(null);
+      await syncDeviceReminders(nextReminders);
+      setApiNotice("");
+      saved = true;
     } catch {
-      setApiNotice("Reminder saved locally. API write failed.");
+      setApiNotice("Something went wrong. Please try again.");
     } finally {
-      setConnectedPeople("");
+      if (saved) {
+        setReminderTitle("Math revision reminder");
+        setConnectedPeople("");
+      }
       setLoadingAction(null);
     }
   }
 
   function editReminder(reminder: Reminder) {
+    const startsAt = new Date(reminder.startsAt);
     setReminderTitle(reminder.title);
-    setReminderDate(reminder.startsAt.split(" ")[0] || reminderDate);
-    setReminderTime(reminder.startsAt.split(" ").slice(1).join(" ") || reminderTime);
+    setReminderDate(Number.isNaN(startsAt.getTime()) ? reminderDate : formatDisplayDate(startsAt));
+    setReminderTime(Number.isNaN(startsAt.getTime()) ? reminderTime : formatDisplayTime(startsAt));
     setConnectedPeople(connectedPeopleByReminder[reminder.id] ?? "");
-    setReminders((items) => items.filter((item) => item.id !== reminder.id));
-    setConnectedPeopleByReminder((items) => {
-      const next = { ...items };
-      delete next[reminder.id];
-      return next;
-    });
+    setEditingReminderId(reminder.id);
     setScreen("events");
   }
 
   async function deleteReminder(id: string) {
-    setReminders((items) => items.map((item) => item.id === id ? { ...item, status: "cancelled" } : item));
-    setConnectedPeopleByReminder((items) => {
-      const next = { ...items };
-      delete next[id];
-      return next;
-    });
+    setLoadingAction(`deleteReminder:${id}`);
     try {
-      await apiDelete(`/api/v1/events-reminders/${id}`, authSession?.accessToken);
+      await apiDelete(`/api/v1/events-reminders/${id}?role=${role}`, authSession?.accessToken);
+      const nextReminders = reminders.filter((item) => item.id !== id);
+      setReminders(nextReminders);
+      setConnectedPeopleByReminder((items) => {
+        const next = { ...items };
+        delete next[id];
+        return next;
+      });
+      await syncDeviceReminders(nextReminders);
+      setApiNotice("");
+      if (editingReminderId === id) {
+        setEditingReminderId(null);
+        setReminderTitle("Math revision reminder");
+        setConnectedPeople("");
+      }
     } catch {
-      setApiNotice("Reminder deleted locally. API write failed.");
+      setApiNotice("Something went wrong. Please try again.");
+    } finally {
+      setLoadingAction(null);
     }
   }
 
@@ -1493,7 +1516,7 @@ export default function Index() {
     openResource(activityToResource(nextActivity, milestone));
   }
   function getNextMilestoneActivity(currentMilestoneId?: string): SelectedActivity | undefined {
-    const milestones = apiMilestones ?? programMilestones;
+    const milestones = apiMilestones ?? [];
     const currentMilestone = milestones.find((milestone) => milestone.id === currentMilestoneId);
     const nextMilestone = milestones.find((milestone) => milestone.sequence === (currentMilestone?.sequence ?? 0) + 1 && !milestone.locked);
     const nextActivity = nextMilestone?.activities?.find((activity) => activity.status !== "complete") ?? nextMilestone?.activities?.[0];
@@ -1507,11 +1530,22 @@ export default function Index() {
   async function markComplete() {
     setLoadingAction("markComplete");
     if (selectedResource) {
-      setCompletedRecommendations((items) => items.includes(selectedResource.id) ? items : [...items, selectedResource.id]);
       let milestoneComplete = false;
       let nextActivity: SelectedActivity | undefined;
+      try {
+        if (selectedResource.activityId && selectedResource.milestoneId) {
+          await apiPost(`/api/v1/education-plan/activities/${selectedResource.activityId}/complete`, { role, programId: selectedProgramId }, authSession?.accessToken);
+        } else {
+          await apiPost(`/api/v1/resources/${selectedResource.id}/complete`, { role }, authSession?.accessToken);
+        }
+      } catch {
+        setApiNotice("Something went wrong. Please try again.");
+        setLoadingAction(null);
+        return;
+      }
+      setCompletedRecommendations((items) => items.includes(selectedResource.id) ? items : [...items, selectedResource.id]);
       if (selectedResource.activityId && selectedResource.milestoneId) {
-        setApiMilestones((items) => (items ?? programMilestones).map((milestone) => {
+        setApiMilestones((items) => (items ?? []).map((milestone) => {
           if (milestone.id !== selectedResource.milestoneId) {
             if (milestone.sequence === (selectedResource.milestoneSequence ?? 0) + 1) return { ...milestone, locked: false };
             return milestone;
@@ -1522,9 +1556,6 @@ export default function Index() {
           if (upcoming) nextActivity = activityToResource(upcoming, { ...milestone, activities });
           return { ...milestone, activities };
         }));
-        await apiPost(`/api/v1/education-plan/activities/${selectedResource.activityId}/complete`, { role, programId: selectedProgramId }, authSession?.accessToken).catch(() => undefined);
-      } else {
-        await apiPost(`/api/v1/resources/${selectedResource.id}/complete`, { role }, authSession?.accessToken).catch(() => undefined);
       }
       setLoadingAction(null);
       const nextMilestoneActivity = milestoneComplete && selectedResource.milestoneId ? getNextMilestoneActivity(selectedResource.milestoneId) : undefined;
@@ -1650,7 +1681,6 @@ export default function Index() {
             keyboardType="phone-pad"
             maxLength={10}
           />
-          {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
           <Button disabled={!consent || !phoneComplete} loading={loadingAction === "sendOtp"} role={role} label="Send OTP" onPress={sendOtp} />
         </>
       );
@@ -1802,7 +1832,6 @@ export default function Index() {
           setPassword={setSigninPassword}
           canSignIn={phoneComplete && !!signinPassword}
           loading={loadingAction === "signin"}
-          apiNotice={apiNotice}
           signIn={signInWithPassword}
           forgotPassword={() => {
             setResetRequested(false);
@@ -1835,7 +1864,6 @@ export default function Index() {
           canRequest={phoneComplete}
           canReset={phoneComplete && resetCode.length === 6 && resetPasswordValid && resetSeconds > 0}
           loadingAction={loadingAction}
-          apiNotice={apiNotice}
           requestReset={requestPasswordReset}
           submitReset={resetPasswordWithCode}
           back={() => setScreen("signin")}
@@ -1846,14 +1874,14 @@ export default function Index() {
     if (screen === "home") {
       return (
         <>
-          <Header role={role} personaName={`${persona.firstName} ${persona.lastName}`} />
-          {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
+          <Header personaName={[persona.firstName, persona.lastName].filter(Boolean).join(" ") || persona.profileLabel || capitalize(role)} />
           <TrackCard role={role} onPress={() => setScreen(role === "student" ? "search" : role === "tutor" ? "roleHub" : "sessions")} />
           <NotificationStrip role={role} notifications={notifications} onRead={markNotificationRead} />
 
           {role === "student" && marketplaceRecommendations ? (
             <MarketplaceHomeSection
               data={marketplaceRecommendations}
+              onViewAll={() => setScreen("search")}
               onOpen={(target) => {
                 setMarketplaceTarget(target);
                 setScreen("search");
@@ -1871,7 +1899,7 @@ export default function Index() {
                 </View>
               ) : (
                 <>
-                  <JourneyResourceCarousel title="For you today" role={role} items={forYouTodayActivities} emptyCopy="No required activities pending." onPress={openResource} />
+                  <JourneyResourceCarousel title="For you today" role={role} items={forYouTodayActivities} emptyCopy="No required activities pending." onPress={openResource} onViewAll={() => setScreen("sessions")} />
                 </>
               )}
             </>
@@ -1885,30 +1913,16 @@ export default function Index() {
               ) : (
                 <>
                   {role === "tutor" ? (
-                    <JourneyResourceCarousel title="Recommended for you" role={role} items={forYouTodayActivities.length ? forYouTodayActivities : roleRecommendations.map((item) => ({ ...item, milestoneTitle: "Teaching picks", milestoneSequence: 1, activitySequence: 1, required: true, status: "pending" as const }))} emptyCopy="No required activities pending." onPress={openResource} />
+                    <JourneyResourceCarousel title="Recommended for you" role={role} items={forYouTodayActivities.length ? forYouTodayActivities : roleRecommendations.map((item) => ({ ...item, milestoneTitle: "Teaching picks", milestoneSequence: 1, activitySequence: 1, required: true, status: "pending" as const }))} emptyCopy="No required activities pending." onPress={openResource} onViewAll={() => setScreen("sessions")} />
                   ) : (
-                    <>
-                      <SectionTitle>Recommended for you</SectionTitle>
-                      {roleRecommendations.length ? (
-                        <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.carousel}>
-                          {roleRecommendations.map((item) => (
-                            <RecommendationTile key={item.id} role={role} item={item} onPress={() => openResource(item)} />
-                          ))}
-                        </ScrollView>
-                      ) : (
-                        <View style={styles.emptyInlineCard}>
-                          <Text style={styles.todayTitle}>All caught up</Text>
-                          <Text style={styles.todayMeta}>Completed picks are removed from Home.</Text>
-                        </View>
-                      )}
-                    </>
+                    <RecommendationCarousel role={role} items={roleRecommendations} onPress={openResource} onViewAll={() => setScreen("sessions")} />
                   )}
                 </>
               )}
             </>
           )}
 
-          <SectionTitle>Events & reminders</SectionTitle>
+          <SectionHeader title="Events & reminders" role={role} showViewAll={roleReminders.length > reminderPreviewLimit} onViewAll={() => setScreen("events")} />
           {roleReminders.length === 0 ? (
             <ReminderComposer
               role={role}
@@ -1922,15 +1936,11 @@ export default function Index() {
               openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })}
               onCreate={createReminder}
               loading={loadingAction === "createReminder"}
+              submitLabel={editingReminderId ? "Update reminder" : "Create reminder"}
             />
           ) : (
             <ReminderPreviewCard role={role} reminders={roleReminders.slice(0, reminderPreviewLimit)} />
           )}
-          {roleReminders.length > reminderPreviewLimit ? (
-            <Pressable style={({ pressed }) => [styles.viewAllCard, pressed && styles.pressed]} onPress={() => setScreen("events")}>
-              <Text style={[styles.viewAllText, { color: theme.text }]}>View all reminders</Text>
-            </Pressable>
-          ) : null}
 
           {role === "student" ? <StudentBatchRequestAlerts role={role} requests={batchRequests} openTutorSearch={() => setScreen("search")} acceptSuggestion={acceptSuggestedBatch} withdrawRequest={withdrawBatchRequest} dismiss={(id) => actOnBatchRequest(id, "dismiss")} actionLoading={loadingAction} /> : null}
           {role === "parent" ? <ParentMonitoringPanel data={parentMonitoring} openProgram={() => setScreen("sessions")} openClasses={() => setScreen("roleHub")} /> : null}
@@ -1968,8 +1978,8 @@ export default function Index() {
       setScreen("editProfile");
     }} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationSeconds={activationSeconds} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
-    if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} />;
-    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} programDataReady={!authSession?.accessToken || apiMilestones !== null || programs.length > 0} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? programMilestones} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} restoreProgram={restoreTutorProgram} archiveModalVisible={programArchiveModalVisible} setArchiveModalVisible={setProgramArchiveModalVisible} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
+    if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} submitLabel={editingReminderId ? "Update reminder" : "Create reminder"} />;
+    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} programDataReady={!authSession?.accessToken || apiMilestones !== null || programs.length > 0} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? []} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} restoreProgram={restoreTutorProgram} archiveModalVisible={programArchiveModalVisible} setArchiveModalVisible={setProgramArchiveModalVisible} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
     if (screen === "milestoneDetail" && selectedMilestone) {
       const selectedProgram = programs.find((program) => program.id === selectedProgramId);
       return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} editableActivities={role === "tutor" && !isPublishedProgram(selectedProgram)} onEditActivity={editTutorActivityFromMilestone} />;
@@ -1977,8 +1987,8 @@ export default function Index() {
     if (screen === "resource" && selectedResource) return <ResourceDetail role={role} resource={resourceDetail ?? selectedResource} complete={markComplete} loading={loadingAction === "markComplete"} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} completedTopic={completedTopic} continueActivity={() => { const next = completedTopic?.nextActivity; setCompletedTopic(null); if (next) openResource(next); }} nextMilestone={() => { const next = completedTopic?.nextMilestoneActivity; setCompletedTopic(null); if (next) openResource(next); }} backToProgram={() => { setCompletedTopic(null); setSelectedResource(null); refreshProgramFromApi(); setScreen("sessions"); }} backToHome={() => { setCompletedTopic(null); setSelectedResource(null); refreshProgramFromApi(); setScreen("home"); }} />;
     if (screen === "flashIntro" && selectedResource) return <FlashIntro role={role} resource={resourceDetail ?? selectedResource} start={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "home")} />;
     if (screen === "flashPlay" && selectedResource) {
-      const cards = resourceDetail?.id === selectedResource.id && resourceDetail.flashcards?.length ? resourceDetail.flashcards : fallbackFlashcards;
-      return <FlashPlay role={role} resource={resourceDetail ?? selectedResource} cards={cards} index={flashIndex} answer={flashAnswer} setAnswer={setFlashAnswer} next={() => { setFlashIndex((flashIndex + 1) % cards.length); setFlashAnswer(false); }} learnMore={() => {
+      const cards = resourceDetail?.id === selectedResource.id ? resourceDetail.flashcards ?? [] : [];
+      return <FlashPlay role={role} resource={resourceDetail ?? selectedResource} cards={cards} index={flashIndex} answer={flashAnswer} setAnswer={setFlashAnswer} next={() => { setFlashIndex(Math.min(flashIndex + 1, Math.max(0, cards.length - 1))); setFlashAnswer(false); }} learnMore={() => {
         const articleId = cards[flashIndex]?.relatedArticleId;
         if (articleId) openResource({ id: articleId, role, type: "article", title: "Learn more", description: "Related article for this flashcard.", thumbnailLabel: "Article" });
       }} complete={markComplete} back={() => setScreen(selectedMilestone ? "milestoneDetail" : "sessions")} />;
@@ -2049,7 +2059,24 @@ export default function Index() {
           <Text style={styles.toastText}>{programToast}</Text>
         </View>
       ) : null}
+      <ApiWarningModal message={apiNotice} onClose={() => setApiNotice("")} />
     </LinearGradient>
+  );
+}
+
+function ApiWarningModal({ message, onClose }: { message: string; onClose: () => void }) {
+  return (
+    <Modal visible={Boolean(message)} transparent animationType="fade">
+      <BlurView intensity={88} tint="dark" style={styles.apiModalBackdrop}>
+        <View style={styles.apiModalCard}>
+          <Text style={styles.apiModalTitle}>Something went wrong</Text>
+          <Text style={styles.apiModalCopy}>{message || "Please try again."}</Text>
+          <Pressable style={({ pressed }) => [styles.apiModalButton, pressed && styles.pressed]} onPress={onClose}>
+            <Text style={styles.apiModalButtonText}>Try again</Text>
+          </Pressable>
+        </View>
+      </BlurView>
+    </Modal>
   );
 }
 
@@ -2063,27 +2090,26 @@ function AppSplash() {
 }
 
 function screenGradient(role: Role): [string, string, string] {
-  if (role === "tutor") return ["#FEFEF7", "#F2EFA2", "#F3F6F9"];
+  if (role === "tutor") return ["#F7FAFF", "#E4EEFF", "#F3F6F9"];
   if (role === "student") return ["#FDFBFE", "#F1DDFB", "#F3F6F9"];
   return ["#F7FCFD", "#C9F0F5", "#F3F6F9"];
 }
 
 function buttonGradient(role: Role, disabled?: boolean): [string, string] {
   if (disabled) return ["#E5E7EB", "#D1D5DB"];
-  if (role === "tutor") return ["#B19C00", "#E0D731"];
+  if (role === "tutor") return ["#3370FF", "#6B9BFF"];
   if (role === "student") return ["#8F6BD8", "#C3A2EF"];
   return ["#1AA6B4", "#78D3DD"];
 }
 
-function Header({ role, personaName }: { role: Role; personaName: string }) {
-  const theme = useRoleTheme(role);
+function Header({ personaName }: { personaName: string }) {
+  const displayName = personaName.trim() || "myTution";
   return (
     <View style={styles.header}>
       <View>
         <Muted>Good Afternoon</Muted>
-        <Title>{personaName}</Title>
+        <Title>{displayName}</Title>
       </View>
-      <Text style={[styles.headerIcon, { color: theme.accentStrong }]}>⌁</Text>
     </View>
   );
 }
@@ -2100,14 +2126,13 @@ function SignInScreen({
   setPassword,
   canSignIn,
   loading,
-  apiNotice,
   signIn,
   forgotPassword,
   register
 }: {
   role: Role;
   mode: SignInMode;
-  persona: typeof personas[Role];
+  persona: Persona;
   avatarUri: string | null;
   restart: () => void;
   phoneNumber: string;
@@ -2116,7 +2141,6 @@ function SignInScreen({
   setPassword: (value: string) => void;
   canSignIn: boolean;
   loading: boolean;
-  apiNotice: string;
   signIn: () => void;
   forgotPassword: () => void;
   register: () => void;
@@ -2152,7 +2176,6 @@ function SignInScreen({
       <Pressable style={({ pressed }) => [styles.forgotPasswordLink, pressed && styles.pressed]} onPress={forgotPassword}>
         <Text style={[styles.forgotPasswordText, { color: theme.text }]}>Forgot password?</Text>
       </Pressable>
-      {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
       <View style={styles.signinActions}>
         <Button disabled={!canSignIn} loading={loading} role={role} label="Sign in" onPress={signIn} />
         {mode === "fresh" ? (
@@ -2182,7 +2205,6 @@ function ForgotPasswordScreen({
   canRequest,
   canReset,
   loadingAction,
-  apiNotice,
   requestReset,
   submitReset,
   back
@@ -2201,7 +2223,6 @@ function ForgotPasswordScreen({
   canRequest: boolean;
   canReset: boolean;
   loadingAction: string | null;
-  apiNotice: string;
   requestReset: () => void;
   submitReset: () => void;
   back: () => void;
@@ -2227,7 +2248,6 @@ function ForgotPasswordScreen({
           <Button role={role} label="Reset password" disabled={!canReset} loading={loadingAction === "resetPassword"} onPress={submitReset} />
         </>
       ) : null}
-      {apiNotice ? <Text style={styles.apiNotice}>{apiNotice}</Text> : null}
     </>
   );
 }
@@ -2294,7 +2314,7 @@ function ProfileForm({
   disabled
 }: {
   role: Role;
-  persona: typeof personas[Role];
+  persona: Persona;
   draft: ProfileDraft;
   setDraft: (value: ProfileDraft) => void;
   avatarUri: string | null;
@@ -2475,7 +2495,7 @@ function TrackCard({ role, onPress }: { role: Role; onPress: () => void }) {
   const title = role === "student" ? "Find your next tutor" : role === "tutor" ? "Review today’s leads" : "Track Apoorv's next class";
   const copy = role === "student" ? "Tutor matches, trial slots, and notes are ready." : role === "tutor" ? "New requests, trial follow-ups, and payout notes are ready." : "Attendance, payment, and tutor notes are ready.";
   return (
-    <View style={[styles.trackCard, { backgroundColor: theme.cardAlt, borderColor: theme.accent }]}>
+    <View style={[styles.trackCard, { backgroundColor: "#FFFFFF", borderColor: theme.accent }]}>
       <View style={styles.flex}>
         <Text style={styles.trackTitle}>{title}</Text>
         <Text style={styles.trackCopy}>{copy}</Text>
@@ -2494,7 +2514,7 @@ function NotificationStrip({ role, notifications, onRead }: { role: Role; notifi
   const visible = notifications.filter((item) => !item.readAt).slice(0, 3);
   if (!visible.length) return null;
   return (
-    <View style={[styles.notificationCard, { backgroundColor: theme.card }]}>
+    <View style={[styles.notificationCard, { backgroundColor: "#FFFFFF" }]}>
       <View style={styles.notificationHeader}>
         <Text style={styles.notificationTitle}>Updates</Text>
         <Text style={[styles.notificationCount, { color: theme.text }]}>{visible.length}</Text>
@@ -2513,7 +2533,10 @@ function NotificationStrip({ role, notifications, onRead }: { role: Role; notifi
   );
 }
 
-function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendationResponse; onOpen: (target: MarketplaceTarget) => void }) {
+function MarketplaceHomeSection({ data, onOpen, onViewAll }: { data: MarketplaceRecommendationResponse; onOpen: (target: MarketplaceTarget) => void; onViewAll: () => void }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const { width } = useWindowDimensions();
+  const cardWidth = carouselCardWidth(width);
   const items = [
     ...data.tutors.slice(0, 3).map((tutor) => ({
       id: "tutor-" + tutor.id,
@@ -2552,29 +2575,74 @@ function MarketplaceHomeSection({ data, onOpen }: { data: MarketplaceRecommendat
   if (!items.length) return null;
   return (
     <>
-      <SectionTitle>Recommended tutors and programs</SectionTitle>
-      <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.carousel}>
+      <SectionHeader title="Recommended for you" role="student" showViewAll onViewAll={onViewAll} />
+      <ScrollView
+        horizontal
+        decelerationRate="fast"
+        showsHorizontalScrollIndicator={false}
+        snapToInterval={cardWidth + 12}
+        contentContainerStyle={styles.carousel}
+        onMomentumScrollEnd={(event) => setActiveIndex(carouselIndexFromOffset(event.nativeEvent.contentOffset.x, cardWidth, 12, items.length))}
+      >
         {items.map((item) => (
-          <Pressable key={item.id} style={({ pressed }) => [styles.marketplaceCard, pressed && styles.pressed]} onPress={() => onOpen({ tutorProfileId: item.tutorProfileId, kind: item.kind, itemId: item.itemId })}>
+          <Pressable key={item.id} style={({ pressed }) => [styles.marketplaceCard, { width: cardWidth }, pressed && styles.pressed]} onPress={() => onOpen({ tutorProfileId: item.tutorProfileId, kind: item.kind, itemId: item.itemId })}>
             <View style={styles.marketplaceAvatar}>
               <Text style={styles.marketplaceAvatarText}>{item.initials}</Text>
             </View>
-            <Text style={styles.marketplaceEyebrow}>{item.eyebrow}</Text>
-            <Text style={styles.marketplaceTitle}>{item.title}</Text>
-            <Text style={styles.marketplaceMeta}>{item.meta}</Text>
-            <Text style={styles.marketplaceCopy}>{item.copy}</Text>
+            <View style={styles.marketplaceBody}>
+              <Text style={styles.marketplaceEyebrow}>{item.eyebrow}</Text>
+              <Text style={styles.marketplaceTitle}>{item.title}</Text>
+              <Text style={styles.marketplaceMeta}>{item.meta}</Text>
+              <Text style={styles.marketplaceCopy}>{item.copy}</Text>
+            </View>
           </Pressable>
         ))}
       </ScrollView>
+      <CarouselDots role="student" total={items.length} activeIndex={activeIndex} />
     </>
   );
 }
 
-function RecommendationTile({ role, item, onPress }: { role: Role; item: Recommendation; onPress: () => void }) {
+function RecommendationCarousel({ role, items, onPress, onViewAll }: { role: Role; items: Recommendation[]; onPress: (item: Recommendation) => void; onViewAll: () => void }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const { width } = useWindowDimensions();
+  const cardWidth = carouselCardWidth(width);
+  if (!items.length) {
+    return (
+      <>
+        <SectionHeader title="Recommended for you" role={role} />
+        <View style={styles.emptyInlineCard}>
+          <Text style={styles.todayTitle}>All caught up</Text>
+          <Text style={styles.todayMeta}>Completed picks are removed from Home.</Text>
+        </View>
+      </>
+    );
+  }
+  return (
+    <>
+      <SectionHeader title="Recommended for you" role={role} showViewAll onViewAll={onViewAll} />
+      <ScrollView
+        horizontal
+        decelerationRate="fast"
+        showsHorizontalScrollIndicator={false}
+        snapToInterval={cardWidth + 12}
+        contentContainerStyle={styles.carousel}
+        onMomentumScrollEnd={(event) => setActiveIndex(carouselIndexFromOffset(event.nativeEvent.contentOffset.x, cardWidth, 12, items.length))}
+      >
+        {items.map((item) => (
+          <RecommendationTile key={item.id} role={role} item={item} cardWidth={cardWidth} onPress={() => onPress(item)} />
+        ))}
+      </ScrollView>
+      <CarouselDots role={role} total={items.length} activeIndex={activeIndex} />
+    </>
+  );
+}
+
+function RecommendationTile({ role, item, cardWidth, onPress }: { role: Role; item: Recommendation; cardWidth: number; onPress: () => void }) {
   const theme = useRoleTheme(role);
   const glyph = item.type === "video" ? "▶" : item.type === "article" ? "₹" : "P";
   return (
-    <Pressable onPress={onPress} style={[styles.recCard, { backgroundColor: roleCarouselCardBg[role] }]}>
+    <Pressable onPress={onPress} style={[styles.recCard, { backgroundColor: roleCarouselCardBg[role], width: cardWidth }]}>
       <View style={[styles.thumb, { backgroundColor: theme.surface, overflow: "hidden" }]}>
         <SvgAsset
           pathValue={assetPathFor(item.type, item.assetUrls)}
@@ -2651,7 +2719,7 @@ function ProgramJourneyCard({ role, milestones, completedMilestone, onPress }: {
   const current = milestones.find((milestone) => !milestone.locked && (milestone.activities ?? []).some((activity) => activity.status !== "complete")) ?? milestones[0];
   const currentIndex = current ? milestones.findIndex((milestone) => milestone.id === current.id) : 0;
   return (
-    <Pressable style={({ pressed }) => [styles.programJourneyCard, { backgroundColor: theme.card }, pressed && styles.pressed]} onPress={onPress}>
+    <Pressable style={({ pressed }) => [styles.programJourneyCard, { backgroundColor: "#FFFFFF" }, pressed && styles.pressed]} onPress={onPress}>
       <View style={styles.programJourneyTop}>
         <View style={styles.flex}>
           <Text style={styles.programJourneyTitle}>Program journey</Text>
@@ -2688,7 +2756,7 @@ function ProgramStat({ value, label }: { value: string; label: string }) {
 function ProgramCompletedCard({ role, onPress }: { role: Role; onPress: () => void }) {
   const theme = useRoleTheme(role);
   return (
-    <Pressable style={({ pressed }) => [styles.programCompletedCard, { backgroundColor: theme.card }, pressed && styles.pressed]} onPress={onPress}>
+    <Pressable style={({ pressed }) => [styles.programCompletedCard, { backgroundColor: "#FFFFFF" }, pressed && styles.pressed]} onPress={onPress}>
       <Text style={styles.programCompletedIcon}>✓</Text>
       <Text style={styles.programCompletedTitle}>Program complete</Text>
       <Text style={styles.programCompletedCopy}>Congratulations. You have completed every topic in this program.</Text>
@@ -2697,17 +2765,30 @@ function ProgramCompletedCard({ role, onPress }: { role: Role; onPress: () => vo
   );
 }
 
-function JourneyResourceCarousel({ title, role, items, emptyCopy, onPress }: { title: string; role: Role; items: JourneyActivity[]; emptyCopy: string; onPress: (item: SelectedActivity) => void }) {
+function JourneyResourceCarousel({ title, role, items, emptyCopy, onPress, onViewAll }: { title: string; role: Role; items: JourneyActivity[]; emptyCopy: string; onPress: (item: SelectedActivity) => void; onViewAll: () => void }) {
   const theme = useRoleTheme(role);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const { width } = useWindowDimensions();
+  const cardWidth = carouselCardWidth(width);
   return (
     <>
-      <SectionTitle>{title}</SectionTitle>
+      <SectionHeader title={title} role={role} showViewAll={items.length > 0} onViewAll={onViewAll} />
       {items.length ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.carousel}>
-          {items.map((item) => <JourneyResourceTile key={(item.milestoneId ?? "") + "-" + (item.activityId ?? "")} role={role} item={item} onPress={() => onPress(item)} />)}
+        <>
+        <ScrollView
+          horizontal
+          decelerationRate="fast"
+          showsHorizontalScrollIndicator={false}
+          snapToInterval={cardWidth + 12}
+          contentContainerStyle={styles.carousel}
+          onMomentumScrollEnd={(event) => setActiveIndex(carouselIndexFromOffset(event.nativeEvent.contentOffset.x, cardWidth, 12, items.length))}
+        >
+          {items.map((item) => <JourneyResourceTile key={(item.milestoneId ?? "") + "-" + (item.activityId ?? "")} role={role} item={item} cardWidth={cardWidth} onPress={() => onPress(item)} />)}
         </ScrollView>
+        <CarouselDots role={role} total={items.length} activeIndex={activeIndex} />
+        </>
       ) : (
-        <View style={[styles.emptyInlineCard, { backgroundColor: theme.cardSoft }]}>
+        <View style={[styles.emptyInlineCard, { backgroundColor: "#FFFFFF" }]}>
           <Text style={styles.todayTitle}>All caught up</Text>
           <Text style={styles.todayMeta}>{emptyCopy}</Text>
         </View>
@@ -2716,19 +2797,21 @@ function JourneyResourceCarousel({ title, role, items, emptyCopy, onPress }: { t
   );
 }
 
-function JourneyResourceTile({ role, item, onPress }: { role: Role; item: JourneyActivity; onPress: () => void }) {
+function JourneyResourceTile({ role, item, cardWidth, onPress }: { role: Role; item: JourneyActivity; cardWidth: number; onPress: () => void }) {
   const theme = useRoleTheme(role);
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.journeyResourceCard, { backgroundColor: roleCarouselCardBg[role] }, pressed && styles.pressed]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.journeyResourceCard, { backgroundColor: roleCarouselCardBg[role], width: cardWidth }, pressed && styles.pressed]}>
       <View style={[styles.journeyResourceImage, { backgroundColor: theme.surface, overflow: "hidden" }]}>
         <SvgAsset
           pathValue={assetPathFor(item.type, item.assetUrls)}
           fallback={<Text style={[styles.journeyResourceGlyph, { color: theme.text }]}>{activityGlyph(item.type)}</Text>}
         />
       </View>
-      <Text style={styles.journeyResourceTopic}>{item.milestoneSequence}. {item.milestoneTitle}</Text>
-      <Text style={styles.journeyResourceTitle}>{item.title}</Text>
-      <Text style={styles.journeyResourceType}>{activityTypeLabel(item.type)}</Text>
+      <View style={styles.journeyResourceBody}>
+        <Text style={styles.journeyResourceTopic}>{item.milestoneSequence}. {item.milestoneTitle}</Text>
+        <Text style={styles.journeyResourceTitle}>{item.title}</Text>
+        <Text style={styles.journeyResourceType}>{activityTypeLabel(item.type)}</Text>
+      </View>
     </Pressable>
   );
 }
@@ -2738,7 +2821,7 @@ function TodayCard({ role, onPress }: { role: Role; onPress: () => void }) {
   const title = role === "student" ? "Trial with Neha Verma" : role === "tutor" ? "Demo with Apoorv Gulati" : "Trial with Neha Verma";
   const meta = role === "tutor" ? "Tomorrow, 6:00 PM • Online" : "Tomorrow, 6:00 PM • Online";
   return (
-    <Pressable style={[styles.todayCard, { backgroundColor: theme.card }]} onPress={onPress}>
+    <Pressable style={[styles.todayCard, { backgroundColor: "#FFFFFF" }]} onPress={onPress}>
       <View style={styles.flex}>
         <Text style={styles.todayTitle}>{title}</Text>
         <Text style={styles.todayMeta}>{meta}</Text>
@@ -2815,6 +2898,41 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <Text style={styles.sectionTitle}>{children}</Text>;
 }
 
+function SectionHeader({ title, role, showViewAll, onViewAll }: { title: string; role: Role; showViewAll?: boolean; onViewAll?: () => void }) {
+  const theme = useRoleTheme(role);
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {showViewAll ? (
+        <Pressable style={({ pressed }) => [styles.viewAllLink, pressed && styles.pressed]} onPress={onViewAll}>
+          <Text style={[styles.viewAllInlineText, { color: theme.text }]}>View all</Text>
+          <Text style={[styles.viewAllChevron, { color: theme.text }]}>›</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+function CarouselDots({ role, total, activeIndex }: { role: Role; total: number; activeIndex: number }) {
+  const theme = useRoleTheme(role);
+  if (total <= 1) return null;
+  return (
+    <View style={styles.carouselDots}>
+      {Array.from({ length: total }).map((_, index) => (
+        <View key={index} style={[styles.carouselDot, index === activeIndex && [styles.carouselDotActive, { backgroundColor: theme.text }]]} />
+      ))}
+    </View>
+  );
+}
+
+function carouselIndexFromOffset(offsetX: number, itemWidth: number, gap: number, total: number) {
+  return Math.max(0, Math.min(total - 1, Math.round(offsetX / (itemWidth + gap))));
+}
+
+function carouselCardWidth(screenWidth: number) {
+  return Math.max(280, screenWidth - 40);
+}
+
 function Title({ children }: { children: React.ReactNode }) {
   return <Text style={styles.title}>{children}</Text>;
 }
@@ -2830,7 +2948,7 @@ function Muted({ children }: { children: React.ReactNode }) {
 function Metric({ role, label, value, onPress }: { role: Role; label: string; value: string; onPress: () => void }) {
   const theme = useRoleTheme(role);
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.metric, { backgroundColor: theme.cardAlt }, pressed && styles.pressed]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.metric, { backgroundColor: "#FFFFFF" }, pressed && styles.pressed]}>
       <Text style={styles.metricValue}>{value}</Text>
       <Muted>{label}</Muted>
     </Pressable>
@@ -2984,7 +3102,8 @@ function ReminderComposer({
   openDatePicker,
   openTimePicker,
   onCreate,
-  loading
+  loading,
+  submitLabel = "Create reminder"
 }: {
   role: Role;
   title: string;
@@ -2997,6 +3116,7 @@ function ReminderComposer({
   openTimePicker: () => void;
   onCreate: () => void;
   loading?: boolean;
+  submitLabel?: string;
 }) {
   return (
     <View style={styles.reminderCard}>
@@ -3026,7 +3146,7 @@ function ReminderComposer({
       </View>
       <Pressable disabled={loading} onPress={onCreate} style={({ pressed }) => [styles.reminderButton, pressed && !loading && styles.pressed, loading && { opacity: 0.72 }]}>
         <LinearGradient colors={buttonGradient(role)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.reminderButtonGradient}>
-          {loading ? <ActivityIndicator color={role === "tutor" ? "#231F00" : "#FFFFFF"} /> : <Text style={[styles.reminderButtonText, { color: role === "tutor" ? "#231F00" : "#FFFFFF" }]}>Create reminder</Text>}
+          {loading ? <ActivityIndicator color={role === "tutor" ? "#231F00" : "#FFFFFF"} /> : <Text style={[styles.reminderButtonText, { color: role === "tutor" ? "#231F00" : "#FFFFFF" }]}>{submitLabel}</Text>}
         </LinearGradient>
       </Pressable>
     </View>
@@ -3036,7 +3156,7 @@ function ReminderComposer({
 function ReminderPreviewCard({ role, reminders }: { role: Role; reminders: Reminder[] }) {
   const theme = useRoleTheme(role);
   return (
-    <View style={[styles.reminderPreviewCard, { backgroundColor: theme.card }]}>
+    <View style={[styles.reminderPreviewCard, { backgroundColor: "#FFFFFF" }]}>
       {reminders.map((reminder, index) => (
         <View key={reminder.id} style={[styles.reminderPreviewRow, index < reminders.length - 1 && styles.reminderPreviewDivider]}>
           <View style={styles.flex}>
@@ -3313,7 +3433,7 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
 function FlashIntro({ role, resource, start, back }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; start: () => void; back: () => void }) {
   const theme = useRoleTheme(role);
   const detail = resource as ResourceDetailPayload;
-  const cards = detail.flashcards?.length ? detail.flashcards : fallbackFlashcards;
+  const cards = detail.flashcards ?? [];
   const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
   const title = /quadratic/i.test(resource.title) ? "Motion active recall cards" : resource.title;
   const description = /quadratic|quick revision/i.test(resource.description) ? "10 flashcards for one-dimensional motion definitions, units, and graphs." : resource.description;
@@ -3332,15 +3452,30 @@ function FlashIntro({ role, resource, start, back }: { role: Role; resource: Res
         <Text style={styles.flashIntroCopy}>{description}</Text>
         <Text style={styles.flashIntroMeta}>{cards.length} cards • Tap each card to reveal the answer</Text>
       </View>
-      {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View> : null}
+      {cards.length ? (
+        role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View> : null
+      ) : (
+        <View style={styles.resourceBottomCta}><Button role={role} variant="secondary" label="Back to Program" onPress={back} /></View>
+      )}
     </>
   );
 }
 
 function FlashPlay({ role, resource, cards, index, answer, setAnswer, next, learnMore, complete, back }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; cards: FlashcardPayload[]; index: number; answer: boolean; setAnswer: (value: boolean) => void; next: () => void; learnMore: () => void; complete: () => void; back: () => void }) {
-  const activeCard = cards[index] ?? cards[0] ?? fallbackFlashcards[0];
-  const progressWidth = (String(Math.round(((index + 1) / cards.length) * 100)) + "%") as any;
+  const activeCard = cards[index] ?? cards[0];
+  const progressWidth = (String(Math.round(((index + 1) / Math.max(cards.length, 1)) * 100)) + "%") as any;
   const isLastCard = index === cards.length - 1;
+  if (!activeCard) {
+    return (
+      <>
+        <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
+        <View style={styles.emptyInlineCard}>
+          <Text style={styles.todayTitle}>No flashcards available</Text>
+          <Text style={styles.todayMeta}>Please try again once the content is available from API.</Text>
+        </View>
+      </>
+    );
+  }
   return (
     <>
       <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
@@ -3724,12 +3859,7 @@ function Sessions({
                     <Text style={[styles.mileChipText, { color: theme.text }]}>{chipLabel}</Text>
                   </View>
                 ) : null}
-                <View style={tutorMode ? styles.mileCardTopRowTutor : styles.mileCardTopRow}>
-                  {!tutorMode ? (
-                    <View style={[styles.mileIconTile, { backgroundColor: locked ? "#F2EEFF" : "#F2EEFF" }]}>
-                      <Text style={[styles.mileIconText, { color: locked ? "#9CA3AF" : "#5B3DF5" }]}>◎</Text>
-                    </View>
-                  ) : null}
+                <View style={styles.mileCardTopRow}>
                   <View style={styles.flex}>
                     <View style={styles.mileTitleRow}>
                       <Text style={[styles.mileCardTitle, locked ? styles.mileCardTitleLocked : null]} numberOfLines={2}>{milestone.title}</Text>
@@ -5184,7 +5314,8 @@ function Events({
   openDatePicker,
   openTimePicker,
   createReminder,
-  loading
+  loading,
+  submitLabel
 }: {
   role: Role;
   reminders: Reminder[];
@@ -5204,6 +5335,7 @@ function Events({
   openTimePicker: () => void;
   createReminder: () => void;
   loading: boolean;
+  submitLabel: string;
 }) {
   return (
     <>
@@ -5220,6 +5352,7 @@ function Events({
         openTimePicker={openTimePicker}
         onCreate={createReminder}
         loading={loading}
+        submitLabel={submitLabel}
       />
       <FieldLabel>Connected people</FieldLabel>
       <TextInput
@@ -5323,46 +5456,6 @@ type DoubtItem = {
   comments?: CommunityComment[];
 };
 
-const doubtItems: DoubtItem[] = [
-  {
-    id: "pinned",
-    author: "Prof. Verma",
-    initials: "PV",
-    time: "Essential Exam Target",
-    title: "[5-Mark Blueprint] Gauss's Law derivation",
-    body: "How to derive electric field intensity due to an infinitely long straight uniformly charged wire using Gauss's Law?",
-    status: "solved",
-    votes: 142,
-    replies: 1,
-    pinned: true,
-    verified: true
-  },
-  {
-    id: "peer1",
-    author: "Aman Kapoor",
-    initials: "AK",
-    time: "12 mins ago",
-    title: "Choosing a Gaussian surface",
-    body: "Stuck on Quiz Question 4. Why do we assume the Gaussian surface to be cylindrical for a linear line charge? Why not a spherical one?",
-    status: "solved",
-    votes: 18,
-    replies: 3,
-    attachment: true
-  },
-  {
-    id: "peer2",
-    author: "Anonymous Peer",
-    initials: "AP",
-    time: "2 hours ago",
-    title: "Flux angle confusion",
-    body: "In the formula Phi = integral E dot dA, is the angle always evaluated between the field vector and surface normal vector?",
-    status: "open",
-    votes: 7,
-    replies: 0,
-    anonymous: true
-  }
-];
-
 function communityThreadToDoubt(thread: CommunityThread): DoubtItem {
   return {
     id: thread.id,
@@ -5411,7 +5504,7 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
   const [doubtLoading, setDoubtLoading] = useState(false);
   const [doubtNotice, setDoubtNotice] = useState("");
   const readOnly = role === "parent";
-  const allDoubts = apiDoubts ?? (readOnly ? [] : doubtItems);
+  const allDoubts = apiDoubts ?? [];
   const filteredDoubts = allDoubts.filter((item) => {
     const statusMatch = filter === "all" || item.status === filter;
     const text = `${item.title} ${item.body} ${item.author}`.toLowerCase();
@@ -5425,11 +5518,11 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
     try {
       const response = await apiGet<{ data: CommunityThread[] }>(`/api/v1/community/threads?role=${role}`, accessToken);
       const apiItems = response.data.map(communityThreadToDoubt);
-      setApiDoubts(apiItems.length || readOnly ? apiItems : null);
+      setApiDoubts(apiItems);
       setDoubtNotice("");
     } catch {
-      setDoubtNotice(readOnly ? "Child community threads could not be loaded from API." : "Using local doubts until community API is available.");
-      setApiDoubts(readOnly ? [] : null);
+      setDoubtNotice("Something went wrong. Please try again.");
+      setApiDoubts([]);
     } finally {
       setDoubtLoading(false);
     }
@@ -5461,7 +5554,7 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
         anonymous
       }, accessToken);
       const next = communityThreadToDoubt(response.data);
-      setApiDoubts((items) => [next, ...(items ?? doubtItems)]);
+      setApiDoubts((items) => [next, ...(items ?? [])]);
       setNewDoubt("");
       setAnonymous(false);
       setAsking(false);
@@ -5721,7 +5814,7 @@ function Account({
   parents
 }: {
   role: Role;
-  persona: typeof personas[Role];
+  persona: Persona;
   avatarUri: string | null;
   signOut: () => void;
   setScreen: (screen: AppScreen) => void;
@@ -5919,6 +6012,14 @@ async function apiPut<T = unknown>(path: string, body: unknown, accessToken?: st
   });
 }
 
+async function apiPatch<T = unknown>(path: string, body: unknown, accessToken?: string) {
+  return apiRequest<T>(path, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+    accessToken
+  });
+}
+
 async function apiDelete(path: string, accessToken?: string) {
   return apiRequest(path, { method: "DELETE", accessToken });
 }
@@ -5970,7 +6071,11 @@ const styles = StyleSheet.create({
   splash: { alignSelf: "center", height: 210, width: 210 },
   title: { color: "#202A35", fontSize: 21, fontWeight: "800", lineHeight: 27 },
   cardTitle: { color: "#202A35", fontSize: 16, fontWeight: "800", lineHeight: 21 },
+  sectionHeader: { alignItems: "center", flexDirection: "row", gap: 12, justifyContent: "space-between", marginTop: 6 },
   sectionTitle: { color: "#202A35", fontSize: 20, fontWeight: "800", letterSpacing: 0.1, marginTop: 6 },
+  viewAllLink: { alignItems: "center", flexDirection: "row", gap: 3, minHeight: 32, paddingLeft: 10 },
+  viewAllInlineText: { fontSize: 12, fontWeight: "900" },
+  viewAllChevron: { fontSize: 16, fontWeight: "900", lineHeight: 18 },
   muted: { color: "#5C6F89", fontSize: 14, lineHeight: 20 },
   card: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "rgba(214,225,235,0.9)", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, padding: 15, shadowColor: "#22304A", shadowOpacity: 0.055, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 2 },
   check: { color: "#111827", fontSize: 16, fontWeight: "900" },
@@ -5984,6 +6089,12 @@ const styles = StyleSheet.create({
   secondaryButton: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.97)", paddingHorizontal: 16, shadowOpacity: 0.025 },
   buttonText: { fontSize: 14, fontWeight: "800", letterSpacing: 0.1 },
   apiNotice: { backgroundColor: "rgba(255,255,255,0.82)", borderColor: "#D8E4EE", borderRadius: 14, borderWidth: 1, color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17, padding: 10 },
+  apiModalBackdrop: { alignItems: "center", backgroundColor: "rgba(15,23,42,0.52)", flex: 1, justifyContent: "center", padding: 22 },
+  apiModalCard: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, gap: 12, padding: 20, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 18 }, shadowOpacity: 0.16, shadowRadius: 28, width: "100%" },
+  apiModalTitle: { color: "#202A35", fontSize: 20, fontWeight: "900", lineHeight: 26, textAlign: "center" },
+  apiModalCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
+  apiModalButton: { alignItems: "center", backgroundColor: "#202A35", borderRadius: 14, justifyContent: "center", minHeight: 46, paddingHorizontal: 18, width: "100%" },
+  apiModalButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
   checkbox: { color: "#111827", flex: 1, fontWeight: "700", lineHeight: 20 },
   fieldLabel: { color: "#2F3B4C", fontSize: 12, fontWeight: "800", letterSpacing: 0.1 },
   input: { alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#C9D6E4", borderRadius: 13, borderWidth: 1, color: "#111827", fontSize: 14, minHeight: 48, minWidth: 0, paddingHorizontal: 14, width: "100%" },
@@ -6070,13 +6181,17 @@ const styles = StyleSheet.create({
   notificationAction: { fontSize: 11, fontWeight: "900" },
   smartPickCard: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, minHeight: 82, padding: 15 },
   carousel: { gap: 12, paddingBottom: 10 },
-  marketplaceCard: { backgroundColor: "#F2E1E5", borderColor: "#E8CFD8", borderRadius: 16, borderWidth: 1, gap: 7, minHeight: 178, padding: 14, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.045, shadowRadius: 12, width: 210 },
-  marketplaceAvatar: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 14, height: 42, justifyContent: "center", width: 42 },
+  carouselDots: { alignItems: "center", flexDirection: "row", gap: 7, justifyContent: "center", marginTop: -2, paddingHorizontal: 4 },
+  carouselDot: { backgroundColor: "#D8D2EC", borderRadius: 999, height: 6, width: 6 },
+  carouselDotActive: { width: 18 },
+  marketplaceCard: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E8CFD8", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 13, minHeight: 132, padding: 14, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.045, shadowRadius: 12 },
+  marketplaceAvatar: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 16, height: 58, justifyContent: "center", width: 58 },
   marketplaceAvatarText: { color: "#202A35", fontSize: 14, fontWeight: "900" },
+  marketplaceBody: { flex: 1, gap: 4 },
   marketplaceEyebrow: { color: "#6B3F75", fontSize: 11, fontWeight: "900", marginTop: 2, textTransform: "uppercase" },
   marketplaceTitle: { color: "#111827", fontSize: 16, fontWeight: "900", lineHeight: 21 },
   marketplaceMeta: { color: "#3E4B5E", fontSize: 12, fontWeight: "800", lineHeight: 17 },
-  marketplaceCopy: { color: "#64748B", fontSize: 12, fontWeight: "700", lineHeight: 17, marginTop: "auto" },
+  marketplaceCopy: { color: "#64748B", fontSize: 12, fontWeight: "700", lineHeight: 17 },
   programJourneyCard: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 17, borderWidth: 1, gap: 14, padding: 16, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.055, shadowRadius: 14, elevation: 2 },
   programJourneyTop: { alignItems: "center", flexDirection: "row", gap: 12 },
   programJourneyTitle: { color: "#202A35", fontSize: 18, fontWeight: "800", lineHeight: 23 },
@@ -6085,19 +6200,20 @@ const styles = StyleSheet.create({
   programTracker: { flexDirection: "row", gap: 8, paddingVertical: 4 },
   programTrackerDot: { backgroundColor: "#FFFFFF", borderColor: "#C8D4E3", borderRadius: 999, borderWidth: 2, height: 14, width: 14 },
   programStatsRow: { flexDirection: "row", gap: 10 },
-  programStat: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 14, borderWidth: 1, flex: 1, padding: 10 },
+  programStat: { backgroundColor: "#FFFFFF", borderColor: "#E2E8F0", borderRadius: 14, borderWidth: 1, flex: 1, padding: 10 },
   programStatValue: { color: "#111827", fontSize: 20, fontWeight: "900", lineHeight: 24 },
   programStatLabel: { color: "#536A86", fontSize: 11, fontWeight: "800", lineHeight: 15, marginTop: 2 },
   programCompletedCard: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.95)", borderColor: "#BFE7C8", borderRadius: 22, borderWidth: 1, gap: 8, padding: 18, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 18 },
   programCompletedIcon: { backgroundColor: "#DCFCE7", borderRadius: 999, color: "#16A34A", fontSize: 26, fontWeight: "900", height: 50, lineHeight: 50, overflow: "hidden", textAlign: "center", width: 50 },
   programCompletedTitle: { color: "#111827", fontSize: 20, fontWeight: "900", lineHeight: 25 },
   programCompletedCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
-  journeyResourceCard: { borderColor: "#E2E8F0", borderRadius: 16, borderWidth: 1, gap: 8, minHeight: 204, padding: 13, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.045, shadowRadius: 12, elevation: 1, width: 214 },
-  journeyResourceImage: { alignItems: "center", borderRadius: 16, height: 78, justifyContent: "center" },
+  journeyResourceCard: { alignItems: "center", borderColor: "#E2E8F0", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 13, minHeight: 132, padding: 13, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.045, shadowRadius: 12, elevation: 1 },
+  journeyResourceImage: { alignItems: "center", borderRadius: 16, height: 82, justifyContent: "center", width: 82 },
   journeyResourceGlyph: { fontSize: 32, fontWeight: "900" },
+  journeyResourceBody: { flex: 1, gap: 5 },
   journeyResourceTopic: { color: "#64748B", fontSize: 12, fontWeight: "800", lineHeight: 16 },
   journeyResourceTitle: { color: "#111827", fontSize: 16, fontWeight: "900", lineHeight: 21 },
-  journeyResourceType: { color: "#536A86", fontSize: 12, fontWeight: "800", lineHeight: 16, marginTop: "auto" },
+  journeyResourceType: { color: "#536A86", fontSize: 12, fontWeight: "800", lineHeight: 16 },
   recCard: {
     alignItems: "center",
     borderColor: "#E2E8F0",
@@ -6121,7 +6237,7 @@ const styles = StyleSheet.create({
   recMeta: { color: "#536A86", fontSize: 14, fontWeight: "600", lineHeight: 18 },
   thumb: { alignItems: "center", borderRadius: 16, height: 44, justifyContent: "center", width: 44 },
   thumbText: { fontSize: 16, fontWeight: "900" },
-  emptyInlineCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, padding: 15 },
+  emptyInlineCard: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, padding: 15 },
   todayCard: {
     alignItems: "center",
     backgroundColor: "rgba(255,255,255,0.94)",
@@ -6352,10 +6468,7 @@ const styles = StyleSheet.create({
   mileCardLocked: { backgroundColor: "rgba(221,211,233,0.72)", borderColor: "rgba(221,211,233,0.72)", shadowOpacity: 0.02 },
   mileChip: { alignSelf: "center", borderRadius: 8, marginTop: -28, paddingHorizontal: 13, paddingVertical: 5 },
   mileChipText: { fontSize: 12, fontWeight: "900" },
-  mileCardTopRow: { alignItems: "flex-start", flexDirection: "row", gap: 12 },
-  mileCardTopRowTutor: { alignItems: "flex-start", flexDirection: "row", gap: 0 },
-  mileIconTile: { alignItems: "center", borderColor: "#E7DFFF", borderRadius: 14, borderWidth: 1, height: 52, justifyContent: "center", width: 52 },
-  mileIconText: { fontSize: 24, fontWeight: "900", lineHeight: 28 },
+  mileCardTopRow: { alignItems: "flex-start", flexDirection: "row" },
   mileTitleRow: { alignItems: "flex-start", flexDirection: "row", gap: 8, justifyContent: "space-between" },
   mileCardTitle: { color: "#202A35", flex: 1, fontSize: 15, fontWeight: "900", lineHeight: 20 },
   mileCardTitleLocked: { color: "#6F687C" },

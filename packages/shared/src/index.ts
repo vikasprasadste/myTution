@@ -156,6 +156,7 @@ export interface Reminder {
   title: string;
   startsAt: string;
   status: "active" | "completed" | "cancelled";
+  sourceTag?: string;
 }
 
 export interface ProgramMilestone {
