@@ -337,6 +337,7 @@ export default function Index() {
     curriculumSelections: []
   });
   const [apiNotice, setApiNotice] = useState("");
+  const [apiRetryKey, setApiRetryKey] = useState(0);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [identityContext, setIdentityContext] = useState<IdentityContext | null>(null);
@@ -833,7 +834,7 @@ export default function Index() {
     return () => {
       ignore = true;
     };
-  }, [role, authSession?.accessToken, selectedProgramId, programRefreshKey, pendingProgramId, screen]);
+  }, [role, authSession?.accessToken, selectedProgramId, programRefreshKey, pendingProgramId, screen, apiRetryKey]);
 
   async function pickAvatar() {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -2067,20 +2068,30 @@ export default function Index() {
           <Text style={styles.toastText}>{programToast}</Text>
         </View>
       ) : null}
-      <ApiWarningModal message={apiNotice} onClose={() => setApiNotice("")} />
+      <ApiWarningModal
+        message={apiNotice}
+        onClose={() => setApiNotice("")}
+        onRetry={() => {
+          setApiNotice("");
+          setApiRetryKey((value) => value + 1);
+        }}
+      />
     </LinearGradient>
   );
 }
 
-function ApiWarningModal({ message, onClose }: { message: string; onClose: () => void }) {
+function ApiWarningModal({ message, onClose, onRetry }: { message: string; onClose: () => void; onRetry: () => void }) {
   return (
     <Modal visible={Boolean(message)} transparent animationType="fade">
       <BlurView intensity={88} tint="dark" style={styles.apiModalBackdrop}>
         <View style={styles.apiModalCard}>
           <Text style={styles.apiModalTitle}>Something went wrong</Text>
           <Text style={styles.apiModalCopy}>{message || "Please try again."}</Text>
-          <Pressable style={({ pressed }) => [styles.apiModalButton, pressed && styles.pressed]} onPress={onClose}>
+          <Pressable style={({ pressed }) => [styles.apiModalButton, pressed && styles.pressed]} onPress={onRetry}>
             <Text style={styles.apiModalButtonText}>Try again</Text>
+          </Pressable>
+          <Pressable style={({ pressed }) => [styles.apiModalSecondaryButton, pressed && styles.pressed]} onPress={onClose}>
+            <Text style={styles.apiModalSecondaryButtonText}>Dismiss</Text>
           </Pressable>
         </View>
       </BlurView>
@@ -6113,6 +6124,8 @@ const styles = StyleSheet.create({
   apiModalCopy: { color: "#536A86", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
   apiModalButton: { alignItems: "center", backgroundColor: "#202A35", borderRadius: 14, justifyContent: "center", minHeight: 46, paddingHorizontal: 18, width: "100%" },
   apiModalButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
+  apiModalSecondaryButton: { alignItems: "center", justifyContent: "center", minHeight: 34, paddingHorizontal: 18, width: "100%" },
+  apiModalSecondaryButtonText: { color: "#536A86", fontSize: 13, fontWeight: "900" },
   checkbox: { color: "#111827", flex: 1, fontWeight: "700", lineHeight: 20 },
   fieldLabel: { color: "#2F3B4C", fontSize: 12, fontWeight: "800", letterSpacing: 0.1 },
   input: { alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#C9D6E4", borderRadius: 13, borderWidth: 1, color: "#111827", fontSize: 14, minHeight: 48, minWidth: 0, paddingHorizontal: 14, width: "100%" },
