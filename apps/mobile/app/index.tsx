@@ -3033,6 +3033,10 @@ function carouselCardWidth(screenWidth: number) {
   return Math.max(280, screenWidth - 40);
 }
 
+function activityMediaHeight(screenWidth: number) {
+  return Math.min(390, Math.max(280, Math.round(screenWidth * 0.78)));
+}
+
 function Title({ children }: { children: React.ReactNode }) {
   return <Text style={styles.title}>{children}</Text>;
 }
@@ -3409,7 +3413,7 @@ function parseVtt(value: string): VttCue[] {
     .filter((cue): cue is VttCue => Boolean(cue?.text));
 }
 
-function SvgAsset({ pathValue, fallback }: { pathValue?: string | null; fallback: ReactNode }) {
+function SvgAsset({ pathValue, fallback, resizeMode = "cover" }: { pathValue?: string | null; fallback: ReactNode; resizeMode?: "cover" | "contain" }) {
   const [xml, setXml] = useState("");
   const [imageFailed, setImageFailed] = useState(false);
   const url = amsFileUrl(pathValue);
@@ -3436,12 +3440,12 @@ function SvgAsset({ pathValue, fallback }: { pathValue?: string | null; fallback
   }, [isSvg, url]);
 
   if (!url || imageFailed) return <>{fallback}</>;
-  if (!isSvg) return <Image source={{ uri: url }} style={styles.assetImageFill} resizeMode="cover" onError={() => setImageFailed(true)} />;
+  if (!isSvg) return <Image source={{ uri: url }} style={styles.assetImageFill} resizeMode={resizeMode} onError={() => setImageFailed(true)} />;
   if (!xml) return <>{fallback}</>;
   return <SvgXml xml={xml} width="100%" height="100%" />;
 }
 
-function VideoResourcePlayer({ resource }: { resource: ResourceDetailPayload | SelectedActivity }) {
+function VideoResourcePlayer({ resource, mediaHeight }: { resource: ResourceDetailPayload | SelectedActivity; mediaHeight: number }) {
   const detail = resource as ResourceDetailPayload;
   const mediaUrl = resourceMediaUrl(resource);
   const [cues, setCues] = useState<VttCue[]>([]);
@@ -3488,7 +3492,7 @@ function VideoResourcePlayer({ resource }: { resource: ResourceDetailPayload | S
 
   if (!mediaUrl) {
     return (
-      <View style={styles.videoUnavailable}>
+      <View style={[styles.videoUnavailable, { height: mediaHeight }]}>
         <Text style={styles.videoUnavailableTitle}>Video is being prepared</Text>
         <Text style={styles.videoUnavailableCopy}>The banner, transcript, and captions are available now. Add a media file URL in AMS to enable playback.</Text>
       </View>
@@ -3496,7 +3500,7 @@ function VideoResourcePlayer({ resource }: { resource: ResourceDetailPayload | S
   }
 
   return (
-    <View style={styles.videoPlayerShell}>
+    <View style={[styles.videoPlayerShell, { height: mediaHeight }]}>
       <VideoView
         player={player}
         nativeControls
@@ -3515,6 +3519,8 @@ function VideoResourcePlayer({ resource }: { resource: ResourceDetailPayload | S
 
 function ResourceDetail({ role, resource, complete, loading, back, completedTopic, continueActivity, nextMilestone, backToProgram, backToHome }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; complete: () => void; loading?: boolean; back: () => void; completedTopic: null | { nextActivity?: SelectedActivity; nextMilestoneActivity?: SelectedActivity; milestoneComplete: boolean; programComplete?: boolean }; continueActivity: () => void; nextMilestone: () => void; backToProgram: () => void; backToHome: () => void }) {
   const theme = useRoleTheme(role);
+  const { width } = useWindowDimensions();
+  const mediaHeight = activityMediaHeight(width);
   const cta = resource.type === "article" ? "Mark as read" : resource.type === "video" ? "Mark watched" : "Mark complete";
   const detail = resource as ResourceDetailPayload;
   const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
@@ -3524,11 +3530,12 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
     <>
       <TopBar title={resource.thumbnailLabel.toUpperCase()} left="‹" onLeft={back} />
       {isVideo ? (
-        <VideoResourcePlayer resource={resource} />
+        <VideoResourcePlayer resource={resource} mediaHeight={mediaHeight} />
       ) : (
-        <View style={styles.resourceBanner}>
+        <View style={[styles.resourceBanner, { height: mediaHeight }]}>
           <SvgAsset
             pathValue={visualPath}
+            resizeMode="contain"
             fallback={<Text style={[styles.playerIcon, { color: theme.text }]}>A</Text>}
           />
         </View>
@@ -3557,15 +3564,17 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
 }
 
 function FlashIntro({ role, resource, start, back }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; start: () => void; back: () => void }) {
+  const { width } = useWindowDimensions();
   const detail = resource as ResourceDetailPayload;
   const cards = detail.flashcards ?? [];
   const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
   return (
     <>
       <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
-      <View style={styles.resourceBanner}>
+      <View style={[styles.resourceBanner, { height: activityMediaHeight(width) }]}>
         <SvgAsset
           pathValue={visualPath}
+          resizeMode="contain"
           fallback={<Text style={styles.playerIcon}>▤</Text>}
         />
       </View>
@@ -3614,14 +3623,16 @@ function FlashPlay({ role, resource, cards, index, answer, setAnswer, next, lear
 }
 
 function QuizIntro({ role, resource, loading, start, back }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; loading: boolean; start: () => void; back: () => void }) {
+  const { width } = useWindowDimensions();
   const detail = resource as ResourceDetailPayload;
   const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
   return (
     <>
       <TopBar title="QUIZ" left="‹" onLeft={back} />
-      <View style={styles.resourceBanner}>
+      <View style={[styles.resourceBanner, { height: activityMediaHeight(width) }]}>
         <SvgAsset
           pathValue={visualPath}
+          resizeMode="contain"
           fallback={<Text style={styles.playerIcon}>Quiz</Text>}
         />
       </View>
@@ -7101,7 +7112,7 @@ const styles = StyleSheet.create({
   resourceSubtitle: { color: "#3F4B5F", fontSize: 17, fontWeight: "500", lineHeight: 26 },
   assetMetaText: { color: "#6B7280", fontSize: 13, fontWeight: "900", letterSpacing: 0, marginTop: 12, textTransform: "uppercase" },
   articleBody: { color: "#374151", fontSize: 15, lineHeight: 24, marginTop: 18 },
-  resourceBottomCta: { marginTop: "auto", paddingTop: 24 },
+  resourceBottomCta: { paddingTop: 24 },
   flashIntroHero: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E9D5FF", borderRadius: 18, borderWidth: 1, gap: 14, minHeight: 330, padding: 22, shadowColor: "#7C3AED", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.055, shadowRadius: 14, elevation: 2 },
   flashIntroLanding: { alignItems: "center", flex: 1, justifyContent: "center", gap: 18, paddingVertical: 34 },
   flashIntroBanner: { alignItems: "center", borderRadius: 18, height: 210, justifyContent: "center", overflow: "hidden", width: "100%" },
