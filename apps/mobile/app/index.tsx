@@ -2101,6 +2101,41 @@ export default function Index() {
     return null;
   }
 
+  function renderPinnedActivityAction() {
+    if (completedTopic) return null;
+    if (screen === "resource" && selectedResource && role !== "parent" && role !== "tutor") {
+      const resource = resourceDetail ?? selectedResource;
+      const cta = resource.type === "article" ? "Mark read" : resource.type === "video" ? "Mark seen" : "Mark complete";
+      return <Button role={role} label={cta} onPress={markComplete} loading={loadingAction === "markComplete"} />;
+    }
+    if (screen === "flashIntro" && selectedResource) {
+      const cards = resourceDetail?.id === selectedResource.id ? resourceDetail.flashcards ?? [] : [];
+      if (cards.length && role !== "parent") {
+        return <Button role={role} label="Start flashcards" onPress={() => { setFlashIndex(0); setFlashAnswer(false); setScreen("flashPlay"); }} />;
+      }
+      if (!cards.length) {
+        return <Button role={role} variant="secondary" label="Back to Program" onPress={() => setScreen(selectedMilestone ? "milestoneDetail" : "home")} />;
+      }
+    }
+    if (screen === "flashPlay" && selectedResource) {
+      const cards = resourceDetail?.id === selectedResource.id ? resourceDetail.flashcards ?? [] : [];
+      const isLastCard = flashIndex === cards.length - 1;
+      if (!cards.length || (role === "tutor" && isLastCard)) return null;
+      return (
+        <Button
+          role={role}
+          label={isLastCard && role !== "tutor" ? "Mark complete" : "Next"}
+          onPress={isLastCard && role !== "tutor" ? markComplete : () => { setFlashIndex(Math.min(flashIndex + 1, Math.max(0, cards.length - 1))); setFlashAnswer(false); }}
+        />
+      );
+    }
+    if (screen === "quizIntro" && selectedResource && role !== "parent") {
+      return <Button role={role} label="Start quiz" onPress={() => startQuiz(selectedResource)} loading={loadingAction === "startQuiz"} />;
+    }
+    return null;
+  }
+
+  const pinnedActivityAction = renderPinnedActivityAction();
   const showNav = ["home", "sessions", "events", "chat", "account"].includes(screen);
 
   if (showAppSplash) {
@@ -2110,11 +2145,12 @@ export default function Index() {
   return (
     <LinearGradient colors={screenGradient(role)} style={styles.shell}>
       <ScrollView
-        contentContainerStyle={[styles.content, screen === "home" && styles.homeContent, screen === "value" && styles.valueContent, showNav && styles.contentWithNav]}
+        contentContainerStyle={[styles.content, screen === "home" && styles.homeContent, screen === "value" && styles.valueContent, showNav && styles.contentWithNav, pinnedActivityAction && styles.contentWithPinnedAction]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshCurrentScreen} tintColor={theme.accentStrong} />}
       >
         {renderScreen()}
       </ScrollView>
+      {pinnedActivityAction ? <View style={styles.activityPinnedCta}>{pinnedActivityAction}</View> : null}
       {showNav && <BottomNav role={role} screen={screen} setScreen={setScreen} />}
       {picker && (
         <DateTimePicker
@@ -3037,6 +3073,10 @@ function activityMediaHeight(screenWidth: number) {
   return Math.min(390, Math.max(280, Math.round(screenWidth * 0.78)));
 }
 
+function flashcardPlayHeight(screenHeight: number) {
+  return Math.max(520, Math.round(screenHeight - 270));
+}
+
 function Title({ children }: { children: React.ReactNode }) {
   return <Text style={styles.title}>{children}</Text>;
 }
@@ -3521,7 +3561,6 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
   const theme = useRoleTheme(role);
   const { width } = useWindowDimensions();
   const mediaHeight = activityMediaHeight(width);
-  const cta = resource.type === "article" ? "Mark as read" : resource.type === "video" ? "Mark watched" : "Mark complete";
   const detail = resource as ResourceDetailPayload;
   const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
   const readOnly = role === "parent" || role === "tutor";
@@ -3544,7 +3583,6 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
       <Text style={styles.resourceSubtitle}>{resource.description}</Text>
       <Text style={styles.assetMetaText}>{resourceMetaLine(resource)}</Text>
       <Text style={styles.articleBody}>{resourceArticleText(resource)}</Text>
-      {!readOnly ? <View style={styles.resourceBottomCta}><Button role={role} label={cta} onPress={complete} loading={loading} /></View> : null}
       {completedTopic ? (
         <View style={styles.topicTrayBackdrop}>
           <View style={styles.topicTray}>
@@ -3581,19 +3619,14 @@ function FlashIntro({ role, resource, start, back }: { role: Role; resource: Res
       <Text style={styles.resourceTitle}>{resource.title}</Text>
       <Text style={styles.resourceSubtitle}>{resource.description}</Text>
       <Text style={styles.assetMetaText}>{cards.length} cards • Tap each card to reveal the answer</Text>
-      {cards.length ? (
-        role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View> : null
-      ) : (
-        <View style={styles.resourceBottomCta}><Button role={role} variant="secondary" label="Back to Program" onPress={back} /></View>
-      )}
     </>
   );
 }
 
 function FlashPlay({ role, resource, cards, index, answer, setAnswer, next, learnMore, complete, back }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; cards: FlashcardPayload[]; index: number; answer: boolean; setAnswer: (value: boolean) => void; next: () => void; learnMore: () => void; complete: () => void; back: () => void }) {
+  const { height } = useWindowDimensions();
   const activeCard = cards[index] ?? cards[0];
   const progressWidth = (String(Math.round(((index + 1) / Math.max(cards.length, 1)) * 100)) + "%") as any;
-  const isLastCard = index === cards.length - 1;
   if (!activeCard) {
     return (
       <>
@@ -3610,14 +3643,13 @@ function FlashPlay({ role, resource, cards, index, answer, setAnswer, next, lear
       <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
       <View style={styles.flashProgressTrack}><View style={[styles.flashProgressFill, { width: progressWidth }]} /></View>
       <Text style={styles.quizCount}>{resource.title}</Text>
-      <Pressable style={[styles.flashcard, answer && styles.flashcardAnswer]} onPress={() => setAnswer(!answer)}>
+      <Pressable style={[styles.flashcard, { minHeight: flashcardPlayHeight(height) }, answer && styles.flashcardAnswer]} onPress={() => setAnswer(!answer)}>
         <Text style={styles.flashCount}>{index + 1} of {cards.length}</Text>
         <Text style={styles.flashText}>{answer ? activeCard.answer : activeCard.question}</Text>
         <Text style={styles.flipHint}>Tap to flip</Text>
       </Pressable>
       {answer && activeCard.learnMore ? <View style={styles.quizLearnMore}><Text style={styles.quizLearnMoreText}>💡 {activeCard.learnMore}</Text></View> : null}
       {answer && activeCard.relatedArticleId ? <Button role={role} variant="secondary" label="💡  Learn more" onPress={learnMore} /> : null}
-      {role === "tutor" && isLastCard ? null : <Button role={role} label={isLastCard && role !== "tutor" ? "Mark complete" : "Next"} onPress={isLastCard && role !== "tutor" ? complete : next} />}
     </>
   );
 }
@@ -3639,7 +3671,6 @@ function QuizIntro({ role, resource, loading, start, back }: { role: Role; resou
       <Text style={styles.resourceTitle}>{resource.title}</Text>
       <Text style={styles.resourceSubtitle}>{resource.description}</Text>
       <Text style={styles.assetMetaText}>{resourceMetaLine(resource)}</Text>
-      {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start" onPress={start} loading={loading} /></View> : null}
     </>
   );
 }
@@ -6380,6 +6411,8 @@ const styles = StyleSheet.create({
   homeContent: { gap: 14, paddingHorizontal: 18 },
   valueContent: { justifyContent: "space-between" },
   contentWithNav: { paddingBottom: 124 },
+  contentWithPinnedAction: { paddingBottom: 132 },
+  activityPinnedCta: { backgroundColor: "rgba(235,242,255,0.96)", borderTopColor: "rgba(203,213,225,0.72)", borderTopWidth: 1, bottom: 0, left: 0, paddingBottom: 28, paddingHorizontal: 20, paddingTop: 12, position: "absolute", right: 0 },
   flex: { flex: 1 },
   bottomCta: { flex: 1, justifyContent: "flex-end", minHeight: 260 },
   signinActions: { gap: 14, marginTop: 18 },
