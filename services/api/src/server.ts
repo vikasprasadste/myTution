@@ -23,7 +23,7 @@ const allowedOrigins = splitCsv(process.env.API_ALLOWED_ORIGINS ?? "").filter(Bo
 const accessTokenTtlMinutes = Number(process.env.ACCESS_TOKEN_TTL_MINUTES ?? 15);
 const refreshTokenTtlDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 30);
 const maxStaticAssetBytes = Number(process.env.AMS_MAX_STATIC_ASSET_BYTES ?? 25 * 1024 * 1024);
-const allowedAssetExtensions = new Set([".svg", ".png", ".jpg", ".jpeg", ".webp", ".vtt", ".md", ".json", ".mp4"]);
+const allowedAssetExtensions = new Set([".svg", ".png", ".jpg", ".jpeg", ".webp", ".vtt", ".md", ".json", ".mp4", ".pdf"]);
 
 let curriculumCatalogueCache: CurriculumCatalogueResponse | null = null;
 
@@ -277,32 +277,48 @@ function toAssetUrl(assetPath?: string | null) {
   return `/api/v1/ams/files/${assetPath.replace(/^services\/api\/assets\//, "")}`;
 }
 
-function readMediaUrl(contentJson?: unknown) {
-  if (!contentJson || typeof contentJson !== "object" || !("mediaUrl" in contentJson)) return null;
+function readMediaUrl(resource?: ResourceAssetShape | null) {
+  const fallbackMediaUrl = defaultMediaUrlForResource(resource);
+  const contentJson = resource?.contentJson;
+  if (!contentJson || typeof contentJson !== "object" || !("mediaUrl" in contentJson)) return fallbackMediaUrl;
   const mediaUrl = contentJson.mediaUrl;
-  return typeof mediaUrl === "string" ? mediaUrl : null;
+  if (typeof mediaUrl !== "string") return fallbackMediaUrl;
+  if (resource?.type === "video" && mediaUrl.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")) {
+    return fallbackMediaUrl ?? "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
+  }
+  return mediaUrl;
+}
+
+function defaultMediaUrlForResource(resource?: ResourceAssetShape | null) {
+  if (resource?.type === "video" && resource.assetSlug?.includes("kinematics-motion")) {
+    return "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
+  }
+  if (resource?.type === "article" && resource.assetSlug?.includes("motion-micronotes")) {
+    return "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf";
+  }
+  return null;
 }
 
 const defaultAssetPathsByType: Record<string, { thumbnailPath: string; bannerPath: string; vttPath?: string; metadataPath: string }> = {
   video: {
-    thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.svg",
-    bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.svg",
+    thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png",
+    bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png",
     vttPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt",
     metadataPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md"
   },
   article: {
-    thumbnailPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.svg",
-    bannerPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.svg",
+    thumbnailPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.png",
+    bannerPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.png",
     metadataPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/title-description.md"
   },
   flashcard: {
-    thumbnailPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.svg",
-    bannerPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.svg",
+    thumbnailPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.png",
+    bannerPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.png",
     metadataPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/title-description.md"
   },
   quiz: {
-    thumbnailPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.svg",
-    bannerPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.svg",
+    thumbnailPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.png",
+    bannerPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.png",
     metadataPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/title-description.md"
   }
 };
@@ -325,10 +341,15 @@ type ResourceAssetShape = {
 function assetPathForKind(resource: ResourceAssetShape | null | undefined, kind: AssetKind) {
   if (!resource) return null;
   const defaults = resource.type ? defaultAssetPathsByType[resource.type] : undefined;
-  if (kind === "thumbnail") return resource.thumbnailPath ?? defaults?.thumbnailPath ?? null;
-  if (kind === "banner") return resource.bannerPath ?? defaults?.bannerPath ?? null;
+  if (kind === "thumbnail") return normalizeLegacyMockImagePath(resource.thumbnailPath ?? defaults?.thumbnailPath ?? null);
+  if (kind === "banner") return normalizeLegacyMockImagePath(resource.bannerPath ?? defaults?.bannerPath ?? null);
   if (kind === "vtt") return resource.vttPath ?? defaults?.vttPath ?? null;
   return resource.metadataPath ?? defaults?.metadataPath ?? null;
+}
+
+function normalizeLegacyMockImagePath(assetPath: string | null) {
+  if (!assetPath?.startsWith("services/api/assets/mock/")) return assetPath;
+  return assetPath.replace(/\/(thumbnail|banner)\.svg$/i, "/$1.png");
 }
 
 function toPrivateAssetUrl(resource: ResourceAssetShape, kind: AssetKind, options?: { private?: boolean; role?: Role; accessToken?: string | null }) {
@@ -351,7 +372,7 @@ function assetUrlsFor(resource?: ResourceAssetShape | null, options?: { private?
     banner: toPrivateAssetUrl(resource, "banner", options),
     vtt: toPrivateAssetUrl(resource, "vtt", options),
     metadata: toPrivateAssetUrl(resource, "metadata", options),
-    media: readMediaUrl(resource.contentJson)
+    media: readMediaUrl(resource)
   };
 }
 

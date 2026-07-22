@@ -17,6 +17,7 @@ import {
   Modal,
   PanResponder,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -50,6 +51,11 @@ type AppScreen =
   | "editProfile"
   | "signin"
   | "home"
+  | "batchCreate"
+  | "tutorBatches"
+  | "tutorRequests"
+  | "tutorEnrollments"
+  | "tutorStudentDetail"
   | "search"
   | "sessions"
   | "milestoneDetail"
@@ -96,6 +102,7 @@ type StreamKey = "junior" | "senior" | "ug" | "pg";
 type AuthSession = { accessToken: string; refreshToken: string; tokenType: string };
 type ParentLink = { id: string; name: string; relationship: string; status: string };
 type DashboardCard = { value: string; label: string; target: AppScreen };
+type TutorDashboardTarget = "programs" | "batches" | "requests" | "enrollments";
 type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number; milestoneTitle?: string; required?: boolean };
 type TutorProgramDraft = TutorProgramCreateInput;
 type FlashcardPayload = { id?: string; sequence?: number; question: string; answer: string; learnMore?: string; relatedArticleId?: string | null };
@@ -155,6 +162,12 @@ type TutorBatchDraft = {
   feeType: string;
   feeAmount: string;
 };
+type TutorEnrollmentStudent = {
+  student: { id: string; name: string; city: string | null };
+  batch: BatchClass;
+  feeType: string;
+  feeAmount?: number | null;
+};
 type ProfileDraft = {
   firstName: string;
   lastName: string;
@@ -205,20 +218,20 @@ const specializationOptions: Record<StreamKey, string[]> = {
 
 const defaultAssetPathsByType: Record<string, { thumbnail: string; banner: string }> = {
   video: {
-    thumbnail: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.svg",
-    banner: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/banner.svg"
+    thumbnail: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png",
+    banner: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png"
   },
   article: {
-    thumbnail: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.svg",
-    banner: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/banner.svg"
+    thumbnail: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.png",
+    banner: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/banner.png"
   },
   flashcard: {
-    thumbnail: "/api/v1/ams/files/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.svg",
-    banner: "/api/v1/ams/files/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.svg"
+    thumbnail: "/api/v1/ams/files/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.png",
+    banner: "/api/v1/ams/files/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.png"
   },
   quiz: {
-    thumbnail: "/api/v1/ams/files/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.svg",
-    banner: "/api/v1/ams/files/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.svg"
+    thumbnail: "/api/v1/ams/files/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.png",
+    banner: "/api/v1/ams/files/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.png"
   }
 };
 
@@ -339,6 +352,7 @@ export default function Index() {
   const [apiNotice, setApiNotice] = useState("");
   const [apiRetryKey, setApiRetryKey] = useState(0);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [identityContext, setIdentityContext] = useState<IdentityContext | null>(null);
   const [apiPersona, setApiPersona] = useState<Persona | null>(null);
@@ -381,6 +395,7 @@ export default function Index() {
   const [tutorFilterOptions, setTutorFilterOptions] = useState<TutorFilterOptions>({ subjects: [], locations: [], grades: [], boards: [], modes: [], languages: [], genders: [], experience: [], ratings: [] });
   const [batchClasses, setBatchClasses] = useState<BatchClass[]>([]);
   const [batchRequests, setBatchRequests] = useState<BatchRequestSummary[]>([]);
+  const [selectedTutorStudent, setSelectedTutorStudent] = useState<TutorEnrollmentStudent | null>(null);
   const [learnerProgress, setLearnerProgress] = useState<LearnerProgressSummary[]>([]);
   const [parentMonitoring, setParentMonitoring] = useState<ParentMonitoringResponse | null>(null);
   const [tutorSupply, setTutorSupply] = useState<TutorSupplyState | null>(null);
@@ -536,7 +551,13 @@ export default function Index() {
   useEffect(() => {
     if (screen === "search" && role === "student") refreshTutorSearch({ subject: "Mathematics" });
     if (screen === "home" && role === "student") refreshStudentBatchRequests();
-    if (screen === "roleHub") {
+    if (screen === "home" && role === "tutor") {
+      refreshClasses("tutor");
+      refreshBatchRequests();
+      refreshTutorSupply();
+      refreshLearnerProgress("tutor");
+    }
+    if (["roleHub", "tutorBatches", "tutorRequests", "tutorEnrollments", "tutorStudentDetail"].includes(screen)) {
       if (role === "student") {
         refreshClasses("student");
         refreshStudentBatchRequests();
@@ -959,7 +980,8 @@ export default function Index() {
   async function refreshLearnerProgress(targetRole: Role = role) {
     if (!authSession?.accessToken) return;
     try {
-      const response = await apiGet<{ data: LearnerProgressSummary[] }>(`/api/v1/education-plan/progress-summary?role=${targetRole}${selectedProgramId ? "&programId=" + encodeURIComponent(selectedProgramId) : ""}`, authSession.accessToken);
+      const scopedProgramId = targetRole === "tutor" ? null : selectedProgramId;
+      const response = await apiGet<{ data: LearnerProgressSummary[] }>(`/api/v1/education-plan/progress-summary?role=${targetRole}${scopedProgramId ? "&programId=" + encodeURIComponent(scopedProgramId) : ""}`, authSession.accessToken);
       if (targetRole === role) setLearnerProgress(response.data);
     } catch {
       if (targetRole === role) setLearnerProgress([]);
@@ -995,6 +1017,35 @@ export default function Index() {
     }
   }
 
+  async function refreshCurrentScreen() {
+    setRefreshing(true);
+    try {
+      if (role === "tutor") {
+        await Promise.all([
+          refreshTutorSupply(),
+          refreshClasses("tutor"),
+          refreshBatchRequests(),
+          refreshLearnerProgress("tutor"),
+          refreshDashboardCards("tutor")
+        ]);
+      } else if (role === "student") {
+        await Promise.all([
+          refreshStudentBatchRequests(),
+          refreshDashboardCards("student"),
+          screen === "search" ? refreshTutorSearch() : Promise.resolve()
+        ]);
+        if (["sessions", "milestoneDetail", "resource", "quiz", "quizResult"].includes(screen)) refreshProgramFromApi();
+      } else {
+        await Promise.all([
+          refreshClasses("parent"),
+          refreshDashboardCards("parent")
+        ]);
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   async function saveTutorBatch() {
     const programId = tutorBatchDraft.programId || tutorSupply?.programs[0]?.id || "";
     const payload = {
@@ -1026,6 +1077,7 @@ export default function Index() {
       setTutorBatchDraft({ ...defaultTutorBatchDraft, programId, course: payload.course });
       await refreshTutorSupply();
       await refreshDashboardCards("tutor");
+      setScreen("roleHub");
     } catch {
       setApiNotice("Batch could not be saved. Please check required fields and API deployment.");
     } finally {
@@ -1066,6 +1118,23 @@ export default function Index() {
       feeType: batch.feeType ?? "free",
       feeAmount: batch.feeAmount ? String(batch.feeAmount) : ""
     });
+    setScreen("batchCreate");
+  }
+
+  function startNewTutorBatch() {
+    const firstProgram = tutorSupply?.programs[0] ?? programs[0];
+    setTutorBatchDraft({ ...defaultTutorBatchDraft, programId: firstProgram?.id ?? "", course: firstProgram?.title ?? "" });
+    setScreen("batchCreate");
+  }
+
+  function openTutorDashboardTile(target: TutorDashboardTarget) {
+    if (target === "programs") setScreen("sessions");
+    if (target === "batches") setScreen("tutorBatches");
+    if (target === "requests") setScreen("tutorRequests");
+    if (target === "enrollments") {
+      setSelectedTutorStudent(null);
+      setScreen("tutorEnrollments");
+    }
   }
 
   async function refreshStudentBatchRequests() {
@@ -1955,15 +2024,24 @@ export default function Index() {
           {role === "parent" ? <ParentMonitoringPanel data={parentMonitoring} openProgram={() => setScreen("sessions")} openClasses={() => setScreen("roleHub")} /> : null}
 
           <SectionTitle>Dashboard</SectionTitle>
-          <DashboardGrid role={role} cards={dashboardCards} setScreen={setScreen} />
+          {role === "tutor" ? (
+            <TutorSupplyDashboard supply={tutorSupply} classes={batchClasses} requests={batchRequests} onOpen={openTutorDashboardTile} />
+          ) : (
+            <DashboardGrid role={role} cards={dashboardCards} setScreen={setScreen} />
+          )}
         </>
       );
     }
 
+    if (screen === "batchCreate") return <TutorBatchFormScreen role={role} supply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} actionLoading={loadingAction} back={() => setScreen("roleHub")} />;
+    if (screen === "tutorBatches") return <TutorBatchListScreen role={role} supply={tutorSupply} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} actionLoading={loadingAction} back={() => setScreen("roleHub")} />;
+    if (screen === "tutorRequests") return <TutorBatchRequestsScreen role={role} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("roleHub")} />;
+    if (screen === "tutorEnrollments") return <TutorEnrollmentListScreen role={role} classes={batchClasses} supply={tutorSupply} openStudent={(student) => { setSelectedTutorStudent(student); setScreen("tutorStudentDetail"); }} back={() => setScreen("roleHub")} />;
+    if (screen === "tutorStudentDetail" && selectedTutorStudent) return <TutorStudentDetailScreen role={role} enrollment={selectedTutorStudent} learnerProgress={learnerProgress} accessToken={authSession?.accessToken} back={() => setScreen("tutorEnrollments")} />;
     if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} marketplaceTarget={marketplaceTarget} clearTargetTutor={() => setMarketplaceTarget(null)} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestProgramPurchase={requestProgramPurchase} requestLoading={loadingAction} search={refreshTutorSearch} back={() => { setMarketplaceTarget(null); setScreen("home"); }} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} accessToken={authSession?.accessToken} back={() => setScreen("account")} />;
-    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} refreshSupply={refreshTutorSupply} />;
+    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} openBatchCreate={startNewTutorBatch} openDashboardTarget={openTutorDashboardTile} />;
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} onEditProfile={() => {
       const profile = identityContext?.activeProfile;
@@ -1985,7 +2063,7 @@ export default function Index() {
         setSpecialization(profile.specialization ?? (firstSelection ? `${firstSelection.board} ${firstSelection.classLevel} ${firstSelection.subject}` : specialization));
       }
       setScreen("editProfile");
-    }} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationSeconds={activationSeconds} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
+    }} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationSeconds={activationSeconds} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} submitLabel={editingReminderId ? "Update reminder" : "Create reminder"} />;
     if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} programDataReady={!authSession?.accessToken || apiMilestones !== null || programs.length > 0} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? []} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} restoreProgram={restoreTutorProgram} archiveModalVisible={programArchiveModalVisible} setArchiveModalVisible={setProgramArchiveModalVisible} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
@@ -2031,7 +2109,10 @@ export default function Index() {
 
   return (
     <LinearGradient colors={screenGradient(role)} style={styles.shell}>
-      <ScrollView contentContainerStyle={[styles.content, screen === "home" && styles.homeContent, screen === "value" && styles.valueContent, showNav && styles.contentWithNav]}>
+      <ScrollView
+        contentContainerStyle={[styles.content, screen === "home" && styles.homeContent, screen === "value" && styles.valueContent, showNav && styles.contentWithNav]}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshCurrentScreen} tintColor={theme.accentStrong} />}
+      >
         {renderScreen()}
       </ScrollView>
       {showNav && <BottomNav role={role} screen={screen} setScreen={setScreen} />}
@@ -3276,8 +3357,8 @@ function resourceMetaLine(resource: ResourceDetailPayload | SelectedActivity) {
 function resourceMediaUrl(resource: ResourceDetailPayload | SelectedActivity) {
   const detail = resource as ResourceDetailPayload;
   const contentJson = detail.contentJson;
-  if (detail.assetUrls?.media) return detail.assetUrls.media;
-  if (contentJson && typeof contentJson.mediaUrl === "string") return contentJson.mediaUrl;
+  if (detail.assetUrls?.media) return amsFileUrl(detail.assetUrls.media);
+  if (contentJson && typeof contentJson.mediaUrl === "string") return amsFileUrl(contentJson.mediaUrl);
   return "";
 }
 
@@ -3319,9 +3400,13 @@ function parseVtt(value: string): VttCue[] {
 
 function SvgAsset({ pathValue, fallback }: { pathValue?: string | null; fallback: ReactNode }) {
   const [xml, setXml] = useState("");
+  const [imageFailed, setImageFailed] = useState(false);
+  const url = amsFileUrl(pathValue);
+  const isSvg = Boolean(url && /\.svg(?:[?#].*)?$/i.test(url));
+
   useEffect(() => {
-    const url = amsFileUrl(pathValue);
-    if (!url) {
+    setImageFailed(false);
+    if (!url || !isSvg) {
       setXml("");
       return undefined;
     }
@@ -3337,8 +3422,10 @@ function SvgAsset({ pathValue, fallback }: { pathValue?: string | null; fallback
     return () => {
       active = false;
     };
-  }, [pathValue]);
+  }, [isSvg, url]);
 
+  if (!url || imageFailed) return <>{fallback}</>;
+  if (!isSvg) return <Image source={{ uri: url }} style={styles.assetImageFill} resizeMode="cover" onError={() => setImageFailed(true)} />;
   if (!xml) return <>{fallback}</>;
   return <SvgXml xml={xml} width="100%" height="100%" />;
 }
@@ -4908,36 +4995,28 @@ function RoleHub({
   requests,
   learnerProgress,
   loading,
-  approveRequest,
-  requestAction,
   actionLoading,
   back,
   tutorSupply,
-  batchDraft,
-  setBatchDraft,
-  saveBatch,
   editBatch,
   archiveBatch,
-  refreshSupply
+  openBatchCreate,
+  openDashboardTarget
 }: {
   role: Role;
   classes: BatchClass[];
   requests: BatchRequestSummary[];
   learnerProgress: LearnerProgressSummary[];
   loading: boolean;
-  approveRequest: (id: string) => void;
-  requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void;
   actionLoading: string | null;
   back: () => void;
   tutorSupply: TutorSupplyState | null;
-  batchDraft: TutorBatchDraft;
-  setBatchDraft: (value: TutorBatchDraft | ((draft: TutorBatchDraft) => TutorBatchDraft)) => void;
-  saveBatch: () => void;
   editBatch: (batch: TutorBatchSummary) => void;
   archiveBatch: (batchId: string) => void;
-  refreshSupply: () => void;
+  openBatchCreate: () => void;
+  openDashboardTarget: (target: TutorDashboardTarget) => void;
 }) {
-  const title = role === "tutor" ? "Tutor supply" : role === "student" ? "Classes" : "Child classes";
+  const title = role === "tutor" ? "My Batches and Leads" : role === "student" ? "Classes" : "Child classes";
   const [selectedRosterClass, setSelectedRosterClass] = useState<BatchClass | null>(null);
   if (role === "tutor" && selectedRosterClass) {
     return <ClassRoster role={role} item={selectedRosterClass} learnerProgress={learnerProgress} back={() => setSelectedRosterClass(null)} />;
@@ -4966,20 +5045,14 @@ function RoleHub({
         <TutorSupplyPanel
           role={role}
           supply={tutorSupply}
-          batchDraft={batchDraft}
-          setBatchDraft={setBatchDraft}
-          saveBatch={saveBatch}
+          classes={classes}
+          requests={requests}
           editBatch={editBatch}
           archiveBatch={archiveBatch}
           actionLoading={actionLoading}
-          refreshSupply={refreshSupply}
+          openBatchCreate={openBatchCreate}
+          openDashboardTarget={openDashboardTarget}
         />
-        <SectionTitle>Batch requests</SectionTitle>
-        {requests.map((request) => <BatchRequestCard key={request.id} role={role} request={request} approveRequest={approveRequest} requestAction={requestAction} actionLoading={actionLoading} />)}
-        {!loading && !requests.length ? <Card role={role}><CardTitle>No student requests yet</CardTitle><Muted>Batch requests from students will appear here for approval.</Muted></Card> : null}
-        <SectionTitle>Batch roster</SectionTitle>
-        {classes.map((item) => <ClassTile key={item.id} role={role} item={item} onPress={() => setSelectedRosterClass(item)} actionLabel="View roster" />)}
-        {!loading && !classes.length ? <Card role={role}><CardTitle>No active enrollments yet</CardTitle><Muted>Approved students will appear here by batch.</Muted></Card> : null}
       </>
     );
   }
@@ -4991,62 +5064,294 @@ function RoleHub({
   );
 }
 
+function isActiveTutorBatch(batch: TutorBatchSummary) {
+  const status = batch.status ?? batch.availabilityStatus ?? "available";
+  return status !== "archived" && status !== "booked";
+}
+
+function sortedTutorBatches(batches: TutorBatchSummary[]) {
+  const weight = (batch: TutorBatchSummary) => {
+    const status = batch.status ?? batch.availabilityStatus ?? "available";
+    if (isActiveTutorBatch(batch)) return 0;
+    if (status === "booked") return 1;
+    if (status === "archived") return 2;
+    return 3;
+  };
+  return [...batches].sort((a, b) => weight(a) - weight(b) || a.title.localeCompare(b.title));
+}
+
+function flattenTutorEnrollments(classes: BatchClass[], supply: TutorSupplyState | null): TutorEnrollmentStudent[] {
+  return classes.flatMap((batch) => {
+    const supplyBatch = supply?.batches.find((item) => item.id === batch.batchId);
+    return (batch.enrolledStudents ?? []).map((student) => ({
+      student,
+      batch,
+      feeType: supplyBatch?.feeType ?? "free",
+      feeAmount: supplyBatch?.feeAmount
+    }));
+  });
+}
+
+function TutorSupplyDashboard({ supply, classes, requests, onOpen }: { supply: TutorSupplyState | null; classes: BatchClass[]; requests: BatchRequestSummary[]; onOpen: (target: TutorDashboardTarget) => void }) {
+  const programs = supply?.programs ?? [];
+  const batches = supply?.batches ?? [];
+  const analytics = supply?.analytics;
+  const enrollments = flattenTutorEnrollments(classes, supply).length;
+  const tiles: Array<{ value: string | number; label: string; target: TutorDashboardTarget }> = [
+    { value: analytics?.programs.total ?? programs.length, label: "Programs", target: "programs" },
+    { value: analytics?.batches.active ?? batches.filter((batch) => isActiveTutorBatch(batch)).length, label: "Active batches", target: "batches" },
+    { value: analytics?.requests.pending ?? requests.filter((request) => request.status === "pending").length, label: "Pending requests", target: "requests" },
+    { value: analytics?.enrollments.active ?? enrollments, label: "Active enrollments", target: "enrollments" }
+  ];
+  const rows = [tiles.slice(0, 2), tiles.slice(2, 4)];
+  return (
+    <View style={styles.supplyDashboardGrid}>
+      {rows.map((row, index) => (
+        <View key={index} style={styles.supplyStatsRow}>
+          {row.map((tile) => (
+            <Pressable key={tile.target} style={({ pressed }) => [styles.supplyStatCard, pressed && styles.pressablePressed]} onPress={() => onOpen(tile.target)}>
+              <Text style={styles.supplyStatValue}>{tile.value}</Text>
+              <Text style={styles.supplyStatLabel}>{tile.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function TutorBatchListScreen({ role, supply, editBatch, archiveBatch, actionLoading, back }: { role: Role; supply: TutorSupplyState | null; editBatch: (batch: TutorBatchSummary) => void; archiveBatch: (batchId: string) => void; actionLoading: string | null; back: () => void }) {
+  const batches = sortedTutorBatches(supply?.batches ?? []);
+  return (
+    <>
+      <TopBar title="Batches" left="‹" onLeft={back} />
+      {batches.map((batch) => (
+        <View key={batch.id} style={styles.supplyBatchCard}>
+          <View style={styles.rowBetween}>
+            <View style={styles.flex}>
+              <Text style={styles.batchTitle}>{batch.title}</Text>
+              <Text style={styles.batchMeta}>{batch.course} • {batch.mode} • {batch.schedule}</Text>
+              <Text style={styles.batchMeta}>{capitalize(batch.status ?? "available")} • {batch.fillPercent ?? 0}% filled • {batch.enrolledCount}/{batch.capacity}</Text>
+              <Text style={styles.batchMeta}>{batch.feeType === "paid" ? `₹${batch.feeAmount ?? 0}` : "Free"} • Starts {formatReminderDateTime(batch.startsAt)}</Text>
+            </View>
+          </View>
+          <View style={styles.supplyActionRow}>
+            <Button role={role} variant="secondary" label="Edit" onPress={() => editBatch(batch)} />
+            <Button role={role} variant="secondary" label="Archive" onPress={() => archiveBatch(batch.id)} loading={actionLoading === "archiveTutorBatch:" + batch.id} />
+          </View>
+        </View>
+      ))}
+      {!batches.length ? <Card role={role}><CardTitle>No batches yet</CardTitle><Muted>Create a batch so students can request admission from tutor discovery.</Muted></Card> : null}
+    </>
+  );
+}
+
+function TutorBatchRequestsScreen({ role, requests, approveRequest, requestAction, actionLoading, back }: { role: Role; requests: BatchRequestSummary[]; approveRequest: (id: string) => void; requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void; actionLoading: string | null; back: () => void }) {
+  const sortedRequests = [...requests].sort((a, b) => Number(b.status === "pending") - Number(a.status === "pending") || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return (
+    <>
+      <TopBar title="Pending requests" left="‹" onLeft={back} />
+      {sortedRequests.map((request) => <BatchRequestCard key={request.id} role={role} request={request} approveRequest={approveRequest} requestAction={requestAction} actionLoading={actionLoading} />)}
+      {!sortedRequests.length ? (
+        <View style={styles.emptyInlineCard}>
+          <Text style={styles.todayTitle}>No batch requests</Text>
+          <Text style={styles.todayMeta}>Student admission requests will appear here.</Text>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+function TutorEnrollmentListScreen({ role, classes, supply, openStudent, back }: { role: Role; classes: BatchClass[]; supply: TutorSupplyState | null; openStudent: (student: TutorEnrollmentStudent) => void; back: () => void }) {
+  const enrollments = flattenTutorEnrollments(classes, supply);
+  return (
+    <>
+      <TopBar title="Active enrollments" left="‹" onLeft={back} />
+      {enrollments.map((enrollment) => (
+        <Pressable key={`${enrollment.batch.batchId}:${enrollment.student.id}`} style={({ pressed }) => [styles.rosterStudentCard, pressed && styles.pressablePressed]} onPress={() => openStudent(enrollment)}>
+          <View style={styles.rosterStudentRowInner}>
+            <View style={styles.rosterAvatar}>
+              <Text style={styles.rosterAvatarText}>{compactInitials(enrollment.student.name)}</Text>
+            </View>
+            <View style={styles.flex}>
+              <Text style={styles.parentRowName}>{enrollment.student.name}</Text>
+              <Text style={styles.parentRowMeta}>{enrollment.batch.title} • {enrollment.feeType === "paid" ? `Paid ₹${enrollment.feeAmount ?? 0}` : "Free"} • {enrollment.batch.mode}</Text>
+              <Text style={styles.parentRowMeta}>{enrollment.batch.classroomLocation ?? "Online"} • {enrollment.student.city ?? "City not added"}</Text>
+            </View>
+          </View>
+        </Pressable>
+      ))}
+      {!enrollments.length ? <Card role={role}><CardTitle>No active enrollments yet</CardTitle><Muted>Approved students will appear here across all batches.</Muted></Card> : null}
+    </>
+  );
+}
+
+function TutorStudentDetailScreen({ role, enrollment, learnerProgress, accessToken, back }: { role: Role; enrollment: TutorEnrollmentStudent; learnerProgress: LearnerProgressSummary[]; accessToken?: string; back: () => void }) {
+  const [apiProgress, setApiProgress] = useState<LearnerProgressSummary[] | null>(null);
+  const [progressLoading, setProgressLoading] = useState(false);
+  useEffect(() => {
+    let ignore = false;
+    async function loadProgress() {
+      if (!accessToken) return;
+      setProgressLoading(true);
+      try {
+        const response = await apiGet<{ data: LearnerProgressSummary[] }>("/api/v1/education-plan/progress-summary?role=tutor", accessToken);
+        if (!ignore) setApiProgress(response.data);
+      } catch {
+        if (!ignore) setApiProgress(null);
+      } finally {
+        if (!ignore) setProgressLoading(false);
+      }
+    }
+    loadProgress();
+    return () => { ignore = true; };
+  }, [accessToken, enrollment.student.id]);
+  const summaries = apiProgress ?? learnerProgress;
+  const progress = summaries.find((summary) => summary.profileId === enrollment.student.id);
+  const progressPrograms = progress?.programs ?? [];
+  return (
+    <>
+      <TopBar title={enrollment.student.name} left="‹" onLeft={back} />
+      <View style={styles.classRosterHero}>
+        <Text style={styles.classTitle}>{enrollment.student.name}</Text>
+        <Text style={styles.classMeta}>{enrollment.student.city ?? "City not added"}</Text>
+        <Text style={styles.classRosterCount}>{enrollment.batch.title}</Text>
+      </View>
+      <SectionTitle>Enrollment</SectionTitle>
+      <View style={styles.studentDetailCard}>
+        <Text style={styles.studentDetailTitle}>{enrollment.batch.course}</Text>
+        <View style={styles.studentDetailRow}>
+          <Text style={styles.studentDetailLabel}>Class</Text>
+          <Text style={styles.studentDetailValue}>{enrollment.batch.subject} • {enrollment.batch.board} • {enrollment.batch.grade}</Text>
+        </View>
+        <View style={styles.studentDetailRow}>
+          <Text style={styles.studentDetailLabel}>Schedule</Text>
+          <Text style={styles.studentDetailValue}>{enrollment.batch.mode} • {enrollment.batch.schedule}</Text>
+        </View>
+        <View style={styles.studentDetailRow}>
+          <Text style={styles.studentDetailLabel}>Location</Text>
+          <Text style={styles.studentDetailValue}>{enrollment.batch.classroomLocation ?? "Online"}</Text>
+        </View>
+        <View style={styles.studentDetailRow}>
+          <Text style={styles.studentDetailLabel}>Fee</Text>
+          <Text style={styles.studentDetailValue}>{enrollment.feeType === "paid" ? `Paid • Due 5th monthly • ₹${enrollment.feeAmount ?? 0}` : "Free • No fee due"}</Text>
+        </View>
+      </View>
+      <SectionTitle>Program progress</SectionTitle>
+      {progressLoading ? <ActivityIndicator /> : null}
+      {progressPrograms.map((program) => (
+        <View key={program.programId} style={styles.studentProgressCard}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.learnerProgressTitle}>{program.title}</Text>
+            <Text style={styles.learnerProgressPercent}>{program.percent}%</Text>
+          </View>
+          <View style={styles.learnerProgressTrack}><View style={[styles.learnerProgressFill, { width: (String(Math.max(4, program.percent)) + "%") as `${number}%` }]} /></View>
+          <View style={styles.studentDetailRow}>
+            <Text style={styles.studentDetailLabel}>Activities</Text>
+            <Text style={styles.studentDetailValue}>{program.completedActivities}/{program.totalActivities} complete</Text>
+          </View>
+          <View style={styles.studentDetailRow}>
+            <Text style={styles.studentDetailLabel}>Milestone</Text>
+            <Text style={styles.studentDetailValue}>Unlocked {program.unlockedMilestoneSequence} • Completed {program.completedMilestoneSequence}</Text>
+          </View>
+          <View style={styles.studentDetailRow}>
+            <Text style={styles.studentDetailLabel}>Quiz</Text>
+            <Text style={styles.studentDetailValue}>{program.latestQuizPercent !== null && program.latestQuizPercent !== undefined ? `${program.latestQuizPercent}% latest score` : "No quiz attempt yet"}</Text>
+          </View>
+          <View style={styles.studentDetailRow}>
+            <Text style={styles.studentDetailLabel}>Updated</Text>
+            <Text style={styles.studentDetailValue}>{program.lastActivityAt ? formatReminderDateTime(program.lastActivityAt) : "No completed activity yet"}</Text>
+          </View>
+        </View>
+      ))}
+        {!progressLoading && !progressPrograms.length ? (
+          <View style={styles.studentDetailCard}>
+            <Text style={styles.studentDetailTitle}>No learning activity yet</Text>
+            <Text style={styles.studentDetailValue}>Progress will appear here after this student starts completing activities in the batch program.</Text>
+          </View>
+        ) : null}
+    </>
+  );
+}
+
 function TutorSupplyPanel({
+  role,
+  supply,
+  classes,
+  requests,
+  editBatch,
+  archiveBatch,
+  actionLoading,
+  openBatchCreate,
+  openDashboardTarget
+}: {
+  role: Role;
+  supply: TutorSupplyState | null;
+  classes: BatchClass[];
+  requests: BatchRequestSummary[];
+  editBatch: (batch: TutorBatchSummary) => void;
+  archiveBatch: (batchId: string) => void;
+  actionLoading: string | null;
+  openBatchCreate: () => void;
+  openDashboardTarget: (target: TutorDashboardTarget) => void;
+}) {
+  const programs = supply?.programs ?? [];
+  const batches = supply?.batches ?? [];
+  return (
+    <>
+      <SectionTitle>Dashboard</SectionTitle>
+      <TutorSupplyDashboard supply={supply} classes={classes} requests={requests} onOpen={openDashboardTarget} />
+      <Button role={role} label="Create New Batch" onPress={openBatchCreate} disabled={!programs.length} />
+
+      <SectionTitle>Batches</SectionTitle>
+      {batches.map((batch) => (
+        <View key={batch.id} style={styles.supplyBatchCard}>
+          <View style={styles.rowBetween}>
+            <View style={styles.flex}>
+              <Text style={styles.batchTitle}>{batch.title}</Text>
+              <Text style={styles.batchMeta}>{batch.course} • {batch.mode} • {batch.schedule}</Text>
+              <Text style={styles.batchMeta}>{capitalize(batch.status ?? "available")} • {batch.fillPercent ?? 0}% filled • {batch.enrolledCount}/{batch.capacity}</Text>
+              <Text style={styles.batchMeta}>{batch.feeType === "paid" ? `₹${batch.feeAmount ?? 0}` : "Free"} • Starts {formatReminderDateTime(batch.startsAt)}</Text>
+            </View>
+          </View>
+          <View style={styles.supplyActionRow}>
+            <Button role={role} variant="secondary" label="Edit" onPress={() => editBatch(batch)} />
+            <Button role={role} variant="secondary" label="Archive" onPress={() => archiveBatch(batch.id)} loading={actionLoading === "archiveTutorBatch:" + batch.id} />
+          </View>
+        </View>
+      ))}
+      {!batches.length ? <Card role={role}><CardTitle>No batches yet</CardTitle><Muted>Create a batch so students can request admission from tutor discovery.</Muted></Card> : null}
+    </>
+  );
+}
+
+function TutorBatchFormScreen({
   role,
   supply,
   batchDraft,
   setBatchDraft,
   saveBatch,
-  editBatch,
-  archiveBatch,
   actionLoading,
-  refreshSupply
+  back
 }: {
   role: Role;
   supply: TutorSupplyState | null;
   batchDraft: TutorBatchDraft;
   setBatchDraft: (value: TutorBatchDraft | ((draft: TutorBatchDraft) => TutorBatchDraft)) => void;
   saveBatch: () => void;
-  editBatch: (batch: TutorBatchSummary) => void;
-  archiveBatch: (batchId: string) => void;
   actionLoading: string | null;
-  refreshSupply: () => void;
+  back: () => void;
 }) {
   const programs = supply?.programs ?? [];
-  const batches = supply?.batches ?? [];
-  const analytics = supply?.analytics;
   const selectedProgram = programs.find((program) => program.id === batchDraft.programId);
   const updateDraft = (patch: Partial<TutorBatchDraft>) => setBatchDraft((draft) => ({ ...draft, ...patch }));
   return (
     <>
-      <SectionTitle>Programs</SectionTitle>
-      <View style={styles.supplyStatsRow}>
-        <View style={styles.supplyStatCard}>
-          <Text style={styles.supplyStatValue}>{analytics?.programs.total ?? programs.length}</Text>
-          <Text style={styles.supplyStatLabel}>Programs</Text>
-        </View>
-        <View style={styles.supplyStatCard}>
-          <Text style={styles.supplyStatValue}>{analytics?.batches.active ?? batches.filter((batch) => (batch.status ?? "available") !== "archived").length}</Text>
-          <Text style={styles.supplyStatLabel}>Active batches</Text>
-        </View>
-      </View>
-      {analytics ? (
-        <View style={styles.supplyStatsRow}>
-          <View style={styles.supplyStatCard}>
-            <Text style={styles.supplyStatValue}>{analytics.requests.pending}</Text>
-            <Text style={styles.supplyStatLabel}>Pending requests</Text>
-          </View>
-          <View style={styles.supplyStatCard}>
-            <Text style={styles.supplyStatValue}>{analytics.enrollments.active}</Text>
-            <Text style={styles.supplyStatLabel}>Active enrollments</Text>
-          </View>
-        </View>
-      ) : null}
-      {!programs.length ? (
-        <Card role={role}><CardTitle>No programs yet</CardTitle><Muted>Create a draft program from Program, then attach batches here after it is ready for students.</Muted></Card>
-      ) : null}
-
-      <SectionTitle>Batch builder</SectionTitle>
+      <TopBar title={batchDraft.id ? "Edit batch" : "Create batch"} left="‹" onLeft={back} />
+      <Hero>
+        <CardTitle>{batchDraft.id ? "Update tutor batch" : "Create new batch"}</CardTitle>
+        <Muted>Set the program, batch details, schedule, capacity, mode, and fee before publishing it for students.</Muted>
+      </Hero>
       <View style={styles.supplyBuilderCard}>
         <FieldLabel>Program</FieldLabel>
         <DropdownField
@@ -5109,29 +5414,9 @@ function TutorSupplyPanel({
         </View>
         <View style={styles.supplyActionRow}>
           <Button role={role} label={batchDraft.id ? "Update batch" : "Create batch"} onPress={saveBatch} loading={actionLoading === "saveTutorBatch"} disabled={!batchDraft.title.trim() || !batchDraft.schedule.trim() || !programs.length} />
-          <Button role={role} variant="secondary" label="New batch" onPress={() => setBatchDraft({ ...defaultTutorBatchDraft, programId: programs[0]?.id ?? "", course: programs[0]?.title ?? "" })} />
+          <Button role={role} variant="secondary" label="Cancel" onPress={back} />
         </View>
       </View>
-
-      <SectionTitle>Batches</SectionTitle>
-      {batches.map((batch) => (
-        <View key={batch.id} style={styles.supplyBatchCard}>
-          <View style={styles.rowBetween}>
-            <View style={styles.flex}>
-              <Text style={styles.batchTitle}>{batch.title}</Text>
-              <Text style={styles.batchMeta}>{batch.course} • {batch.mode} • {batch.schedule}</Text>
-              <Text style={styles.batchMeta}>{capitalize(batch.status ?? "available")} • {batch.fillPercent ?? 0}% filled • {batch.enrolledCount}/{batch.capacity}</Text>
-              <Text style={styles.batchMeta}>{batch.feeType === "paid" ? `₹${batch.feeAmount ?? 0}` : "Free"} • Starts {formatReminderDateTime(batch.startsAt)}</Text>
-            </View>
-          </View>
-          <View style={styles.supplyActionRow}>
-            <Button role={role} variant="secondary" label="Edit" onPress={() => editBatch(batch)} />
-            <Button role={role} variant="secondary" label="Archive" onPress={() => archiveBatch(batch.id)} loading={actionLoading === "archiveTutorBatch:" + batch.id} />
-          </View>
-        </View>
-      ))}
-      {!batches.length ? <Card role={role}><CardTitle>No batches yet</CardTitle><Muted>Create a batch so students can request admission from tutor discovery.</Muted></Card> : null}
-      <Button role={role} variant="secondary" label="Refresh supply" onPress={refreshSupply} />
     </>
   );
 }
@@ -5251,11 +5536,20 @@ function ClassRoster({ role, item, learnerProgress, back }: { role: Role; item: 
 }
 
 function BatchRequestCard({ role, request, approveRequest, requestAction, actionLoading }: { role: Role; request: BatchRequestSummary; approveRequest: (id: string) => void; requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void; actionLoading: string | null }) {
+  const theme = useRoleTheme(role);
   return (
-    <View style={styles.batchRequestCard}>
-      <CardTitle>{request.student.name}</CardTitle>
-      <Muted>{request.batch.title} • {request.batch.schedule}</Muted>
-      <Muted>Status: {capitalize(request.status)}{request.tutorResponse ? " • " + request.tutorResponse : ""}</Muted>
+    <View style={[styles.batchRequestCard, { borderLeftColor: theme.accentStrong }]}>
+      <View style={styles.batchRequestHeader}>
+        <View style={styles.flex}>
+          <Text style={styles.batchRequestStudent}>{request.student.name}</Text>
+          <Text style={styles.batchRequestBatch}>{request.batch.title}</Text>
+        </View>
+        <View style={[styles.batchRequestStatus, { backgroundColor: theme.surface }]}>
+          <Text style={[styles.batchRequestStatusText, { color: theme.text }]}>{capitalize(request.status)}</Text>
+        </View>
+      </View>
+      <Text style={styles.batchRequestMeta}>{request.batch.schedule}</Text>
+      {request.tutorResponse ? <Text style={styles.batchRequestNote}>{request.tutorResponse}</Text> : null}
       {request.status === "pending" ? (
         <View style={styles.requestActionGrid}>
           <Button role={role} label="Approve" loading={actionLoading === "approveRequest:" + request.id} onPress={() => approveRequest(request.id)} />
@@ -5821,9 +6115,6 @@ function Account({
   signOut,
   setScreen,
   onEditProfile,
-  requests,
-  approveRequest,
-  requestAction,
   actionLoading,
   generateActivationCode,
   activationCode,
@@ -5838,9 +6129,6 @@ function Account({
   signOut: () => void;
   setScreen: (screen: AppScreen) => void;
   onEditProfile: () => void;
-  requests: BatchRequestSummary[];
-  approveRequest: (id: string) => void;
-  requestAction: (id: string, action: "reject" | "defer" | "suggest" | "dismiss", suggestedBatchId?: string) => void;
   actionLoading: string | null;
   generateActivationCode: () => void;
   activationCode: string;
@@ -5871,12 +6159,6 @@ function Account({
       </View>
       <Button role={role} variant="secondary" label="Edit profile" onPress={onEditProfile} />
       <Button role={role} variant="secondary" label="Payments" onPress={() => setScreen("payments")} />
-      {role === "tutor" ? (
-        <>
-          <SectionTitle>Batch Requests</SectionTitle>
-          {requests.length ? requests.map((request) => <BatchRequestCard key={request.id} role={role} request={request} approveRequest={approveRequest} requestAction={requestAction} actionLoading={actionLoading} />) : <Card role={role}><CardTitle>No batch requests</CardTitle><Muted>Student admission requests will appear here.</Muted></Card>}
-        </>
-      ) : null}
       {role === "student" ? (
         <>
           <SectionTitle>Parent access</SectionTitle>
@@ -6215,6 +6497,7 @@ const styles = StyleSheet.create({
   carouselDots: { alignItems: "center", flexDirection: "row", gap: 7, justifyContent: "center", marginTop: -2, paddingHorizontal: 4 },
   carouselDot: { backgroundColor: "#D8D2EC", borderRadius: 999, height: 6, width: 6 },
   carouselDotActive: { width: 18 },
+  assetImageFill: { height: "100%", width: "100%" },
   marketplaceCard: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E8CFD8", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 13, minHeight: 132, padding: 14, shadowColor: "#22304A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.045, shadowRadius: 12 },
   marketplaceAvatar: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 16, height: 58, justifyContent: "center", width: 58 },
   marketplaceAvatarText: { color: "#202A35", fontSize: 14, fontWeight: "900" },
@@ -6874,7 +7157,8 @@ const styles = StyleSheet.create({
   marketplaceFocusLabel: { alignSelf: "flex-start", backgroundColor: "#F3E8FF", borderRadius: 999, color: "#6B21A8", fontSize: 11, fontWeight: "900", overflow: "hidden", paddingHorizontal: 9, paddingVertical: 4 },
   batchTitle: { color: "#111827", fontSize: 15, fontWeight: "900", lineHeight: 20 },
   batchMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17 },
-  requestActionGrid: { gap: 8, marginTop: 10 },
+  requestActionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  supplyDashboardGrid: { gap: 10 },
   supplyStatsRow: { flexDirection: "row", gap: 10 },
   supplyStatCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flex: 1, padding: 14 },
   supplyStatValue: { color: "#202A35", fontSize: 26, fontWeight: "900", lineHeight: 31 },
@@ -6882,7 +7166,14 @@ const styles = StyleSheet.create({
   supplyBuilderCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
   supplyBatchCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 12, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
   supplyActionRow: { gap: 8 },
-  batchRequestCard: { alignItems: "stretch", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12 },
+  batchRequestCard: { alignItems: "stretch", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, borderLeftWidth: 4, gap: 10, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12 },
+  batchRequestHeader: { alignItems: "flex-start", flexDirection: "row", gap: 10, justifyContent: "space-between" },
+  batchRequestStudent: { color: "#202A35", fontSize: 16, fontWeight: "900", lineHeight: 21 },
+  batchRequestBatch: { color: "#536A86", flexShrink: 1, fontSize: 13, fontWeight: "800", lineHeight: 18, marginTop: 2 },
+  batchRequestStatus: { borderRadius: 999, flexShrink: 0, paddingHorizontal: 10, paddingVertical: 6 },
+  batchRequestStatusText: { fontSize: 11, fontWeight: "900", lineHeight: 14 },
+  batchRequestMeta: { color: "#536A86", fontSize: 13, fontWeight: "800", lineHeight: 19 },
+  batchRequestNote: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 12, borderWidth: 1, color: "#536A86", fontSize: 13, fontWeight: "700", lineHeight: 19, padding: 10 },
   pressablePressed: { opacity: 0.76, transform: [{ scale: 0.99 }] },
   accountInviteCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 15 },
   activationCodeText: { color: "#202A35", fontSize: 30, fontWeight: "900", letterSpacing: 6, textAlign: "center" },
@@ -6929,6 +7220,12 @@ const styles = StyleSheet.create({
   rosterStudentRowInner: { alignItems: "center", flexDirection: "row", gap: 12 },
   rosterAvatar: { alignItems: "center", backgroundColor: "#ECFEFF", borderRadius: 999, height: 42, justifyContent: "center", width: 42 },
   rosterAvatarText: { color: "#0F172A", fontSize: 13, fontWeight: "900" },
+  studentDetailCard: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 12, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
+  studentDetailTitle: { color: "#202A35", fontSize: 17, fontWeight: "900", lineHeight: 22 },
+  studentDetailRow: { alignItems: "flex-start", flexDirection: "row", gap: 12 },
+  studentDetailLabel: { color: "#64748B", flexShrink: 0, fontSize: 12, fontWeight: "900", lineHeight: 18, width: 68 },
+  studentDetailValue: { color: "#202A35", flex: 1, flexShrink: 1, fontSize: 13, fontWeight: "800", lineHeight: 19 },
+  studentProgressCard: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 14, borderWidth: 1, gap: 10, padding: 12 },
   learnerProgressBox: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0", borderRadius: 12, borderWidth: 1, gap: 6, padding: 10 },
   learnerProgressTitle: { color: "#202A35", flex: 1, fontSize: 12, fontWeight: "900", lineHeight: 16 },
   learnerProgressPercent: { color: "#075985", fontSize: 12, fontWeight: "900" },

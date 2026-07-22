@@ -1,5 +1,3 @@
-# Motion active recall cards
+# Motion Active Recall Cards
 
-## Description
-
-Ten flashcards for quick recall of one-dimensional motion definitions, units, and graph meanings.
+Flashcards for one-dimensional motion definitions, units, and graph interpretation.

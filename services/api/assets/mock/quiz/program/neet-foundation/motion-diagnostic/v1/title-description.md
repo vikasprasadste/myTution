@@ -1,5 +1,3 @@
-# Motion diagnostic quiz
+# Motion Diagnostic Quiz
 
-## Description
-
-Six MCQs that check conceptual clarity on distance, displacement, velocity, acceleration, and basic graph interpretation.
+Diagnostic MCQs for distance, displacement, velocity, acceleration, and motion graphs.

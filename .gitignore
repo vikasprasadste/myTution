@@ -19,6 +19,7 @@ coverage/
 
 .DS_Store
 *.log
+chat_context_summary.md
 *_debug_log.txt
 *.apk
 npm-debug.log*
