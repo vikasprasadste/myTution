@@ -351,6 +351,7 @@ export default function Index() {
   const [programPreparing, setProgramPreparing] = useState(false);
   const [pendingProgramId, setPendingProgramId] = useState<string | null>(null);
   const [programRefreshKey, setProgramRefreshKey] = useState(0);
+  const [communityRefreshKey, setCommunityRefreshKey] = useState(0);
   const [programToast, setProgramToast] = useState("");
   const [programMenuOpen, setProgramMenuOpen] = useState(false);
   const [programArchiveModalVisible, setProgramArchiveModalVisible] = useState(false);
@@ -748,91 +749,92 @@ export default function Index() {
     );
   }
 
-  useEffect(() => {
-    let ignore = false;
-    async function loadRoleData() {
-      try {
-        const token = authSession?.accessToken;
-        const [identity, bootstrap, recs, marketplace, eventData, notificationData, dashboard, programList, monitoring] = await Promise.all([
-          token ? apiGet<{ data: IdentityContext }>(`/api/v1/identity/me?role=${role}`, token) : Promise.resolve({ data: null as IdentityContext | null }),
-          apiGet<{ persona: Persona }>(`/api/v1/bootstrap?role=${role}`, token),
-          apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`),
-          role === "student" ? apiGet<{ data: MarketplaceRecommendationResponse }>(`/api/v1/marketplace/recommendations?role=student`, token) : Promise.resolve({ data: null as MarketplaceRecommendationResponse | null }),
-          token ? apiGet<{ data: Reminder[] }>(`/api/v1/reminders/sync?role=${role}`, token) : Promise.resolve({ data: [] }),
-          token ? apiGet<{ data: NotificationSummary[] }>(`/api/v1/notifications?role=${role}&limit=12`, token) : Promise.resolve({ data: [] }),
-          token ? apiGet<{ data: { cards: DashboardCard[] } }>(`/api/v1/dis/dashboard?role=${role}`, token) : Promise.resolve({ data: { cards: [] } }),
-          apiGet<{ data: ProgramSummary[]; selectedPrograms?: ProgramSummary[]; maxSelectedPrograms?: number }>(`/api/v1/education-plan/programs?role=${role}`, token),
-          token && role === "parent" ? apiGet<{ data: ParentMonitoringResponse }>(`/api/v1/parent/monitoring?role=parent`, token) : Promise.resolve({ data: null as ParentMonitoringResponse | null })
-        ]);
-        const selectedFromApi = programList.selectedPrograms ?? programList.data.filter((program) => program.selected);
-        const existingProgramId = selectedProgramId && programList.data.some((program) => program.id === selectedProgramId) ? selectedProgramId : null;
-        const defaultProgram = role === "tutor" ? programList.data.find((program) => !isArchivedProgram(program)) : programList.data[0];
-        const programId = existingProgramId && (role !== "tutor" || !isArchivedProgram(programList.data.find((program) => program.id === existingProgramId))) ? existingProgramId : selectedFromApi[0]?.id ?? (role === "student" ? null : defaultProgram?.id ?? null);
-        const plan = programId
-          ? await apiGet<{ data: { milestones: ProgramMilestone[]; completedMilestoneSequence: number } }>(`/api/v1/education-plan/current?role=${role}&programId=${programId}`, token)
-          : { data: { milestones: [], completedMilestoneSequence: 0 } };
-        if (ignore) return;
-        setIdentityContext(identity.data);
-        setApiPersona(token ? personaFromIdentity(identity.data?.activeProfile, identity.data?.user.phone) ?? bootstrap.persona : null);
-        setApiRecommendations(recs.data);
-        setMarketplaceRecommendations(marketplace.data);
-        if (marketplace.data?.tutors?.length) {
-          setTutorResults((items) => items.length ? items : marketplace.data?.tutors ?? []);
-          setTutorFilterOptions((items) => items.subjects.length ? items : buildTutorFilterOptions(marketplace.data?.tutors ?? []));
-        }
-        setReminders(eventData.data);
-        void syncDeviceReminders(eventData.data).catch(() => setApiNotice("Something went wrong. Please try again."));
-        setNotifications(notificationData.data);
-        setDashboardCards(dashboard.data.cards);
-        setParentMonitoring(monitoring.data);
-        setPrograms(programList.data);
-        setSelectedPrograms(selectedFromApi);
-        setSelectedProgramId(programId);
-        setApiMilestones(plan.data.milestones);
-        setCompletedMilestone(plan.data.completedMilestoneSequence);
-        if (token && role === "student" && selectedFromApi.length === 0 && screen === "home") {
-          setProgramModalSeen(false);
-          setScreen("sessions");
-        }
-        if (pendingProgramId && programId === pendingProgramId) {
-          if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
-          setProgramPreparing(false);
-          setPendingProgramId(null);
-          setProgramModalVisible(false);
-          setProgramModalSeen(true);
-          setProgramToast("Your program is ready.");
-        }
-        setApiNotice("");
-      } catch (error) {
-        if (ignore) return;
-        if (isApiStatus(error, 401)) {
-          setAuthSession(null);
-          setIdentityContext(null);
-          setSignInMode("returning");
-          setScreen("signin");
-          setApiNotice("Your session expired. Please sign in again.");
-          return;
-        }
-        setApiNotice("Something went wrong. Please try again.");
+  async function loadRoleDataFromApi(shouldApply: () => boolean = () => true) {
+    try {
+      const token = authSession?.accessToken;
+      const [identity, bootstrap, recs, marketplace, eventData, notificationData, dashboard, programList, monitoring] = await Promise.all([
+        token ? apiGet<{ data: IdentityContext }>(`/api/v1/identity/me?role=${role}`, token) : Promise.resolve({ data: null as IdentityContext | null }),
+        apiGet<{ persona: Persona }>(`/api/v1/bootstrap?role=${role}`, token),
+        apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`),
+        role === "student" ? apiGet<{ data: MarketplaceRecommendationResponse }>(`/api/v1/marketplace/recommendations?role=student`, token) : Promise.resolve({ data: null as MarketplaceRecommendationResponse | null }),
+        token ? apiGet<{ data: Reminder[] }>(`/api/v1/reminders/sync?role=${role}`, token) : Promise.resolve({ data: [] }),
+        token ? apiGet<{ data: NotificationSummary[] }>(`/api/v1/notifications?role=${role}&limit=12`, token) : Promise.resolve({ data: [] }),
+        token ? apiGet<{ data: { cards: DashboardCard[] } }>(`/api/v1/dis/dashboard?role=${role}`, token) : Promise.resolve({ data: { cards: [] } }),
+        apiGet<{ data: ProgramSummary[]; selectedPrograms?: ProgramSummary[]; maxSelectedPrograms?: number }>(`/api/v1/education-plan/programs?role=${role}`, token),
+        token && role === "parent" ? apiGet<{ data: ParentMonitoringResponse }>(`/api/v1/parent/monitoring?role=parent`, token) : Promise.resolve({ data: null as ParentMonitoringResponse | null })
+      ]);
+      const selectedFromApi = programList.selectedPrograms ?? programList.data.filter((program) => program.selected);
+      const existingProgramId = selectedProgramId && programList.data.some((program) => program.id === selectedProgramId) ? selectedProgramId : null;
+      const defaultProgram = role === "tutor" ? programList.data.find((program) => !isArchivedProgram(program)) : programList.data[0];
+      const programId = existingProgramId && (role !== "tutor" || !isArchivedProgram(programList.data.find((program) => program.id === existingProgramId))) ? existingProgramId : selectedFromApi[0]?.id ?? (role === "student" ? null : defaultProgram?.id ?? null);
+      const plan = programId
+        ? await apiGet<{ data: { milestones: ProgramMilestone[]; completedMilestoneSequence: number } }>(`/api/v1/education-plan/current?role=${role}&programId=${programId}`, token)
+        : { data: { milestones: [], completedMilestoneSequence: 0 } };
+      if (!shouldApply()) return;
+      setIdentityContext(identity.data);
+      setApiPersona(token ? personaFromIdentity(identity.data?.activeProfile, identity.data?.user.phone) ?? bootstrap.persona : null);
+      setApiRecommendations(recs.data);
+      setMarketplaceRecommendations(marketplace.data);
+      if (marketplace.data?.tutors?.length) {
+        setTutorResults((items) => items.length ? items : marketplace.data?.tutors ?? []);
+        setTutorFilterOptions((items) => items.subjects.length ? items : buildTutorFilterOptions(marketplace.data?.tutors ?? []));
+      }
+      setReminders(eventData.data);
+      void syncDeviceReminders(eventData.data).catch(() => setApiNotice("Something went wrong. Please try again."));
+      setNotifications(notificationData.data);
+      setDashboardCards(dashboard.data.cards);
+      setParentMonitoring(monitoring.data);
+      setPrograms(programList.data);
+      setSelectedPrograms(selectedFromApi);
+      setSelectedProgramId(programId);
+      setApiMilestones(plan.data.milestones);
+      setCompletedMilestone(plan.data.completedMilestoneSequence);
+      if (token && role === "student" && selectedFromApi.length === 0 && screen === "home") {
+        setProgramModalSeen(false);
+        setScreen("sessions");
+      }
+      if (pendingProgramId && programId === pendingProgramId) {
+        if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
+        setProgramPreparing(false);
+        setPendingProgramId(null);
+        setProgramModalVisible(false);
+        setProgramModalSeen(true);
+        setProgramToast("Your program is ready.");
+      }
+      setApiNotice("");
+    } catch (error) {
+      if (!shouldApply()) return;
+      if (isApiStatus(error, 401)) {
+        setAuthSession(null);
         setIdentityContext(null);
-        setApiRecommendations([]);
-        setDashboardCards(null);
-        setNotifications([]);
-        setParentMonitoring(null);
-        setApiMilestones([]);
-        setMarketplaceRecommendations(null);
-        setPrograms([]);
-        setSelectedPrograms([]);
-        setSelectedProgramId(null);
-        if (pendingProgramId) {
-          if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
-          setProgramPreparing(false);
-          setPendingProgramId(null);
-          setProgramToast("Program setup failed. Please try again.");
-        }
+        setSignInMode("returning");
+        setScreen("signin");
+        setApiNotice("Your session expired. Please sign in again.");
+        return;
+      }
+      setApiNotice("Something went wrong. Please try again.");
+      setIdentityContext(null);
+      setApiRecommendations([]);
+      setDashboardCards(null);
+      setNotifications([]);
+      setParentMonitoring(null);
+      setApiMilestones([]);
+      setMarketplaceRecommendations(null);
+      setPrograms([]);
+      setSelectedPrograms([]);
+      setSelectedProgramId(null);
+      if (pendingProgramId) {
+        if (programTimeoutRef.current) clearTimeout(programTimeoutRef.current);
+        setProgramPreparing(false);
+        setPendingProgramId(null);
+        setProgramToast("Program setup failed. Please try again.");
       }
     }
-    loadRoleData();
+  }
+
+  useEffect(() => {
+    let ignore = false;
+    loadRoleDataFromApi(() => !ignore);
     return () => {
       ignore = true;
     };
@@ -1001,7 +1003,13 @@ export default function Index() {
   async function refreshCurrentScreen() {
     setRefreshing(true);
     try {
-      if (role === "tutor") {
+      if (screen === "home") {
+        await loadRoleDataFromApi();
+      } else if (screen === "sessions") {
+        await refreshProgramDataFromApi();
+      } else if (screen === "chat") {
+        setCommunityRefreshKey((value) => value + 1);
+      } else if (role === "tutor") {
         await Promise.all([
           refreshTutorSupply(),
           refreshClasses("tutor"),
@@ -1586,6 +1594,28 @@ export default function Index() {
     setProgramRefreshKey((value) => value + 1);
   }
 
+  async function refreshProgramDataFromApi() {
+    const token = authSession?.accessToken;
+    try {
+      const programList = await apiGet<{ data: ProgramSummary[]; selectedPrograms?: ProgramSummary[]; maxSelectedPrograms?: number }>(`/api/v1/education-plan/programs?role=${role}`, token);
+      const selectedFromApi = programList.selectedPrograms ?? programList.data.filter((program) => program.selected);
+      const existingProgramId = selectedProgramId && programList.data.some((program) => program.id === selectedProgramId) ? selectedProgramId : null;
+      const defaultProgram = role === "tutor" ? programList.data.find((program) => !isArchivedProgram(program)) : programList.data[0];
+      const programId = existingProgramId && (role !== "tutor" || !isArchivedProgram(programList.data.find((program) => program.id === existingProgramId))) ? existingProgramId : selectedFromApi[0]?.id ?? (role === "student" ? null : defaultProgram?.id ?? null);
+      const plan = programId
+        ? await apiGet<{ data: { milestones: ProgramMilestone[]; completedMilestoneSequence: number } }>(`/api/v1/education-plan/current?role=${role}&programId=${programId}`, token)
+        : { data: { milestones: [], completedMilestoneSequence: 0 } };
+      setPrograms(programList.data);
+      setSelectedPrograms(selectedFromApi);
+      setSelectedProgramId(programId);
+      setApiMilestones(plan.data.milestones);
+      setCompletedMilestone(plan.data.completedMilestoneSequence);
+      setApiNotice("");
+    } catch {
+      setApiNotice("Program could not be refreshed from API.");
+    }
+  }
+
   async function markComplete() {
     setLoadingAction("markComplete");
     if (selectedResource) {
@@ -2023,7 +2053,7 @@ export default function Index() {
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} accessToken={authSession?.accessToken} back={() => setScreen("account")} />;
     if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} openBatchCreate={startNewTutorBatch} openDashboardTarget={openTutorDashboardTile} />;
-    if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} back={() => setScreen("home")} />;
+    if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} refreshKey={communityRefreshKey} back={() => setScreen("home")} />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} onEditProfile={() => {
       const profile = identityContext?.activeProfile;
       if (profile) {
@@ -5816,7 +5846,7 @@ function relativeTime(value: string) {
   return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 }
 
-function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; back: () => void }) {
+function Chat({ role, accessToken, refreshKey, back }: { role: Role; accessToken?: string; refreshKey: number; back: () => void }) {
   const theme = useRoleTheme(role);
   const [filter, setFilter] = useState<"all" | "open" | "solved">("all");
   const [search, setSearch] = useState("");
@@ -5923,7 +5953,7 @@ function Chat({ role, accessToken, back }: { role: Role; accessToken?: string; b
 
   useEffect(() => {
     refreshDoubts();
-  }, [role, accessToken]);
+  }, [role, accessToken, refreshKey]);
 
   if (asking && !readOnly) {
     return (
