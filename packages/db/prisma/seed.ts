@@ -794,6 +794,7 @@ async function main() {
 }
 
 async function createMockTutorProgram(profileId: string, input: { title: string; description: string; milestoneTitle: string; feeType: "free" | "paid"; feeAmount: number | null }) {
+  const resourceSlugBase = input.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const article = await prisma.resource.create({
     data: {
       creatorProfileId: profileId,
@@ -801,7 +802,15 @@ async function createMockTutorProgram(profileId: string, input: { title: string;
       title: input.title + " notes",
       description: "Board-focused micro-notes with formulas, examples, and answer-writing tips.",
       body: "Use this article to revise definitions, identities, worked examples, and step-by-step board answer patterns.",
-      storageType: "db",
+      assetSlug: `ams/mock/article/program/class-10-board/${resourceSlugBase}-notes/v1`,
+      storageType: "repo",
+      thumbnailPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.png",
+      bannerPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.png",
+      metadataPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/title-description.md",
+      contentJson: {
+        mediaUrl: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf",
+        pdfUrl: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf"
+      },
       sourceTag
     }
   });
@@ -811,8 +820,17 @@ async function createMockTutorProgram(profileId: string, input: { title: string;
       type: ResourceType.video,
       title: input.title + " concept video",
       description: "Short lesson explaining the core concept before practice.",
-      sourceUrl: "https://example.com/mytution/class-10-board-program.mp4",
-      storageType: "db",
+      sourceUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4",
+      assetSlug: `ams/mock/video/program/class-10-board/${resourceSlugBase}-concept-video/v1`,
+      storageType: "repo",
+      thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png",
+      bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png",
+      vttPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt",
+      metadataPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md",
+      contentJson: {
+        durationSeconds: 480,
+        mediaUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4"
+      },
       sourceTag
     }
   });
@@ -822,7 +840,11 @@ async function createMockTutorProgram(profileId: string, input: { title: string;
       type: ResourceType.flashcard,
       title: input.title + " recall cards",
       description: "Quick active recall cards for identities, terms, and common traps.",
-      storageType: "db",
+      assetSlug: `ams/mock/flashcard/program/class-10-board/${resourceSlugBase}-recall-cards/v1`,
+      storageType: "repo",
+      thumbnailPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.png",
+      bannerPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.png",
+      metadataPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/title-description.md",
       sourceTag
     }
   });
@@ -839,7 +861,11 @@ async function createMockTutorProgram(profileId: string, input: { title: string;
       type: ResourceType.quiz,
       title: input.title + " diagnostic quiz",
       description: "Short MCQ check before moving to the next milestone.",
-      storageType: "db",
+      assetSlug: `ams/mock/quiz/program/class-10-board/${resourceSlugBase}-diagnostic-quiz/v1`,
+      storageType: "repo",
+      thumbnailPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.png",
+      bannerPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.png",
+      metadataPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/title-description.md",
       contentJson: {
         questions: [
           {
