@@ -3089,6 +3089,15 @@ function Muted({ children }: { children: React.ReactNode }) {
   return <Text style={styles.muted}>{children}</Text>;
 }
 
+function EmptyStateCard({ title, copy }: { title: string; copy: string }) {
+  return (
+    <View style={styles.emptyInlineCard}>
+      <Text style={styles.todayTitle}>{title}</Text>
+      <Text style={styles.todayMeta}>{copy}</Text>
+    </View>
+  );
+}
+
 function Metric({ role, label, value, onPress }: { role: Role; label: string; value: string; onPress: () => void }) {
   const theme = useRoleTheme(role);
   return (
@@ -5206,12 +5215,7 @@ function TutorBatchRequestsScreen({ role, requests, approveRequest, requestActio
     <>
       <TopBar title="Pending requests" left="‹" onLeft={back} />
       {sortedRequests.map((request) => <BatchRequestCard key={request.id} role={role} request={request} approveRequest={approveRequest} requestAction={requestAction} actionLoading={actionLoading} />)}
-      {!sortedRequests.length ? (
-        <View style={styles.emptyInlineCard}>
-          <Text style={styles.todayTitle}>No batch requests</Text>
-          <Text style={styles.todayMeta}>Student admission requests will appear here.</Text>
-        </View>
-      ) : null}
+      {!sortedRequests.length ? <EmptyStateCard title="No batch requests" copy="Student admission requests will appear here." /> : null}
     </>
   );
 }
@@ -5785,7 +5789,7 @@ function Payments({ role, accessToken, back }: { role: Role; accessToken?: strin
           <CardTitle>{order.targetType.replace("_", " ")} • ₹{order.amount}</CardTitle>
           <Muted>{order.status} • {order.gatewayProvider} • {order.methodType ?? "method pending"}</Muted>
         </Card>
-      )) : <Card role={role}><CardTitle>No payment orders</CardTitle><Muted>Paid programs and batches will appear here.</Muted></Card>}
+      )) : <EmptyStateCard title="No payment orders" copy="Paid programs and batches will appear here." />}
       {role === "tutor" ? (
         <>
           <SectionTitle>Payout-ready accounting</SectionTitle>
@@ -5794,7 +5798,7 @@ function Payments({ role, accessToken, back }: { role: Role; accessToken?: strin
               <CardTitle>Net ₹{item.netAmount}</CardTitle>
               <Muted>Gross ₹{item.grossAmount} • Fee ₹{item.platformFee} • {item.status}</Muted>
             </Card>
-          )) : <Card role={role}><CardTitle>No accounting entries</CardTitle><Muted>Paid enrollments and purchases will create tutor payout entries.</Muted></Card>}
+          )) : <EmptyStateCard title="No accounting entries" copy="Paid enrollments and purchases will create tutor payout entries." />}
         </>
       ) : null}
     </>
