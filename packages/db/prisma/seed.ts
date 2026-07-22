@@ -352,7 +352,7 @@ async function main() {
           classroomLocation: mode.includes("Home Tuition") ? location + " learning studio" : null,
           onlineLink: mode.includes("Online") ? "https://meet.mytution.test/batch-" + (index + 1) : null,
           startsAt: new Date("2026-06-" + String(26 + (index % 3)).padStart(2, "0") + "T12:30:00.000Z"),
-          capacity: index === 0 ? 2 : 12,
+          capacity: index === 0 ? 3 : 12,
           sourceTag
         },
         {
@@ -390,59 +390,21 @@ async function main() {
           sourceTag
         }
       });
-      const nehaBatches = await prisma.tutorBatch.findMany({ where: { tutorProfileId: tutorProfile.id }, orderBy: { startsAt: "asc" } });
-      const classmates = await Promise.all(["Riya Mehta", "Kabir Arora", "Ishaan Bedi", "Tara Joshi"].map(async (name, studentIndex) => {
-        const [studentFirstName, studentLastName] = name.split(" ");
-        const studentUser = await prisma.user.create({
-          data: {
-            phone: "+91783893" + String(studentIndex + 1).padStart(4, "0"),
-            passwordHash: await hashPassword("Password@123"),
-            sourceTag,
-            profiles: {
-              create: {
-                role: Role.student,
-                firstName: studentFirstName,
-                lastName: studentLastName,
-                dob: new Date("2010-04-14T00:00:00.000Z"),
-                city: "Delhi",
-                communicationAddress: "South Delhi",
-                stream: "senior",
-                specialization: "CBSE Class 10 Mathematics",
-                sourceTag
-              }
-            }
-          },
-          include: { profiles: true }
-        });
-        return studentUser.profiles[0];
-      }));
-      for (const batch of nehaBatches) {
-        const fillCount = batch.capacity === 2 ? 2 : batch.capacity === 5 ? 4 : 1;
-        for (const classmate of classmates.slice(0, fillCount)) {
-          await prisma.batchEnrollment.create({
-            data: {
-              batchId: batch.id,
-              studentProfileId: classmate.id,
-              status: "active",
-              sourceTag
-            }
-          });
-        }
-      }
-      await createMockTutorProgram(profile.id, {
+      const freeProgram = await createMockTutorProgram(profile.id, {
         title: "Class 10 board exam free foundation",
         description: "Free starter program with algebra notes, video, flashcards, and a diagnostic quiz.",
         milestoneTitle: "Milestone 1: Algebra foundations",
         feeType: "free",
         feeAmount: null
       });
-      await createMockTutorProgram(profile.id, {
+      const paidProgram = await createMockTutorProgram(profile.id, {
         title: "Class 10 board exam 2 month crash course",
         description: "Paid crash course with weekly milestones for board exam revision and practice.",
         milestoneTitle: "Milestone 1: High-yield algebra revision",
         feeType: "paid",
         feeAmount: 2500
       });
+      await seedKnownStudentTutorMappings(testStudentUser.id, testStudentProfile.id, tutorProfile.id, freeProgram.id, paidProgram.id);
     }
   }
 
@@ -793,6 +755,107 @@ async function main() {
   }
 }
 
+async function seedKnownStudentTutorMappings(studentUserId: string, studentProfileId: string, tutorProfileId: string, freeProgramId: string, paidProgramId: string) {
+  const [freeBatch, paidBatch] = await Promise.all([
+    prisma.tutorBatch.update({
+      where: {
+        id: (await prisma.tutorBatch.findFirstOrThrow({
+          where: { tutorProfileId, title: "Class 10 Mathematics weekday batch" },
+          select: { id: true }
+        })).id
+      },
+      data: { programId: freeProgramId, feeType: "free", feeAmount: null }
+    }),
+    prisma.tutorBatch.update({
+      where: {
+        id: (await prisma.tutorBatch.findFirstOrThrow({
+          where: { tutorProfileId, title: "Mathematics weekend booster" },
+          select: { id: true }
+        })).id
+      },
+      data: { programId: paidProgramId, feeType: "paid", feeAmount: 2500 }
+    })
+  ]);
+
+  for (const programId of [freeProgramId, paidProgramId]) {
+    await prisma.studentProgramSelection.create({ data: { profileId: studentProfileId, programId, sourceTag } });
+    await prisma.programProgress.create({
+      data: { profileId: studentProfileId, programId, unlockedMilestoneSequence: 1, completedMilestoneSequence: 0, sourceTag }
+    });
+  }
+
+  const paidProgramOrder = await prisma.paymentOrder.create({
+    data: {
+      userId: studentUserId,
+      profileId: studentProfileId,
+      role: Role.student,
+      targetType: "program_purchase",
+      targetId: paidProgramId,
+      programId: paidProgramId,
+      tutorProfileId,
+      amount: 2500,
+      status: "paid",
+      gatewayProvider: "mock",
+      gatewayOrderId: `seed_program_${paidProgramId}_${studentProfileId}`,
+      gatewayPaymentId: `seed_paid_${paidProgramId}_${studentProfileId}`,
+      methodType: "upi",
+      paymentRail: "upi",
+      paidAt: new Date("2026-06-24T10:00:00.000Z"),
+      metadata: { fixture: "known_student_tutor_mapping" },
+      sourceTag
+    }
+  });
+  await prisma.programPurchase.create({
+    data: {
+      orderId: paidProgramOrder.id,
+      programId: paidProgramId,
+      studentProfileId,
+      status: "active",
+      accessStatus: "active",
+      purchasedAt: new Date("2026-06-24T10:00:00.000Z"),
+      sourceTag
+    }
+  });
+
+  for (const batch of [freeBatch, paidBatch]) {
+    const paymentOrder = batch.feeType === "paid" ? await prisma.paymentOrder.create({
+      data: {
+        userId: studentUserId,
+        profileId: studentProfileId,
+        role: Role.student,
+        targetType: "batch_admission",
+        targetId: batch.id,
+        programId: batch.programId,
+        batchId: batch.id,
+        tutorProfileId,
+        amount: batch.feeAmount ?? 0,
+        status: "paid",
+        gatewayProvider: "mock",
+        gatewayOrderId: `seed_batch_${batch.id}_${studentProfileId}`,
+        gatewayPaymentId: `seed_paid_${batch.id}_${studentProfileId}`,
+        methodType: "upi",
+        paymentRail: "upi",
+        paidAt: new Date("2026-06-24T10:05:00.000Z"),
+        metadata: { fixture: "known_student_tutor_mapping" },
+        sourceTag
+      }
+    }) : null;
+    const request = await prisma.batchRequest.create({
+      data: {
+        batchId: batch.id,
+        studentProfileId,
+        status: "approved",
+        paymentOrderId: paymentOrder?.id ?? null,
+        message: "Fixture enrollment for linked student account",
+        sourceTag
+      }
+    });
+    await prisma.batchEnrollment.create({
+      data: { batchId: batch.id, studentProfileId, requestId: request.id, status: "active", sourceTag }
+    });
+  }
+}
+
 async function createMockTutorProgram(profileId: string, input: { title: string; description: string; milestoneTitle: string; feeType: "free" | "paid"; feeAmount: number | null }) {
   const resourceSlugBase = input.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const article = await prisma.resource.create({
@@ -917,6 +980,7 @@ async function createMockTutorProgram(profileId: string, input: { title: string;
       { milestoneId: milestone.id, resourceId: quiz.id, sequence: 4, type: ResourceType.quiz, title: quiz.title, description: quiz.description, sourceTag }
     ]
   });
+  return program;
 }
 
 function hashPassword(password: string) {

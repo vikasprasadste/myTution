@@ -278,58 +278,12 @@ function toAssetUrl(assetPath?: string | null) {
 }
 
 function readMediaUrl(resource?: ResourceAssetShape | null) {
-  const fallbackMediaUrl = defaultMediaUrlForResource(resource);
   const contentJson = resource?.contentJson;
-  if (!contentJson || typeof contentJson !== "object" || !("mediaUrl" in contentJson)) return normalizeMediaUrl(resource?.sourceUrl, fallbackMediaUrl);
+  if (!contentJson || typeof contentJson !== "object" || !("mediaUrl" in contentJson)) return resource?.sourceUrl ?? null;
   const mediaUrl = contentJson.mediaUrl;
-  if (typeof mediaUrl !== "string") return normalizeMediaUrl(resource?.sourceUrl, fallbackMediaUrl);
-  return normalizeMediaUrl(mediaUrl, fallbackMediaUrl);
-}
-
-function normalizeMediaUrl(mediaUrl?: string | null, fallbackMediaUrl?: string | null) {
-  if (!mediaUrl) return fallbackMediaUrl ?? null;
-  if (mediaUrl.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")) {
-    return fallbackMediaUrl ?? "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
-  }
-  if (mediaUrl.includes("example.com/mytution/class-10-board-program.mp4")) {
-    return fallbackMediaUrl ?? "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
-  }
+  if (typeof mediaUrl !== "string") return resource?.sourceUrl ?? null;
   return mediaUrl;
 }
-
-function defaultMediaUrlForResource(resource?: ResourceAssetShape | null) {
-  if (resource?.type === "video" && resource.assetSlug?.includes("kinematics-motion")) {
-    return "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
-  }
-  if (resource?.type === "article" && resource.assetSlug?.includes("motion-micronotes")) {
-    return "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf";
-  }
-  return null;
-}
-
-const defaultAssetPathsByType: Record<string, { thumbnailPath: string; bannerPath: string; vttPath?: string; metadataPath: string }> = {
-  video: {
-    thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png",
-    bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png",
-    vttPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt",
-    metadataPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md"
-  },
-  article: {
-    thumbnailPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.png",
-    bannerPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.png",
-    metadataPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/title-description.md"
-  },
-  flashcard: {
-    thumbnailPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.png",
-    bannerPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.png",
-    metadataPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/title-description.md"
-  },
-  quiz: {
-    thumbnailPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.png",
-    bannerPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.png",
-    metadataPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/title-description.md"
-  }
-};
 
 type ResourceAssetShape = {
   id?: string | null;
@@ -349,11 +303,10 @@ type ResourceAssetShape = {
 
 function assetPathForKind(resource: ResourceAssetShape | null | undefined, kind: AssetKind) {
   if (!resource) return null;
-  const defaults = resource.type ? defaultAssetPathsByType[resource.type] : undefined;
-  if (kind === "thumbnail") return normalizeLegacyMockImagePath(resource.thumbnailPath ?? defaults?.thumbnailPath ?? null);
-  if (kind === "banner") return normalizeLegacyMockImagePath(resource.bannerPath ?? defaults?.bannerPath ?? null);
-  if (kind === "vtt") return resource.vttPath ?? defaults?.vttPath ?? null;
-  return resource.metadataPath ?? defaults?.metadataPath ?? null;
+  if (kind === "thumbnail") return normalizeLegacyMockImagePath(resource.thumbnailPath ?? null);
+  if (kind === "banner") return normalizeLegacyMockImagePath(resource.bannerPath ?? null);
+  if (kind === "vtt") return resource.vttPath ?? null;
+  return resource.metadataPath ?? null;
 }
 
 function normalizeLegacyMockImagePath(assetPath: string | null) {
@@ -4125,12 +4078,12 @@ app.get("/api/v1/dis/dashboard", async (req, res) => {
     data: {
       role,
       cards: dashboardCards(role, reminders.length, plan?.completedMilestoneSequence ?? 0, recommendations, metrics),
-      today: {
-        title: role === "tutor" ? "Demo with Apoorv Gulati" : "Trial with Neha Verma",
-        startsAt: "2026-06-24T12:30:00.000Z",
-        mode: "Online",
-        status: "Pending"
-      }
+      today: reminders[0] ? {
+        title: reminders[0].title,
+        startsAt: reminders[0].startsAt,
+        mode: "Reminder",
+        status: reminders[0].status
+      } : null
     }
   });
 });
@@ -6020,13 +5973,13 @@ async function ensureSharedTutorFixture() {
     }
   });
 
-  await ensureSharedTutorProgram(profile.id, {
+  const freeProgram = await ensureSharedTutorProgram(profile.id, {
     title: "Class 10 board exam free foundation",
     description: "Free starter program with algebra notes, video, flashcards, and a diagnostic quiz.",
     feeType: "free",
     feeAmount: null
   });
-  await ensureSharedTutorProgram(profile.id, {
+  const paidProgram = await ensureSharedTutorProgram(profile.id, {
     title: "Class 10 board exam 2 month crash course",
     description: "Paid crash course with weekly milestones for board exam revision and practice.",
     feeType: "paid",
@@ -6042,8 +5995,10 @@ async function ensureSharedTutorFixture() {
       classroomLocation: null,
       onlineLink: "https://meet.mytution.test/kartik-weekday",
       startsAt: new Date("2026-07-06T12:30:00.000Z"),
-      capacity: 2,
-      fillCount: 2
+      capacity: 3,
+      programId: freeProgram.id,
+      feeType: "free",
+      feeAmount: null
     },
     {
       title: "Mathematics weekend booster",
@@ -6054,7 +6009,9 @@ async function ensureSharedTutorFixture() {
       onlineLink: "https://meet.mytution.test/kartik-weekend",
       startsAt: new Date("2026-07-04T04:30:00.000Z"),
       capacity: 5,
-      fillCount: 4
+      programId: paidProgram.id,
+      feeType: "paid",
+      feeAmount: 2500
     },
     {
       title: "Class 10 Mathematics offline intensive",
@@ -6065,7 +6022,9 @@ async function ensureSharedTutorFixture() {
       onlineLink: null,
       startsAt: new Date("2026-07-07T11:30:00.000Z"),
       capacity: 4,
-      fillCount: 1
+      programId: paidProgram.id,
+      feeType: "paid",
+      feeAmount: 2500
     }
   ];
   for (const batch of batches) {
@@ -6083,6 +6042,9 @@ async function ensureSharedTutorFixture() {
         onlineLink: batch.onlineLink,
         startsAt: batch.startsAt,
         capacity: batch.capacity,
+        programId: batch.programId,
+        feeType: batch.feeType,
+        feeAmount: batch.feeAmount,
         sourceTag: "mock"
       }
     }) : await prisma.tutorBatch.create({
@@ -6099,14 +6061,18 @@ async function ensureSharedTutorFixture() {
         onlineLink: batch.onlineLink,
         startsAt: batch.startsAt,
         capacity: batch.capacity,
+        programId: batch.programId,
+        feeType: batch.feeType,
+        feeAmount: batch.feeAmount,
         sourceTag: "mock"
       }
     });
-    await ensureMockBatchEnrollments(createdBatch.id, batch.fillCount);
   }
+  await ensureKnownStudentTutorMappings();
 }
 
 async function ensureParentStudentFixture() {
+  await ensureSharedTutorFixture();
   const studentPhones = ["+917838920127", "+783890127", "+91783890127"];
   const parentPhone = "+917838920130";
   const studentHash = await hashPassword("Student@123");
@@ -6226,22 +6192,24 @@ async function ensureParentStudentFixture() {
     update: { studentUserId: studentUser.id, studentProfileId: studentProfile.id, parentProfileId: parentProfile.id, relationship: "Mother", status: "accepted", acceptedAt: new Date(), sourceTag: "mock" },
     create: { code, studentUserId: studentUser.id, studentProfileId: studentProfile.id, parentProfileId: parentProfile.id, relationship: "Mother", status: "accepted", acceptedAt: new Date(), sourceTag: "mock" }
   });
+  await ensureKnownStudentTutorMappings();
 }
 
 async function ensureSharedTutorProgram(profileId: string, input: { title: string; description: string; feeType: "free" | "paid"; feeAmount: number | null }) {
   const existing = await prisma.program.findFirst({ where: { creatorProfileId: profileId, title: input.title } });
   if (existing) {
-    await prisma.program.update({
+    const program = await prisma.program.update({
       where: { id: existing.id },
       data: { description: input.description, visibility: "published", status: "published", feeType: input.feeType, feeAmount: input.feeAmount, sourceTag: "mock" }
     });
-    return existing;
+    await ensureSharedTutorProgramAssets(program.id);
+    return program;
   }
   const resources = await Promise.all([
     prisma.resource.create({ data: { creatorProfileId: profileId, type: "video", title: input.title + " concept video", description: "Short lesson explaining the core concept before practice.", sourceUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4", storageType: "repo", thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png", bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png", vttPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt", metadataPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md", contentJson: { durationSeconds: 480, mediaUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4" }, sourceTag: "mock" } }),
-    prisma.resource.create({ data: { creatorProfileId: profileId, type: "article", title: input.title + " notes", description: "Board-focused micro-notes with formulas, examples, and answer-writing tips.", body: "Revise identities, worked examples, and step-by-step board answer patterns.", storageType: "db", sourceTag: "mock" } }),
-    prisma.resource.create({ data: { creatorProfileId: profileId, type: "flashcard", title: input.title + " recall cards", description: "Quick active recall cards for identities, terms, and common traps.", storageType: "db", sourceTag: "mock" } }),
-    prisma.resource.create({ data: { creatorProfileId: profileId, type: "quiz", title: input.title + " diagnostic quiz", description: "Short MCQ check before moving to the next milestone.", storageType: "db", contentJson: { questions: [{ id: "class-10-board-q1", prompt: "Which expression is equal to a^2 - b^2?", options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + b^2", "2ab"], answerIndex: 0, learnMore: "Difference of squares factors into sum and difference terms." }] }, sourceTag: "mock" } })
+    prisma.resource.create({ data: { creatorProfileId: profileId, type: "article", title: input.title + " notes", description: "Board-focused micro-notes with formulas, examples, and answer-writing tips.", body: "Revise identities, worked examples, and step-by-step board answer patterns.", storageType: "repo", thumbnailPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.png", bannerPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.png", metadataPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/title-description.md", contentJson: { mediaUrl: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf", pdfUrl: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf" }, sourceTag: "mock" } }),
+    prisma.resource.create({ data: { creatorProfileId: profileId, type: "flashcard", title: input.title + " recall cards", description: "Quick active recall cards for identities, terms, and common traps.", storageType: "repo", thumbnailPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.png", bannerPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.png", metadataPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/title-description.md", sourceTag: "mock" } }),
+    prisma.resource.create({ data: { creatorProfileId: profileId, type: "quiz", title: input.title + " diagnostic quiz", description: "Short MCQ check before moving to the next milestone.", storageType: "repo", thumbnailPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.png", bannerPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.png", metadataPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/title-description.md", contentJson: { questions: [{ id: "class-10-board-q1", prompt: "Which expression is equal to a^2 - b^2?", options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + b^2", "2ab"], answerIndex: 0, learnMore: "Difference of squares factors into sum and difference terms." }] }, sourceTag: "mock" } })
   ]);
   await prisma.flashcard.createMany({
     data: [
@@ -6280,37 +6248,185 @@ async function ensureSharedTutorProgram(profileId: string, input: { title: strin
   return program;
 }
 
-async function ensureMockBatchEnrollments(batchId: string, count: number) {
-  const existingCount = await prisma.batchEnrollment.count({ where: { batchId } });
-  if (existingCount >= count) return;
-  for (let index = existingCount; index < count; index += 1) {
-    const user = await prisma.user.upsert({
-      where: { phone: `+91783894${String(index + 1).padStart(4, "0")}` },
-      update: {},
-      create: {
-        phone: `+91783894${String(index + 1).padStart(4, "0")}`,
-        passwordHash: await hashPassword("Password@123"),
-        sourceTag: "mock"
-      }
-    });
-    const existingProfile = await prisma.profile.findFirst({ where: { userId: user.id, role: "student" } });
-    const profile = existingProfile ?? await prisma.profile.create({
+async function ensureSharedTutorProgramAssets(programId: string) {
+  await Promise.all([
+    prisma.resource.updateMany({
+      where: { type: "video", milestoneActivities: { some: { milestone: { programId } } } },
       data: {
-        userId: user.id,
-        role: "student",
-        firstName: ["Riya", "Kabir", "Ishaan", "Tara", "Aarav"][index] ?? `Student${index + 1}`,
-        lastName: ["Mehta", "Arora", "Bedi", "Joshi", "Singh"][index] ?? "Learner",
-        city: "Jabalpur",
-        communicationAddress: "Jabalpur",
-        stream: "senior",
-        specialization: "CBSE Class 10 Mathematics",
-        sourceTag: "mock"
+        sourceUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4",
+        storageType: "repo",
+        thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png",
+        bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png",
+        vttPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt",
+        metadataPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md",
+        contentJson: { durationSeconds: 480, mediaUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4" }
       }
+    }),
+    prisma.resource.updateMany({
+      where: { type: "article", milestoneActivities: { some: { milestone: { programId } } } },
+      data: {
+        storageType: "repo",
+        thumbnailPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.png",
+        bannerPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.png",
+        metadataPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/title-description.md",
+        contentJson: {
+          mediaUrl: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf",
+          pdfUrl: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf"
+        }
+      }
+    }),
+    prisma.resource.updateMany({
+      where: { type: "flashcard", milestoneActivities: { some: { milestone: { programId } } } },
+      data: {
+        storageType: "repo",
+        thumbnailPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.png",
+        bannerPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.png",
+        metadataPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/title-description.md"
+      }
+    }),
+    prisma.resource.updateMany({
+      where: { type: "quiz", milestoneActivities: { some: { milestone: { programId } } } },
+      data: {
+        storageType: "repo",
+        thumbnailPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.png",
+        bannerPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.png",
+        metadataPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/title-description.md"
+      }
+    })
+  ]);
+}
+
+async function ensureKnownStudentTutorMappings() {
+  const studentUser = await prisma.user.findUnique({ where: { phone: "+917838920127" } });
+  const tutorUser = await prisma.user.findUnique({ where: { phone: "+917838920129" } });
+  if (!studentUser || !tutorUser) return;
+
+  const [studentProfile, tutorProfileOwner] = await Promise.all([
+    prisma.profile.findFirst({ where: { userId: studentUser.id, role: "student" } }),
+    prisma.profile.findFirst({ where: { userId: tutorUser.id, role: "tutor" } })
+  ]);
+  if (!studentProfile || !tutorProfileOwner) return;
+
+  const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: tutorProfileOwner.id } });
+  if (!tutorProfile) return;
+
+  const programs = await prisma.program.findMany({
+    where: {
+      creatorProfileId: tutorProfileOwner.id,
+      title: { in: ["Class 10 board exam free foundation", "Class 10 board exam 2 month crash course"] }
+    },
+    orderBy: [{ feeType: "asc" }, { title: "asc" }]
+  });
+  await prisma.batchEnrollment.deleteMany({
+    where: {
+      batch: { tutorProfileId: tutorProfile.id },
+      studentProfile: {
+        user: {
+          OR: [
+            { phone: { startsWith: "+91783893" } },
+            { phone: { startsWith: "+91783894" } }
+          ]
+        }
+      }
+    }
+  });
+
+  for (const program of programs) {
+    await prisma.studentProgramSelection.upsert({
+      where: { profileId_programId: { profileId: studentProfile.id, programId: program.id } },
+      update: { status: "active", sourceTag: "mock" },
+      create: { profileId: studentProfile.id, programId: program.id, status: "active", sourceTag: "mock" }
+    });
+    await prisma.programProgress.upsert({
+      where: { profileId_programId: { profileId: studentProfile.id, programId: program.id } },
+      update: {},
+      create: { profileId: studentProfile.id, programId: program.id, unlockedMilestoneSequence: 1, completedMilestoneSequence: 0, sourceTag: "mock" }
+    });
+    if (program.feeType === "paid" && (program.feeAmount ?? 0) > 0) {
+      const existingOrder = await prisma.paymentOrder.findFirst({
+        where: { profileId: studentProfile.id, targetType: "program_purchase", programId: program.id },
+        orderBy: { createdAt: "desc" }
+      });
+      const order = existingOrder ? await prisma.paymentOrder.update({
+        where: { id: existingOrder.id },
+        data: { status: "paid", paidAt: existingOrder.paidAt ?? new Date(), methodType: existingOrder.methodType ?? "upi", paymentRail: existingOrder.paymentRail ?? "upi", tutorProfileId: tutorProfile.id, sourceTag: "mock" }
+      }) : await prisma.paymentOrder.create({
+        data: {
+          userId: studentUser.id,
+          profileId: studentProfile.id,
+          role: "student",
+          targetType: "program_purchase",
+          targetId: program.id,
+          programId: program.id,
+          tutorProfileId: tutorProfile.id,
+          amount: program.feeAmount ?? 0,
+          status: "paid",
+          gatewayProvider: "mock",
+          gatewayOrderId: `mock_fixture_program_${program.id}_${studentProfile.id}`,
+          gatewayPaymentId: `mock_fixture_paid_${program.id}_${studentProfile.id}`,
+          methodType: "upi",
+          paymentRail: "upi",
+          paidAt: new Date(),
+          metadata: { fixture: "known_student_tutor_mapping" },
+          sourceTag: "mock"
+        }
+      });
+      await prisma.programPurchase.upsert({
+        where: { programId_studentProfileId: { programId: program.id, studentProfileId: studentProfile.id } },
+        update: { orderId: order.id, status: "active", accessStatus: "active", purchasedAt: new Date(), sourceTag: "mock" },
+        create: { orderId: order.id, programId: program.id, studentProfileId: studentProfile.id, status: "active", accessStatus: "active", purchasedAt: new Date(), sourceTag: "mock" }
+      });
+    }
+  }
+
+  const batches = await prisma.tutorBatch.findMany({
+    where: { tutorProfileId: tutorProfile.id, programId: { in: programs.map((program) => program.id) } },
+    orderBy: [{ feeType: "asc" }, { startsAt: "asc" }]
+  });
+
+  for (const batch of batches.slice(0, 2)) {
+    let paymentOrderId: string | null = null;
+    if (batch.feeType === "paid" && (batch.feeAmount ?? 0) > 0) {
+      const existingOrder = await prisma.paymentOrder.findFirst({
+        where: { profileId: studentProfile.id, targetType: "batch_admission", batchId: batch.id },
+        orderBy: { createdAt: "desc" }
+      });
+      const order = existingOrder ? await prisma.paymentOrder.update({
+        where: { id: existingOrder.id },
+        data: { status: "paid", paidAt: existingOrder.paidAt ?? new Date(), methodType: existingOrder.methodType ?? "upi", paymentRail: existingOrder.paymentRail ?? "upi", tutorProfileId: tutorProfile.id, sourceTag: "mock" }
+      }) : await prisma.paymentOrder.create({
+        data: {
+          userId: studentUser.id,
+          profileId: studentProfile.id,
+          role: "student",
+          targetType: "batch_admission",
+          targetId: batch.id,
+          programId: batch.programId,
+          batchId: batch.id,
+          tutorProfileId: tutorProfile.id,
+          amount: batch.feeAmount ?? 0,
+          status: "paid",
+          gatewayProvider: "mock",
+          gatewayOrderId: `mock_fixture_batch_${batch.id}_${studentProfile.id}`,
+          gatewayPaymentId: `mock_fixture_paid_${batch.id}_${studentProfile.id}`,
+          methodType: "upi",
+          paymentRail: "upi",
+          paidAt: new Date(),
+          metadata: { fixture: "known_student_tutor_mapping" },
+          sourceTag: "mock"
+        }
+      });
+      paymentOrderId = order.id;
+    }
+    const request = await prisma.batchRequest.upsert({
+      where: { batchId_studentProfileId: { batchId: batch.id, studentProfileId: studentProfile.id } },
+      update: { status: "approved", paymentOrderId, message: "Fixture enrollment for linked student account", sourceTag: "mock" },
+      create: { batchId: batch.id, studentProfileId: studentProfile.id, status: "approved", paymentOrderId, message: "Fixture enrollment for linked student account", sourceTag: "mock" }
     });
     await prisma.batchEnrollment.upsert({
-      where: { batchId_studentProfileId: { batchId, studentProfileId: profile.id } },
-      update: { status: "active" },
-      create: { batchId, studentProfileId: profile.id, status: "active", sourceTag: "mock" }
+      where: { batchId_studentProfileId: { batchId: batch.id, studentProfileId: studentProfile.id } },
+      update: { requestId: request.id, status: "active", sourceTag: "mock" },
+      create: { batchId: batch.id, studentProfileId: studentProfile.id, requestId: request.id, status: "active", sourceTag: "mock" }
     });
   }
 }
@@ -6545,14 +6661,13 @@ process.on("uncaughtException", (error) => {
 
 app.listen(port, () => {
   console.log(`myTution API running on http://localhost:${port}`);
-  void ensureSharedTutorFixture().catch((error) => {
-    console.warn("Shared tutor fixture skipped", error);
-  });
-  void ensureParentStudentFixture().catch((error) => {
+  void (async () => {
+    await ensureParentStudentFixture();
+  })().catch((error) => {
     if (isMissingParentLinkTable(error)) {
       console.warn("Parent/student fixture skipped until parent activation migration is applied");
       return;
     }
-    console.warn("Parent/student fixture skipped", error);
+    console.warn("Shared tutor or parent/student fixture skipped", error);
   });
 });

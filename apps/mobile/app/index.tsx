@@ -36,7 +36,7 @@ import HomeActiveIcon from "../assets/nav/Home_active.svg";
 import HomeInactiveIcon from "../assets/nav/Home_inactive.svg";
 import MilesActiveIcon from "../assets/nav/myMiles_active.svg";
 import MilesInactiveIcon from "../assets/nav/myMiles_inactive.svg";
-import { roleValueProps } from "@/data/mockData";
+import { roleValueProps } from "@/data/valueProps";
 import { useRoleTheme } from "@/theme/useRoleTheme";
 
 type AppScreen =
@@ -214,25 +214,6 @@ const specializationOptions: Record<StreamKey, string[]> = {
   senior: ["CBSE Class 10 Mathematics", "ICSE Class 10 Science", "Class 11-12 Physics", "Class 11-12 Commerce"],
   ug: ["B.Com Accounting", "B.Tech Computer Science", "BA Economics", "B.Sc Mathematics"],
   pg: ["MBA Finance", "M.Sc Statistics", "MA English", "M.Tech Data Science"]
-};
-
-const defaultAssetPathsByType: Record<string, { thumbnail: string; banner: string }> = {
-  video: {
-    thumbnail: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png",
-    banner: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png"
-  },
-  article: {
-    thumbnail: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.png",
-    banner: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/banner.png"
-  },
-  flashcard: {
-    thumbnail: "/api/v1/ams/files/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.png",
-    banner: "/api/v1/ams/files/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.png"
-  },
-  quiz: {
-    thumbnail: "/api/v1/ams/files/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.png",
-    banner: "/api/v1/ams/files/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.png"
-  }
 };
 
 const defaultTutorProgramDraft: TutorProgramDraft = {
@@ -2628,7 +2609,7 @@ function PickerField({ value, onPress }: { value: string; onPress: () => void })
 
 function TrackCard({ role, onPress }: { role: Role; onPress: () => void }) {
   const theme = useRoleTheme(role);
-  const title = role === "student" ? "Find your next tutor" : role === "tutor" ? "Review today’s leads" : "Track Apoorv's next class";
+  const title = role === "student" ? "Find your next tutor" : role === "tutor" ? "Review today’s leads" : "Track linked child’s next class";
   const copy = role === "student" ? "Tutor matches, trial slots, and notes are ready." : role === "tutor" ? "New requests, trial follow-ups, and payout notes are ready." : "Attendance, payment, and tutor notes are ready.";
   return (
     <View style={[styles.trackCard, { backgroundColor: "#FFFFFF", borderColor: theme.accent }]}>
@@ -2947,23 +2928,6 @@ function JourneyResourceTile({ role, item, cardWidth, onPress }: { role: Role; i
         <Text style={styles.journeyResourceTopic}>{item.milestoneSequence}. {item.milestoneTitle}</Text>
         <Text style={styles.journeyResourceTitle}>{item.title}</Text>
         <Text style={styles.journeyResourceType}>{activityTypeLabel(item.type)}</Text>
-      </View>
-    </Pressable>
-  );
-}
-
-function TodayCard({ role, onPress }: { role: Role; onPress: () => void }) {
-  const theme = useRoleTheme(role);
-  const title = role === "student" ? "Trial with Neha Verma" : role === "tutor" ? "Demo with Apoorv Gulati" : "Trial with Neha Verma";
-  const meta = role === "tutor" ? "Tomorrow, 6:00 PM • Online" : "Tomorrow, 6:00 PM • Online";
-  return (
-    <Pressable style={[styles.todayCard, { backgroundColor: "#FFFFFF" }]} onPress={onPress}>
-      <View style={styles.flex}>
-        <Text style={styles.todayTitle}>{title}</Text>
-        <Text style={styles.todayMeta}>{meta}</Text>
-      </View>
-      <View style={[styles.todayBadge, { backgroundColor: theme.surface }]}>
-        <Text style={[styles.todayBadgeText, { color: theme.text }]}>Pending</Text>
       </View>
     </Pressable>
   );
@@ -3412,22 +3376,12 @@ function resourceMediaUrl(resource: ResourceDetailPayload | SelectedActivity) {
   const contentJson = detail.contentJson;
   if (detail.assetUrls?.media) return amsFileUrl(detail.assetUrls.media);
   if (contentJson && typeof contentJson.mediaUrl === "string") return amsFileUrl(contentJson.mediaUrl);
-  if (detail.sourceUrl) return amsFileUrl(normalizeVideoSourceUrl(detail.sourceUrl));
+  if (detail.sourceUrl) return amsFileUrl(detail.sourceUrl);
   return "";
 }
 
-function normalizeVideoSourceUrl(sourceUrl: string) {
-  if (sourceUrl.includes("example.com/mytution/class-10-board-program.mp4")) {
-    return "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
-  }
-  if (sourceUrl.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")) {
-    return "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
-  }
-  return sourceUrl;
-}
-
 function assetPathFor(type: string, assetUrls?: { thumbnail?: string | null; banner?: string | null }, kind: "thumbnail" | "banner" = "thumbnail") {
-  return assetUrls?.[kind] ?? defaultAssetPathsByType[type]?.[kind] ?? null;
+  return assetUrls?.[kind] ?? null;
 }
 
 function amsFileUrl(pathValue?: string | null) {
@@ -6249,7 +6203,7 @@ function Ratings({ role, back }: { role: Role; back: () => void }) {
     <>
       <TopBar title="Ratings & reviews" left="‹" onLeft={back} />
       <Card role={role}><CardTitle>4.8 average rating</CardTitle><Muted>Teaching quality, punctuality, communication, and value are tracked separately.</Muted></Card>
-      <Card role={role}><CardTitle>Neha Verma</CardTitle><Muted>Clear explanations and very patient with algebra fundamentals.</Muted></Card>
+      <EmptyStateCard title="No written reviews yet" copy="Student reviews will appear here after they are submitted." />
     </>
   );
 }
@@ -6259,7 +6213,7 @@ function SimpleScreen({ title, role, back }: { title: string; role: Role; back: 
     <>
       <TopBar title={title} left="‹" onLeft={back} />
       <Input value="Mathematics" onChangeText={() => undefined} />
-      {["Neha Verma • 94% match", "Rahul Menon • 89% match", "Ananya Iyer • 87% match"].map((item) => <Card role={role} key={item}><CardTitle>{item}</CardTitle><Muted>CBSE Math • Online/Home • ₹700/hr</Muted></Card>)}
+      <EmptyStateCard title="No leads yet" copy="Tutor leads will appear here after students request a batch or trial." />
     </>
   );
 }
