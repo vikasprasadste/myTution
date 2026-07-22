@@ -3533,10 +3533,6 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
           />
         </View>
       )}
-      <View style={styles.reactionRow}>
-        <Text style={styles.reactionButton}>👍 {role === "tutor" ? "0" : ""}</Text>
-        <Text style={styles.reactionButton}>👎 {role === "tutor" ? "0" : ""}</Text>
-      </View>
       <Text style={styles.resourceTitle}>{resource.title}</Text>
       <Text style={styles.resourceSubtitle}>{resource.description}</Text>
       <Text style={styles.assetMetaText}>{resourceMetaLine(resource)}</Text>
@@ -3561,27 +3557,21 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
 }
 
 function FlashIntro({ role, resource, start, back }: { role: Role; resource: ResourceDetailPayload | SelectedActivity; start: () => void; back: () => void }) {
-  const theme = useRoleTheme(role);
   const detail = resource as ResourceDetailPayload;
   const cards = detail.flashcards ?? [];
   const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
-  const title = /quadratic/i.test(resource.title) ? "Motion active recall cards" : resource.title;
-  const description = /quadratic|quick revision/i.test(resource.description) ? "10 flashcards for one-dimensional motion definitions, units, and graphs." : resource.description;
   return (
     <>
       <TopBar title="FLASHCARDS" left="‹" onLeft={back} />
-      <View style={styles.flashProgressTrack}><View style={[styles.flashProgressFill, { backgroundColor: theme.accentStrong, width: "18%" }]} /></View>
-      <View style={styles.flashIntroLanding}>
-        <View style={[styles.flashIntroBanner, { backgroundColor: theme.accent }]}>
-          <SvgAsset
-            pathValue={visualPath}
-            fallback={<Text style={styles.flashIntroIcon}>▤</Text>}
-          />
-        </View>
-        <Text style={styles.flashIntroTitle}>{title}</Text>
-        <Text style={styles.flashIntroCopy}>{description}</Text>
-        <Text style={styles.flashIntroMeta}>{cards.length} cards • Tap each card to reveal the answer</Text>
+      <View style={styles.resourceBanner}>
+        <SvgAsset
+          pathValue={visualPath}
+          fallback={<Text style={styles.playerIcon}>▤</Text>}
+        />
       </View>
+      <Text style={styles.resourceTitle}>{resource.title}</Text>
+      <Text style={styles.resourceSubtitle}>{resource.description}</Text>
+      <Text style={styles.assetMetaText}>{cards.length} cards • Tap each card to reveal the answer</Text>
       {cards.length ? (
         role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start flashcards" onPress={start} /></View> : null
       ) : (
@@ -3629,17 +3619,15 @@ function QuizIntro({ role, resource, loading, start, back }: { role: Role; resou
   return (
     <>
       <TopBar title="QUIZ" left="‹" onLeft={back} />
-      <View style={styles.quizLandingHero}>
-        <View style={styles.quizHeroVisual}>
-          <SvgAsset
-            pathValue={visualPath}
-            fallback={<Text style={styles.quizHeroBadge}>Quiz</Text>}
-          />
-        </View>
-        <Text style={styles.quizHeroBadge}>Quiz</Text>
-        <Text style={styles.quizHeroTitle}>{resource.title}</Text>
-        <Text style={styles.quizHeroCopy}>{resource.description}</Text>
+      <View style={styles.resourceBanner}>
+        <SvgAsset
+          pathValue={visualPath}
+          fallback={<Text style={styles.playerIcon}>Quiz</Text>}
+        />
       </View>
+      <Text style={styles.resourceTitle}>{resource.title}</Text>
+      <Text style={styles.resourceSubtitle}>{resource.description}</Text>
+      <Text style={styles.assetMetaText}>{resourceMetaLine(resource)}</Text>
       {role !== "parent" ? <View style={styles.resourceBottomCta}><Button role={role} label="Start" onPress={start} loading={loading} /></View> : null}
     </>
   );
@@ -7099,11 +7087,11 @@ const styles = StyleSheet.create({
   topicActionRow: { alignSelf: "center", gap: 12, marginTop: 10, width: "82%" },
   resourceBanner: { alignItems: "center", backgroundColor: "#F3F6F9", borderRadius: 0, height: 236, justifyContent: "center", marginHorizontal: -20, overflow: "hidden" },
   videoPlayer: { backgroundColor: "#CFCFCF", borderRadius: 0, height: 270, marginHorizontal: -20 },
-  videoPlayerShell: { backgroundColor: "#111827", borderRadius: 22, height: 236, marginTop: 18, overflow: "hidden", position: "relative" },
+  videoPlayerShell: { backgroundColor: "#111827", borderRadius: 0, height: 236, marginHorizontal: -20, overflow: "hidden", position: "relative" },
   videoView: { height: "100%", width: "100%" },
   subtitleOverlay: { alignSelf: "center", backgroundColor: "rgba(17,24,39,0.78)", borderRadius: 10, bottom: 16, left: 14, paddingHorizontal: 12, paddingVertical: 8, position: "absolute", right: 14 },
   subtitleText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800", lineHeight: 20, textAlign: "center" },
-  videoUnavailable: { alignItems: "center", backgroundColor: "#111827", borderRadius: 22, gap: 8, marginTop: 18, minHeight: 180, justifyContent: "center", padding: 18 },
+  videoUnavailable: { alignItems: "center", backgroundColor: "#111827", borderRadius: 0, gap: 8, height: 236, justifyContent: "center", marginHorizontal: -20, padding: 18 },
   videoUnavailableTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900", textAlign: "center" },
   videoUnavailableCopy: { color: "#D1D5DB", fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" },
   articleHero: { backgroundColor: "#D1D5DB", borderRadius: 0, height: 270, marginHorizontal: -20 },
