@@ -280,10 +280,18 @@ function toAssetUrl(assetPath?: string | null) {
 function readMediaUrl(resource?: ResourceAssetShape | null) {
   const fallbackMediaUrl = defaultMediaUrlForResource(resource);
   const contentJson = resource?.contentJson;
-  if (!contentJson || typeof contentJson !== "object" || !("mediaUrl" in contentJson)) return fallbackMediaUrl;
+  if (!contentJson || typeof contentJson !== "object" || !("mediaUrl" in contentJson)) return normalizeMediaUrl(resource?.sourceUrl, fallbackMediaUrl);
   const mediaUrl = contentJson.mediaUrl;
-  if (typeof mediaUrl !== "string") return fallbackMediaUrl;
-  if (resource?.type === "video" && mediaUrl.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")) {
+  if (typeof mediaUrl !== "string") return normalizeMediaUrl(resource?.sourceUrl, fallbackMediaUrl);
+  return normalizeMediaUrl(mediaUrl, fallbackMediaUrl);
+}
+
+function normalizeMediaUrl(mediaUrl?: string | null, fallbackMediaUrl?: string | null) {
+  if (!mediaUrl) return fallbackMediaUrl ?? null;
+  if (mediaUrl.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")) {
+    return fallbackMediaUrl ?? "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
+  }
+  if (mediaUrl.includes("example.com/mytution/class-10-board-program.mp4")) {
     return fallbackMediaUrl ?? "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
   }
   return mediaUrl;
@@ -335,6 +343,7 @@ type ResourceAssetShape = {
   bannerPath?: string | null;
   vttPath?: string | null;
   metadataPath?: string | null;
+  sourceUrl?: string | null;
   contentJson?: unknown;
 };
 
@@ -6229,7 +6238,7 @@ async function ensureSharedTutorProgram(profileId: string, input: { title: strin
     return existing;
   }
   const resources = await Promise.all([
-    prisma.resource.create({ data: { creatorProfileId: profileId, type: "video", title: input.title + " concept video", description: "Short lesson explaining the core concept before practice.", sourceUrl: "https://example.com/mytution/class-10-board-program.mp4", storageType: "db", sourceTag: "mock" } }),
+    prisma.resource.create({ data: { creatorProfileId: profileId, type: "video", title: input.title + " concept video", description: "Short lesson explaining the core concept before practice.", sourceUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4", storageType: "repo", thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png", bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png", vttPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt", metadataPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md", contentJson: { durationSeconds: 480, mediaUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4" }, sourceTag: "mock" } }),
     prisma.resource.create({ data: { creatorProfileId: profileId, type: "article", title: input.title + " notes", description: "Board-focused micro-notes with formulas, examples, and answer-writing tips.", body: "Revise identities, worked examples, and step-by-step board answer patterns.", storageType: "db", sourceTag: "mock" } }),
     prisma.resource.create({ data: { creatorProfileId: profileId, type: "flashcard", title: input.title + " recall cards", description: "Quick active recall cards for identities, terms, and common traps.", storageType: "db", sourceTag: "mock" } }),
     prisma.resource.create({ data: { creatorProfileId: profileId, type: "quiz", title: input.title + " diagnostic quiz", description: "Short MCQ check before moving to the next milestone.", storageType: "db", contentJson: { questions: [{ id: "class-10-board-q1", prompt: "Which expression is equal to a^2 - b^2?", options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + b^2", "2ab"], answerIndex: 0, learnMore: "Difference of squares factors into sum and difference terms." }] }, sourceTag: "mock" } })

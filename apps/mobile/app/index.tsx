@@ -3359,7 +3359,18 @@ function resourceMediaUrl(resource: ResourceDetailPayload | SelectedActivity) {
   const contentJson = detail.contentJson;
   if (detail.assetUrls?.media) return amsFileUrl(detail.assetUrls.media);
   if (contentJson && typeof contentJson.mediaUrl === "string") return amsFileUrl(contentJson.mediaUrl);
+  if (detail.sourceUrl) return amsFileUrl(normalizeVideoSourceUrl(detail.sourceUrl));
   return "";
+}
+
+function normalizeVideoSourceUrl(sourceUrl: string) {
+  if (sourceUrl.includes("example.com/mytution/class-10-board-program.mp4")) {
+    return "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
+  }
+  if (sourceUrl.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")) {
+    return "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4";
+  }
+  return sourceUrl;
 }
 
 function assetPathFor(type: string, assetUrls?: { thumbnail?: string | null; banner?: string | null }, kind: "thumbnail" | "banner" = "thumbnail") {
