@@ -3441,6 +3441,15 @@ function VideoResourcePlayer({ resource }: { resource: ResourceDetailPayload | S
   });
 
   useEffect(() => {
+    if (!mediaUrl) return;
+    try {
+      player.play();
+    } catch {
+      // Native controls remain available if autoplay is blocked by the platform.
+    }
+  }, [mediaUrl, player]);
+
+  useEffect(() => {
     const vttUrl = amsFileUrl(detail.assetUrls?.vtt);
     if (!vttUrl) {
       setCues([]);
@@ -3499,15 +3508,20 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
   const detail = resource as ResourceDetailPayload;
   const visualPath = assetPathFor(resource.type, detail.assetUrls, "banner") ?? assetPathFor(resource.type, detail.assetUrls);
   const readOnly = role === "parent" || role === "tutor";
+  const isVideo = resource.type === "video";
   return (
     <>
       <TopBar title={resource.thumbnailLabel.toUpperCase()} left="‹" onLeft={back} />
-      <View style={styles.resourceBanner}>
-        <SvgAsset
-          pathValue={visualPath}
-          fallback={<Text style={[styles.playerIcon, { color: resource.type === "video" ? "#FFFFFF" : theme.text }]}>{resource.type === "video" ? "▶" : "A"}</Text>}
-        />
-      </View>
+      {isVideo ? (
+        <VideoResourcePlayer resource={resource} />
+      ) : (
+        <View style={styles.resourceBanner}>
+          <SvgAsset
+            pathValue={visualPath}
+            fallback={<Text style={[styles.playerIcon, { color: theme.text }]}>A</Text>}
+          />
+        </View>
+      )}
       <View style={styles.reactionRow}>
         <Text style={styles.reactionButton}>👍 {role === "tutor" ? "0" : ""}</Text>
         <Text style={styles.reactionButton}>👎 {role === "tutor" ? "0" : ""}</Text>
@@ -3515,7 +3529,6 @@ function ResourceDetail({ role, resource, complete, loading, back, completedTopi
       <Text style={styles.resourceTitle}>{resource.title}</Text>
       <Text style={styles.resourceSubtitle}>{resource.description}</Text>
       <Text style={styles.assetMetaText}>{resourceMetaLine(resource)}</Text>
-      {resource.type === "video" ? <VideoResourcePlayer resource={resource} /> : null}
       <Text style={styles.articleBody}>{resourceArticleText(resource)}</Text>
       {!readOnly ? <View style={styles.resourceBottomCta}><Button role={role} label={cta} onPress={complete} loading={loading} /></View> : null}
       {completedTopic ? (
