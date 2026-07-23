@@ -1393,6 +1393,56 @@ app.get("/api/v1/tutor/supply/analytics", async (req, res) => {
   res.json({ data: await buildTutorSupplyAnalytics(profile.id, tutorProfile.id) });
 });
 
+app.get("/api/v1/tutor/enrollment-students", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+  if (!tutorProfile) {
+    res.json({ data: [] });
+    return;
+  }
+  const enrollments = await prisma.batchEnrollment.findMany({
+    where: { status: "active", batch: { tutorProfileId: tutorProfile.id } },
+    include: { studentProfile: true, batch: true },
+    orderBy: { createdAt: "desc" }
+  });
+  res.json({ data: toTutorEnrollmentStudentSummaries(enrollments) });
+});
+
+app.get("/api/v1/tutor/enrollment-students/:profileId", async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const tutorProfile = await prisma.tutorProfile.findUnique({ where: { profileId: profile.id } });
+  if (!tutorProfile) {
+    res.status(404).json({ error: "Tutor profile not found" });
+    return;
+  }
+  const enrollments = await prisma.batchEnrollment.findMany({
+    where: { status: "active", studentProfileId: req.params.profileId, batch: { tutorProfileId: tutorProfile.id } },
+    include: {
+      studentProfile: true,
+      request: { include: { paymentOrder: true } },
+      batch: {
+        include: {
+          program: true,
+          requests: true,
+          enrollments: { include: { studentProfile: true } },
+          tutorProfile: { include: { profile: true } }
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  if (!enrollments.length) {
+    res.status(404).json({ error: "Student enrollment not found" });
+    return;
+  }
+  const programIds = Array.from(new Set(enrollments.map((enrollment) => enrollment.batch.programId).filter((id): id is string => Boolean(id))));
+  const progress = (await buildLearnerProgressSummaries([enrollments[0].studentProfile], programIds))[0] ?? null;
+  const timeline = await listActivityTimelineForProfiles([req.params.profileId], programIds);
+  res.json({ data: toTutorEnrollmentStudentDetail(enrollments, progress, timeline) });
+});
+
 app.get("/api/v1/tutor/resources", async (req, res) => {
   const profile = await requireProfile(req, res, "tutor");
   if (!profile) return;
@@ -5994,6 +6044,58 @@ function toStudentClass(batch: any, enrollmentId?: string) {
   };
 }
 
+function studentProfileSummary(profile: any) {
+  return {
+    id: profile.id,
+    name: `${profile.firstName} ${profile.lastName}`.trim(),
+    city: profile.city
+  };
+}
+
+function toTutorEnrollmentStudentSummaries(enrollments: any[]) {
+  const byStudent = new Map<string, any[]>();
+  enrollments.forEach((enrollment) => {
+    const items = byStudent.get(enrollment.studentProfileId) ?? [];
+    items.push(enrollment);
+    byStudent.set(enrollment.studentProfileId, items);
+  });
+  return Array.from(byStudent.values()).map((items) => {
+    const latest = items.reduce((current, item) => item.createdAt > current.createdAt ? item : current, items[0]);
+    const batches = new Set(items.map((item) => item.batchId));
+    const modes = Array.from(new Set(items.map((item) => item.batch?.mode).filter(Boolean)));
+    return {
+      student: studentProfileSummary(latest.studentProfile),
+      enrollmentCount: items.length,
+      batchCount: batches.size,
+      paidEnrollmentCount: items.filter((item) => item.batch?.feeType === "paid").length,
+      freeEnrollmentCount: items.filter((item) => item.batch?.feeType !== "paid").length,
+      modes,
+      latestEnrollmentAt: latest.createdAt?.toISOString?.() ?? null
+    };
+  });
+}
+
+function toTutorEnrollmentStudentDetail(enrollments: any[], progress: any, activityTimeline: any[]) {
+  const student = studentProfileSummary(enrollments[0].studentProfile);
+  return {
+    student,
+    enrollments: enrollments.map((enrollment) => ({
+      id: enrollment.id,
+      status: enrollment.status,
+      enrolledAt: enrollment.createdAt.toISOString(),
+      feeType: enrollment.batch.feeType ?? "free",
+      feeAmount: enrollment.batch.feeAmount ?? null,
+      feeDueDate: null,
+      paymentStatus: enrollment.request?.paymentOrder?.status ?? null,
+      programId: enrollment.batch.programId ?? null,
+      programTitle: enrollment.batch.program?.title ?? null,
+      batch: toStudentClass(enrollment.batch, enrollment.id)
+    })),
+    progress,
+    activityTimeline
+  };
+}
+
 function toTutorBatchClass(batch: any) {
   return {
     ...toStudentClass(batch),
@@ -6177,6 +6279,25 @@ async function buildLearnerProgressSummaries(profiles: any[], programIds: string
       };
     })
   }));
+}
+
+async function listActivityTimelineForProfiles(profileIds: string[], programIds?: string[], limit = 50) {
+  const uniqueProfileIds = Array.from(new Set(profileIds)).filter(Boolean);
+  const uniqueProgramIds = Array.from(new Set(programIds ?? [])).filter(Boolean);
+  if (!uniqueProfileIds.length) return [];
+  const progress = await prisma.activityProgress.findMany({
+    where: {
+      profileId: { in: uniqueProfileIds },
+      ...(uniqueProgramIds.length ? { activity: { milestone: { programId: { in: uniqueProgramIds } } } } : {})
+    },
+    orderBy: { updatedAt: "desc" },
+    take: Math.min(limit, 100),
+    include: {
+      profile: true,
+      activity: { include: { milestone: { include: { program: true } }, resource: true } }
+    }
+  });
+  return progress.map(toActivityTimelineItem);
 }
 
 type DashboardMetrics = {

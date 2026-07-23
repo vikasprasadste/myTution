@@ -297,6 +297,36 @@ export interface LearnerProgressSummary {
   programs: LearnerProgressProgramSummary[];
 }
 
+export interface TutorEnrollmentStudentSummary {
+  student: { id: string; name: string; city: string | null };
+  enrollmentCount: number;
+  batchCount: number;
+  paidEnrollmentCount: number;
+  freeEnrollmentCount: number;
+  modes: string[];
+  latestEnrollmentAt: string | null;
+}
+
+export interface TutorStudentEnrollmentDetail {
+  id: string;
+  status: string;
+  enrolledAt: string;
+  feeType: string;
+  feeAmount: number | null;
+  feeDueDate: string | null;
+  paymentStatus: string | null;
+  programId: string | null;
+  programTitle: string | null;
+  batch: BatchClass;
+}
+
+export interface TutorEnrollmentStudentDetail {
+  student: { id: string; name: string; city: string | null };
+  enrollments: TutorStudentEnrollmentDetail[];
+  progress: LearnerProgressSummary | null;
+  activityTimeline: ActivityTimelineItem[];
+}
+
 export interface ActivityTimelineItem {
   id: string;
   profileId: string;

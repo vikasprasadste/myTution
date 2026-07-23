@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, ConsentDocumentSummary, ConsentRequirementResponse, CurriculumCatalogueResponse, CurriculumSelection, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, NotificationSummary, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
+import type { ActivityTimelineItem, BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, ConsentDocumentSummary, ConsentRequirementResponse, CurriculumCatalogueResponse, CurriculumSelection, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, NotificationSummary, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorEnrollmentStudentDetail, TutorEnrollmentStudentSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -156,12 +156,6 @@ type TutorBatchDraft = {
   status: string;
   feeType: string;
   feeAmount: string;
-};
-type TutorEnrollmentStudent = {
-  student: { id: string; name: string; city: string | null };
-  batch: BatchClass;
-  feeType: string;
-  feeAmount?: number | null;
 };
 type ValuePropItem = { id: string; icon: string; title: string; description: string; imageUrl: string };
 type ValuePropsSetting = { key: "valueprops"; folder: string; version: number; value: Record<Role, ValuePropItem[]> };
@@ -434,7 +428,8 @@ export default function Index() {
   const [tutorFilterOptions, setTutorFilterOptions] = useState<TutorFilterOptions>({ subjects: [], locations: [], grades: [], boards: [], modes: [], languages: [], genders: [], experience: [], ratings: [] });
   const [batchClasses, setBatchClasses] = useState<BatchClass[]>([]);
   const [batchRequests, setBatchRequests] = useState<BatchRequestSummary[]>([]);
-  const [selectedTutorStudent, setSelectedTutorStudent] = useState<TutorEnrollmentStudent | null>(null);
+  const [selectedTutorStudent, setSelectedTutorStudent] = useState<TutorEnrollmentStudentSummary | null>(null);
+  const [tutorEnrollmentStudents, setTutorEnrollmentStudents] = useState<TutorEnrollmentStudentSummary[]>([]);
   const [learnerProgress, setLearnerProgress] = useState<LearnerProgressSummary[]>([]);
   const [parentMonitoring, setParentMonitoring] = useState<ParentMonitoringResponse | null>(null);
   const [tutorSupply, setTutorSupply] = useState<TutorSupplyState | null>(null);
@@ -692,6 +687,7 @@ export default function Index() {
       refreshClasses("tutor");
       refreshBatchRequests();
       refreshTutorSupply();
+      refreshTutorEnrollmentStudents();
       refreshLearnerProgress("tutor");
     }
     if (["roleHub", "tutorBatches", "tutorRequests", "tutorEnrollments", "tutorStudentDetail"].includes(screen)) {
@@ -703,6 +699,7 @@ export default function Index() {
         refreshClasses("tutor");
         refreshBatchRequests();
         refreshTutorSupply();
+        refreshTutorEnrollmentStudents();
         refreshLearnerProgress("tutor");
       }
       if (role === "parent") refreshClasses("parent");
@@ -1155,6 +1152,17 @@ export default function Index() {
     }
   }
 
+  async function refreshTutorEnrollmentStudents() {
+    if (!authSession?.accessToken) return;
+    try {
+      const response = await apiGet<{ data: TutorEnrollmentStudentSummary[] }>("/api/v1/tutor/enrollment-students", authSession.accessToken);
+      setTutorEnrollmentStudents(response.data);
+    } catch {
+      setTutorEnrollmentStudents([]);
+      setApiNotice("Active enrollments could not be loaded from API.");
+    }
+  }
+
   async function refreshCurrentScreen() {
     setRefreshing(true);
     try {
@@ -1167,6 +1175,7 @@ export default function Index() {
       } else if (role === "tutor") {
         await Promise.all([
           refreshTutorSupply(),
+          refreshTutorEnrollmentStudents(),
           refreshClasses("tutor"),
           refreshBatchRequests(),
           refreshLearnerProgress("tutor"),
@@ -1277,6 +1286,7 @@ export default function Index() {
     if (target === "requests") setScreen("tutorRequests");
     if (target === "enrollments") {
       setSelectedTutorStudent(null);
+      void refreshTutorEnrollmentStudents();
       setScreen("tutorEnrollments");
     }
   }
@@ -2267,7 +2277,7 @@ export default function Index() {
 
           <SectionTitle>Dashboard</SectionTitle>
           {role === "tutor" ? (
-            <TutorSupplyDashboard supply={tutorSupply} classes={batchClasses} requests={batchRequests} onOpen={openTutorDashboardTile} />
+            <TutorSupplyDashboard supply={tutorSupply} classes={batchClasses} requests={batchRequests} enrollmentStudents={tutorEnrollmentStudents} onOpen={openTutorDashboardTile} />
           ) : (
             <DashboardGrid role={role} cards={dashboardCards} setScreen={setScreen} />
           )}
@@ -2278,12 +2288,12 @@ export default function Index() {
     if (screen === "batchCreate") return <TutorBatchFormScreen role={role} supply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} actionLoading={loadingAction} back={() => setScreen("roleHub")} />;
     if (screen === "tutorBatches") return <TutorBatchListScreen role={role} supply={tutorSupply} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} actionLoading={loadingAction} back={() => setScreen("roleHub")} />;
     if (screen === "tutorRequests") return <TutorBatchRequestsScreen role={role} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("roleHub")} />;
-    if (screen === "tutorEnrollments") return <TutorEnrollmentListScreen role={role} classes={batchClasses} supply={tutorSupply} openStudent={(student) => { setSelectedTutorStudent(student); setScreen("tutorStudentDetail"); }} back={() => setScreen("roleHub")} />;
-    if (screen === "tutorStudentDetail" && selectedTutorStudent) return <TutorStudentDetailScreen role={role} enrollment={selectedTutorStudent} learnerProgress={learnerProgress} accessToken={authSession?.accessToken} back={() => setScreen("tutorEnrollments")} />;
+    if (screen === "tutorEnrollments") return <TutorEnrollmentListScreen role={role} students={tutorEnrollmentStudents} openStudent={(student) => { setSelectedTutorStudent(student); setScreen("tutorStudentDetail"); }} back={() => setScreen("roleHub")} />;
+    if (screen === "tutorStudentDetail" && selectedTutorStudent) return <TutorStudentDetailScreen role={role} student={selectedTutorStudent} accessToken={authSession?.accessToken} back={() => setScreen("tutorEnrollments")} />;
     if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} marketplaceTarget={marketplaceTarget} clearTargetTutor={() => setMarketplaceTarget(null)} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestProgramPurchase={requestProgramPurchase} requestLoading={loadingAction} search={refreshTutorSearch} back={() => { setMarketplaceTarget(null); setScreen("home"); }} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} accessToken={authSession?.accessToken} back={() => setScreen("account")} />;
-    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} openBatchCreate={startNewTutorBatch} openDashboardTarget={openTutorDashboardTile} />;
+    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} tutorEnrollmentStudents={tutorEnrollmentStudents} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} openBatchCreate={startNewTutorBatch} openDashboardTarget={openTutorDashboardTile} />;
     if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} refreshKey={communityRefreshKey} back={() => setScreen("home")} />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} onEditProfile={() => {
       const profile = identityContext?.activeProfile;
@@ -5396,6 +5406,7 @@ function RoleHub({
   actionLoading,
   back,
   tutorSupply,
+  tutorEnrollmentStudents,
   editBatch,
   archiveBatch,
   openBatchCreate,
@@ -5409,6 +5420,7 @@ function RoleHub({
   actionLoading: string | null;
   back: () => void;
   tutorSupply: TutorSupplyState | null;
+  tutorEnrollmentStudents: TutorEnrollmentStudentSummary[];
   editBatch: (batch: TutorBatchSummary) => void;
   archiveBatch: (batchId: string) => void;
   openBatchCreate: () => void;
@@ -5445,6 +5457,7 @@ function RoleHub({
           supply={tutorSupply}
           classes={classes}
           requests={requests}
+          enrollmentStudents={tutorEnrollmentStudents}
           editBatch={editBatch}
           archiveBatch={archiveBatch}
           actionLoading={actionLoading}
@@ -5478,23 +5491,19 @@ function sortedTutorBatches(batches: TutorBatchSummary[]) {
   return [...batches].sort((a, b) => weight(a) - weight(b) || a.title.localeCompare(b.title));
 }
 
-function flattenTutorEnrollments(classes: BatchClass[], supply: TutorSupplyState | null): TutorEnrollmentStudent[] {
-  return classes.flatMap((batch) => {
-    const supplyBatch = supply?.batches.find((item) => item.id === batch.batchId);
-    return (batch.enrolledStudents ?? []).map((student) => ({
-      student,
-      batch,
-      feeType: supplyBatch?.feeType ?? "free",
-      feeAmount: supplyBatch?.feeAmount
-    }));
+function distinctTutorEnrollmentStudents(classes: BatchClass[]) {
+  const students = new Map<string, { id: string; name: string; city: string | null }>();
+  classes.forEach((batch) => {
+    (batch.enrolledStudents ?? []).forEach((student) => students.set(student.id, student));
   });
+  return Array.from(students.values());
 }
 
-function TutorSupplyDashboard({ supply, classes, requests, onOpen }: { supply: TutorSupplyState | null; classes: BatchClass[]; requests: BatchRequestSummary[]; onOpen: (target: TutorDashboardTarget) => void }) {
+function TutorSupplyDashboard({ supply, classes, requests, enrollmentStudents, onOpen }: { supply: TutorSupplyState | null; classes: BatchClass[]; requests: BatchRequestSummary[]; enrollmentStudents: TutorEnrollmentStudentSummary[]; onOpen: (target: TutorDashboardTarget) => void }) {
   const programs = supply?.programs ?? [];
   const batches = supply?.batches ?? [];
   const analytics = supply?.analytics;
-  const enrollments = flattenTutorEnrollments(classes, supply).length;
+  const enrollments = enrollmentStudents.length || distinctTutorEnrollmentStudents(classes).length;
   const tiles: Array<{ value: string | number; label: string; target: TutorDashboardTarget }> = [
     { value: analytics?.programs.total ?? programs.length, label: "Programs", target: "programs" },
     { value: analytics?.batches.active ?? batches.filter((batch) => isActiveTutorBatch(batch)).length, label: "Active batches", target: "batches" },
@@ -5555,83 +5564,66 @@ function TutorBatchRequestsScreen({ role, requests, approveRequest, requestActio
   );
 }
 
-function TutorEnrollmentListScreen({ role, classes, supply, openStudent, back }: { role: Role; classes: BatchClass[]; supply: TutorSupplyState | null; openStudent: (student: TutorEnrollmentStudent) => void; back: () => void }) {
-  const enrollments = flattenTutorEnrollments(classes, supply);
+function TutorEnrollmentListScreen({ role, students, openStudent, back }: { role: Role; students: TutorEnrollmentStudentSummary[]; openStudent: (student: TutorEnrollmentStudentSummary) => void; back: () => void }) {
   return (
     <>
       <TopBar title="Active enrollments" left="‹" onLeft={back} />
-      {enrollments.map((enrollment) => (
-        <Pressable key={`${enrollment.batch.batchId}:${enrollment.student.id}`} style={({ pressed }) => [styles.rosterStudentCard, pressed && styles.pressablePressed]} onPress={() => openStudent(enrollment)}>
+      {students.map((student) => (
+        <Pressable key={student.student.id} style={({ pressed }) => [styles.rosterStudentCard, pressed && styles.pressablePressed]} onPress={() => openStudent(student)}>
           <View style={styles.rosterStudentRowInner}>
             <View style={styles.rosterAvatar}>
-              <Text style={styles.rosterAvatarText}>{compactInitials(enrollment.student.name)}</Text>
+              <Text style={styles.rosterAvatarText}>{compactInitials(student.student.name)}</Text>
             </View>
             <View style={styles.flex}>
-              <Text style={styles.parentRowName}>{enrollment.student.name}</Text>
-              <Text style={styles.parentRowMeta}>{enrollment.batch.title} • {enrollment.feeType === "paid" ? `Paid ₹${enrollment.feeAmount ?? 0}` : "Free"} • {enrollment.batch.mode}</Text>
-              <Text style={styles.parentRowMeta}>{enrollment.batch.classroomLocation ?? "Online"} • {enrollment.student.city ?? "City not added"}</Text>
+              <Text style={styles.parentRowName}>{student.student.name}</Text>
+              <Text style={styles.parentRowMeta}>{student.enrollmentCount} active enrollment{student.enrollmentCount === 1 ? "" : "s"} • {student.paidEnrollmentCount ? `${student.paidEnrollmentCount} paid` : "Free"} • {student.modes.join(", ") || "Mode not added"}</Text>
+              <Text style={styles.parentRowMeta}>{student.student.city ?? "City not added"} • Latest {student.latestEnrollmentAt ? formatReminderDateTime(student.latestEnrollmentAt) : "not available"}</Text>
             </View>
           </View>
         </Pressable>
       ))}
-      {!enrollments.length ? <Card role={role}><CardTitle>No active enrollments yet</CardTitle><Muted>Approved students will appear here across all batches.</Muted></Card> : null}
+      {!students.length ? <Card role={role}><CardTitle>No active enrollments yet</CardTitle><Muted>Approved students will appear here across all batches.</Muted></Card> : null}
     </>
   );
 }
 
-function TutorStudentDetailScreen({ role, enrollment, learnerProgress, accessToken, back }: { role: Role; enrollment: TutorEnrollmentStudent; learnerProgress: LearnerProgressSummary[]; accessToken?: string; back: () => void }) {
-  const [apiProgress, setApiProgress] = useState<LearnerProgressSummary[] | null>(null);
-  const [progressLoading, setProgressLoading] = useState(false);
+function TutorStudentDetailScreen({ role, student, accessToken, back }: { role: Role; student: TutorEnrollmentStudentSummary; accessToken?: string; back: () => void }) {
+  const [detail, setDetail] = useState<TutorEnrollmentStudentDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   useEffect(() => {
     let ignore = false;
-    async function loadProgress() {
+    async function loadDetail() {
       if (!accessToken) return;
-      setProgressLoading(true);
+      setDetailLoading(true);
       try {
-        const response = await apiGet<{ data: LearnerProgressSummary[] }>("/api/v1/education-plan/progress-summary?role=tutor", accessToken);
-        if (!ignore) setApiProgress(response.data);
+        const response = await apiGet<{ data: TutorEnrollmentStudentDetail }>(`/api/v1/tutor/enrollment-students/${student.student.id}`, accessToken);
+        if (!ignore) setDetail(response.data);
       } catch {
-        if (!ignore) setApiProgress(null);
+        if (!ignore) setDetail(null);
       } finally {
-        if (!ignore) setProgressLoading(false);
+        if (!ignore) setDetailLoading(false);
       }
     }
-    loadProgress();
+    loadDetail();
     return () => { ignore = true; };
-  }, [accessToken, enrollment.student.id]);
-  const summaries = apiProgress ?? learnerProgress;
-  const progress = summaries.find((summary) => summary.profileId === enrollment.student.id);
-  const progressPrograms = progress?.programs ?? [];
+  }, [accessToken, student.student.id]);
+  const activeDetail = detail;
+  const progressPrograms = activeDetail?.progress?.programs ?? [];
+  const enrollments = activeDetail?.enrollments ?? [];
+  const timeline = activeDetail?.activityTimeline ?? [];
   return (
     <>
-      <TopBar title={enrollment.student.name} left="‹" onLeft={back} />
+      <TopBar title={student.student.name} left="‹" onLeft={back} />
       <View style={styles.classRosterHero}>
-        <Text style={styles.classTitle}>{enrollment.student.name}</Text>
-        <Text style={styles.classMeta}>{enrollment.student.city ?? "City not added"}</Text>
-        <Text style={styles.classRosterCount}>{enrollment.batch.title}</Text>
+        <Text style={styles.classTitle}>{student.student.name}</Text>
+        <Text style={styles.classMeta}>{student.student.city ?? "City not added"}</Text>
+        <Text style={styles.classRosterCount}>{student.enrollmentCount} active enrollment{student.enrollmentCount === 1 ? "" : "s"} • {student.modes.join(", ") || "Mode not added"}</Text>
       </View>
-      <SectionTitle>Enrollment</SectionTitle>
-      <View style={styles.studentDetailCard}>
-        <Text style={styles.studentDetailTitle}>{enrollment.batch.course}</Text>
-        <View style={styles.studentDetailRow}>
-          <Text style={styles.studentDetailLabel}>Class</Text>
-          <Text style={styles.studentDetailValue}>{enrollment.batch.subject} • {enrollment.batch.board} • {enrollment.batch.grade}</Text>
-        </View>
-        <View style={styles.studentDetailRow}>
-          <Text style={styles.studentDetailLabel}>Schedule</Text>
-          <Text style={styles.studentDetailValue}>{enrollment.batch.mode} • {enrollment.batch.schedule}</Text>
-        </View>
-        <View style={styles.studentDetailRow}>
-          <Text style={styles.studentDetailLabel}>Location</Text>
-          <Text style={styles.studentDetailValue}>{enrollment.batch.classroomLocation ?? "Online"}</Text>
-        </View>
-        <View style={styles.studentDetailRow}>
-          <Text style={styles.studentDetailLabel}>Fee</Text>
-          <Text style={styles.studentDetailValue}>{enrollment.feeType === "paid" ? `Paid • Due 5th monthly • ₹${enrollment.feeAmount ?? 0}` : "Free • No fee due"}</Text>
-        </View>
-      </View>
+      {detailLoading ? <ActivityIndicator /> : null}
+      <SectionTitle>Enrollments</SectionTitle>
+      {enrollments.map((item) => <TutorStudentEnrollmentCard key={item.id} enrollment={item} />)}
+      {!detailLoading && !enrollments.length ? <EmptyStateCard title="No enrollment details" copy="Enrollment details could not be loaded right now." /> : null}
       <SectionTitle>Program progress</SectionTitle>
-      {progressLoading ? <ActivityIndicator /> : null}
       {progressPrograms.map((program) => (
         <View key={program.programId} style={styles.studentProgressCard}>
           <View style={styles.rowBetween}>
@@ -5657,13 +5649,61 @@ function TutorStudentDetailScreen({ role, enrollment, learnerProgress, accessTok
           </View>
         </View>
       ))}
-        {!progressLoading && !progressPrograms.length ? (
+        {!detailLoading && !progressPrograms.length ? (
           <View style={styles.studentDetailCard}>
             <Text style={styles.studentDetailTitle}>No learning activity yet</Text>
             <Text style={styles.studentDetailValue}>Progress will appear here after this student starts completing activities in the batch program.</Text>
           </View>
         ) : null}
+      <SectionTitle>Recent activity</SectionTitle>
+      {timeline.slice(0, 5).map((item) => <TutorStudentActivityRow key={item.id} item={item} />)}
+      {!detailLoading && !timeline.length ? <EmptyStateCard title="No recent activity" copy="Completed activities and quiz updates will appear here." /> : null}
     </>
+  );
+}
+
+function TutorStudentEnrollmentCard({ enrollment }: { enrollment: TutorEnrollmentStudentDetail["enrollments"][number] }) {
+  return (
+    <View style={styles.studentDetailCard}>
+      <Text style={styles.studentDetailTitle}>{enrollment.batch.title}</Text>
+      <View style={styles.studentDetailRow}>
+        <Text style={styles.studentDetailLabel}>Program</Text>
+        <Text style={styles.studentDetailValue}>{enrollment.programTitle ?? "Program not linked"}</Text>
+      </View>
+      <View style={styles.studentDetailRow}>
+        <Text style={styles.studentDetailLabel}>Class</Text>
+        <Text style={styles.studentDetailValue}>{enrollment.batch.subject} • {enrollment.batch.board} • {enrollment.batch.grade}</Text>
+      </View>
+      <View style={styles.studentDetailRow}>
+        <Text style={styles.studentDetailLabel}>Schedule</Text>
+        <Text style={styles.studentDetailValue}>{enrollment.batch.mode} • {enrollment.batch.schedule}</Text>
+      </View>
+      <View style={styles.studentDetailRow}>
+        <Text style={styles.studentDetailLabel}>Location</Text>
+        <Text style={styles.studentDetailValue}>{enrollment.batch.classroomLocation ?? "Online"}</Text>
+      </View>
+      <View style={styles.studentDetailRow}>
+        <Text style={styles.studentDetailLabel}>Fee</Text>
+        <Text style={styles.studentDetailValue}>{enrollment.feeType === "paid" ? `Paid • ₹${enrollment.feeAmount ?? 0}` : "Free"}{enrollment.paymentStatus ? ` • ${capitalize(enrollment.paymentStatus)}` : ""}</Text>
+      </View>
+      <View style={styles.studentDetailRow}>
+        <Text style={styles.studentDetailLabel}>Joined</Text>
+        <Text style={styles.studentDetailValue}>{formatReminderDateTime(enrollment.enrolledAt)}</Text>
+      </View>
+    </View>
+  );
+}
+
+function TutorStudentActivityRow({ item }: { item: ActivityTimelineItem }) {
+  return (
+    <View style={styles.learnerProgressBox}>
+      <View style={styles.rowBetween}>
+        <Text style={styles.learnerProgressTitle}>{item.title}</Text>
+        <Text style={styles.learnerProgressPercent}>{capitalize(item.status)}</Text>
+      </View>
+      <Text style={styles.parentRowMeta}>{item.programTitle} • {item.milestoneTitle}</Text>
+      <Text style={styles.parentRowMeta}>{item.updatedAt ? formatReminderDateTime(item.updatedAt) : "Updated time not available"}</Text>
+    </View>
   );
 }
 
@@ -5672,6 +5712,7 @@ function TutorSupplyPanel({
   supply,
   classes,
   requests,
+  enrollmentStudents,
   editBatch,
   archiveBatch,
   actionLoading,
@@ -5682,6 +5723,7 @@ function TutorSupplyPanel({
   supply: TutorSupplyState | null;
   classes: BatchClass[];
   requests: BatchRequestSummary[];
+  enrollmentStudents: TutorEnrollmentStudentSummary[];
   editBatch: (batch: TutorBatchSummary) => void;
   archiveBatch: (batchId: string) => void;
   actionLoading: string | null;
@@ -5693,7 +5735,7 @@ function TutorSupplyPanel({
   return (
     <>
       <SectionTitle>Dashboard</SectionTitle>
-      <TutorSupplyDashboard supply={supply} classes={classes} requests={requests} onOpen={openDashboardTarget} />
+      <TutorSupplyDashboard supply={supply} classes={classes} requests={requests} enrollmentStudents={enrollmentStudents} onOpen={openDashboardTarget} />
       <Button role={role} label="Create New Batch" onPress={openBatchCreate} disabled={!programs.length} />
 
       <SectionTitle>Batches</SectionTitle>
