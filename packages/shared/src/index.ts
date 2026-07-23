@@ -6,6 +6,69 @@ export type ResourceType = "video" | "article" | "flashcard" | "quiz";
 
 export type ConsentDocumentType = "pdf" | "url";
 
+export type ConversationType = "direct_student_educator" | "direct_student_student" | "batch_group" | "batch_announcement";
+
+export type MessageStatus = "sent" | "deleted" | "hidden";
+
+export interface ChatParticipantSummary {
+  id: string;
+  userId: string;
+  profileId: string;
+  role: Role;
+  name: string;
+  initials: string;
+  avatarUrl?: string | null;
+  canRead: boolean;
+  canWrite: boolean;
+  lastReadAt?: string | null;
+}
+
+export interface ChatAttachmentSummary {
+  id: string;
+  kind: string;
+  fileName?: string | null;
+  assetPath: string;
+  fileUrl?: string | null;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
+}
+
+export interface ChatMessageSummary {
+  id: string;
+  conversationId: string;
+  organizationId?: string | null;
+  senderUserId: string;
+  senderProfileId: string;
+  role: Role;
+  senderName: string;
+  body: string;
+  status: MessageStatus;
+  attachments: ChatAttachmentSummary[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatConversationSummary {
+  id: string;
+  organizationId?: string | null;
+  type: ConversationType;
+  batchId?: string | null;
+  title: string;
+  subtitle?: string | null;
+  status: string;
+  canWrite: boolean;
+  unreadCount: number;
+  participantCount: number;
+  participants: ChatParticipantSummary[];
+  lastMessage?: ChatMessageSummary | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatConversationDetail extends ChatConversationSummary {
+  messages: ChatMessageSummary[];
+}
+
 export interface ConsentDocumentSummary {
   id: string;
   key: string;
@@ -298,7 +361,7 @@ export interface LearnerProgressSummary {
 }
 
 export interface TutorEnrollmentStudentSummary {
-  student: { id: string; name: string; city: string | null };
+  student: { id: string; userId?: string | null; name: string; city: string | null };
   enrollmentCount: number;
   batchCount: number;
   paidEnrollmentCount: number;
@@ -321,7 +384,7 @@ export interface TutorStudentEnrollmentDetail {
 }
 
 export interface TutorEnrollmentStudentDetail {
-  student: { id: string; name: string; city: string | null };
+  student: { id: string; userId?: string | null; name: string; city: string | null };
   enrollments: TutorStudentEnrollmentDetail[];
   progress: LearnerProgressSummary | null;
   activityTimeline: ActivityTimelineItem[];
@@ -713,10 +776,12 @@ export interface BatchClass {
   classroomLocation: string | null;
   onlineVideoLink: string | null;
   startsAt: string;
+  tutorProfileId?: string | null;
+  tutorUserId?: string | null;
   tutorName: string;
   tutorHeadline: string;
   tutorRating: number;
-  enrolledStudents?: Array<{ id: string; name: string; city: string | null }>;
+  enrolledStudents?: Array<{ id: string; userId?: string | null; name: string; city: string | null }>;
   pendingRequests?: number;
 }
 

@@ -7,10 +7,11 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
+import { Client as PgClient } from "pg";
 import type { Prisma } from "@prisma/client";
 import { featureFlags, isFeatureEnabled, paletteConfig, roleThemes } from "@mytution/config";
 import { prisma } from "@mytution/db";
-import type { CommunityReactionType, ConsentAssignmentActor, ConsentAssignmentSummary, ConsentDocumentSummary, ConsentEffectivePermissionsResponse, ConsentRequirementResponse, CurriculumCatalogueResponse, CurriculumSelection, MarketplaceBatchRecommendation, MarketplaceProgramRecommendation, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
+import type { ChatConversationSummary, ChatMessageSummary, ChatParticipantSummary, CommunityReactionType, ConsentAssignmentActor, ConsentAssignmentSummary, ConsentDocumentSummary, ConsentEffectivePermissionsResponse, ConsentRequirementResponse, ConversationType, CurriculumCatalogueResponse, CurriculumSelection, MarketplaceBatchRecommendation, MarketplaceProgramRecommendation, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
 
 const app = express();
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
@@ -31,6 +32,24 @@ const maxMaterialUploadBytes = Number(process.env.AMS_MAX_MATERIAL_UPLOAD_BYTES 
 const allowedAssetExtensions = new Set([".svg", ".png", ".jpg", ".jpeg", ".webp", ".vtt", ".md", ".json", ".mp4", ".pdf"]);
 
 let curriculumCatalogueCache: CurriculumCatalogueResponse | null = null;
+
+type ChatLiveEvent = {
+  type: "chat.message.created" | "chat.conversation.read";
+  conversationId: string;
+  messageId?: string;
+  senderProfileId?: string;
+  recipientProfileIds?: string[];
+  profileIds?: string[];
+  createdAt: string;
+};
+
+type ChatSseClient = {
+  id: string;
+  profileId: string;
+  send: (event: ChatLiveEvent) => void;
+};
+
+const chatSseClients = new Map<string, ChatSseClient>();
 
 type ConfigurationSetting<TValue> = {
   key: string;
@@ -2377,6 +2396,295 @@ app.post("/api/v1/parent-activation", async (req, res) => {
     priority: "normal"
   });
   res.status(201).json({ data: { id: invite.id, code: invite.code, relationship: invite.relationship, status: invite.status, expiresAt: invite.expiresAt } });
+});
+
+app.get("/api/v1/chat/conversations", async (req, res) => {
+  const role = readRole(req.query.role);
+  const profile = await requireProfile(req, res, role);
+  if (!profile) return;
+  if (role !== "parent") await ensureChatConversationsForProfile(profile, role);
+  const conversations = await prisma.conversation.findMany({
+    where: {
+      status: "active",
+      participants: { some: { profileId: profile.id, canRead: true } }
+    },
+    orderBy: { updatedAt: "desc" },
+    include: chatConversationInclude(profile.id)
+  });
+  const summaries = await Promise.all(conversations.map((conversation) => toChatConversationSummaryWithUnread(conversation, profile.id)));
+  res.json({ data: summaries });
+});
+
+app.get("/api/v1/chat/events", async (req, res) => {
+  const role = readRole(req.query.role);
+  const profile = await requireProfile(req, res, role);
+  if (!profile) return;
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+  const clientId = crypto.randomUUID();
+  const send = (event: ChatLiveEvent) => {
+    res.write(`event: ${event.type}\n`);
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+  chatSseClients.set(clientId, { id: clientId, profileId: profile.id, send });
+  send({ type: "chat.conversation.read", conversationId: "connected", profileIds: [profile.id], createdAt: new Date().toISOString() });
+  const heartbeat = setInterval(() => {
+    res.write(`event: heartbeat\n`);
+    res.write(`data: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
+  }, 25_000);
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    chatSseClients.delete(clientId);
+  });
+});
+
+app.post("/api/v1/chat/conversations", async (req, res) => {
+  const role = readRole(req.body.role ?? req.query.role);
+  const profile = await requireProfile(req, res, role);
+  if (!profile) return;
+  const type = readConversationType(req.body.type);
+  if (!type) {
+    res.status(400).json({ error: "Valid conversation type is required" });
+    return;
+  }
+  if (role === "parent") {
+    res.status(403).json({ error: "Parent chat is not enabled in this phase" });
+    return;
+  }
+
+  const conversation = type === "batch_group" || type === "batch_announcement"
+    ? await upsertBatchConversation(req, res, profile, role, type)
+    : await upsertDirectConversation(req, res, profile, role, type);
+  if (!conversation) return;
+
+  const hydrated = await prisma.conversation.findUnique({
+    where: { id: conversation.id },
+    include: chatConversationInclude(profile.id)
+  });
+  res.status(201).json({ data: hydrated ? await toChatConversationSummaryWithUnread(hydrated, profile.id) : null });
+});
+
+app.get("/api/v1/chat/conversations/:id/messages", async (req, res) => {
+  const role = readRole(req.query.role);
+  const profile = await requireProfile(req, res, role);
+  if (!profile) return;
+  const participant = await findChatParticipant(req.params.id, profile.id);
+  if (!participant?.canRead) {
+    res.status(404).json({ error: "Conversation not found" });
+    return;
+  }
+  const limit = Math.min(80, Math.max(1, Number(req.query.limit ?? 50)));
+  const cursor = stringOrNull(req.query.cursor);
+  const messages = await prisma.message.findMany({
+    where: { conversationId: req.params.id, status: "sent" },
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    take: limit,
+    orderBy: { createdAt: "desc" },
+    include: { senderProfile: true, attachments: true }
+  });
+  await markChatConversationRead(participant.id);
+  res.json({ data: messages.reverse().map(toChatMessageSummary) });
+});
+
+app.post("/api/v1/chat/conversations/:id/messages", async (req, res) => {
+  const role = readRole(req.body.role ?? req.query.role);
+  const profile = await requireProfile(req, res, role);
+  if (!profile) return;
+  const participant = await findChatParticipant(req.params.id, profile.id);
+  if (!participant?.canRead) {
+    res.status(404).json({ error: "Conversation not found" });
+    return;
+  }
+  if (!participant.canWrite) {
+    res.status(403).json({ error: "You cannot send messages in this conversation" });
+    return;
+  }
+  const body = String(req.body.body ?? "").trim();
+  if (!body) {
+    res.status(400).json({ error: "Message text is required" });
+    return;
+  }
+  const message = await prisma.$transaction(async (tx) => {
+    const created = await tx.message.create({
+      data: {
+        conversationId: req.params.id,
+        organizationId: participant.conversation.organizationId ?? null,
+        senderUserId: profile.userId,
+        senderProfileId: profile.id,
+        role,
+        body,
+        sourceTag: "app"
+      },
+      include: { senderProfile: true, attachments: true }
+    });
+    const recipients = participant.conversation.participants.filter((item) => item.profileId !== profile.id && item.canRead);
+    await Promise.all(recipients.map((item) => tx.messageReceipt.create({
+      data: {
+        messageId: created.id,
+        participantId: item.id,
+        userId: item.userId,
+        profileId: item.profileId,
+        deliveredAt: new Date(),
+        sourceTag: "app"
+      }
+    })));
+    await tx.conversationParticipant.update({
+      where: { id: participant.id },
+      data: { lastReadAt: new Date() }
+    });
+    await tx.conversation.update({
+      where: { id: req.params.id },
+      data: { updatedAt: new Date() }
+    });
+    return { created, recipients };
+  });
+  await notifyChatRecipients(prisma, participant.conversation, profile, message.created.body, message.recipients);
+  await publishChatLiveEvent({
+    type: "chat.message.created",
+    conversationId: req.params.id,
+    messageId: message.created.id,
+    senderProfileId: profile.id,
+    recipientProfileIds: message.recipients.map((recipient) => recipient.profileId),
+    profileIds: [profile.id, ...message.recipients.map((recipient) => recipient.profileId)],
+    createdAt: message.created.createdAt.toISOString()
+  });
+  res.status(201).json({ data: toChatMessageSummary(message.created) });
+});
+
+app.post("/api/v1/chat/conversations/:id/attachments", express.raw({ type: "*/*", limit: maxMaterialUploadBytes }), async (req, res) => {
+  const role = readRole(req.query.role);
+  const profile = await requireProfile(req, res, role);
+  if (!profile) return;
+  const participant = await findChatParticipant(req.params.id, profile.id);
+  if (!participant?.canRead) {
+    res.status(404).json({ error: "Conversation not found" });
+    return;
+  }
+  if (!participant.canWrite) {
+    res.status(403).json({ error: "You cannot send attachments in this conversation" });
+    return;
+  }
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    res.status(400).json({ error: "Attachment file is required" });
+    return;
+  }
+  const contentType = String(req.header("content-type") ?? "application/octet-stream");
+  const fileName = safeAssetFileName(req.query.fileName, extensionForContentType(contentType));
+  const kind = normalizeChatAttachmentKind(contentType, fileName);
+  const namespace = await chatStorageNamespace(participant.conversation);
+  const relativePath = path.join("private", namespace, "chat", req.params.id, `${Date.now()}-${fileName}`);
+  const fullPath = path.resolve(assetsRoot, relativePath);
+  if (!fullPath.startsWith(assetsRoot)) {
+    res.status(400).json({ error: "Invalid attachment path" });
+    return;
+  }
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, req.body);
+  const assetPath = `services/api/assets/${relativePath.split(path.sep).join("/")}`;
+  const fallbackBody = kind === "image" ? "Image attachment" : kind === "document" ? "Document attachment" : "Attachment";
+  const body = stringOrNull(req.query.body) ?? fallbackBody;
+  const message = await prisma.$transaction(async (tx) => {
+    const created = await tx.message.create({
+      data: {
+        conversationId: req.params.id,
+        organizationId: participant.conversation.organizationId ?? null,
+        senderUserId: profile.userId,
+        senderProfileId: profile.id,
+        role,
+        body,
+        sourceTag: "app",
+        attachments: {
+          create: {
+            organizationId: participant.conversation.organizationId ?? null,
+            kind,
+            fileName,
+            assetPath,
+            mimeType: contentType,
+            sizeBytes: req.body.length,
+            sourceTag: "app"
+          }
+        }
+      },
+      include: { senderProfile: true, attachments: true }
+    });
+    const recipients = participant.conversation.participants.filter((item) => item.profileId !== profile.id && item.canRead);
+    await Promise.all(recipients.map((item) => tx.messageReceipt.create({
+      data: {
+        messageId: created.id,
+        participantId: item.id,
+        userId: item.userId,
+        profileId: item.profileId,
+        deliveredAt: new Date(),
+        sourceTag: "app"
+      }
+    })));
+    await tx.conversationParticipant.update({ where: { id: participant.id }, data: { lastReadAt: new Date() } });
+    await tx.conversation.update({ where: { id: req.params.id }, data: { updatedAt: new Date() } });
+    return { created, recipients };
+  });
+  await notifyChatRecipients(prisma, participant.conversation, profile, message.created.body, message.recipients);
+  await publishChatLiveEvent({
+    type: "chat.message.created",
+    conversationId: req.params.id,
+    messageId: message.created.id,
+    senderProfileId: profile.id,
+    recipientProfileIds: message.recipients.map((recipient) => recipient.profileId),
+    profileIds: [profile.id, ...message.recipients.map((recipient) => recipient.profileId)],
+    createdAt: message.created.createdAt.toISOString()
+  });
+  res.status(201).json({ data: toChatMessageSummary(message.created) });
+});
+
+app.get("/api/v1/chat/attachments/:id/file", async (req, res) => {
+  const role = readRole(req.query.role);
+  const profile = await requireProfile(req, res, role);
+  if (!profile) return;
+  const attachment = await prisma.messageAttachment.findUnique({
+    where: { id: req.params.id },
+    include: {
+      message: {
+        include: {
+          conversation: {
+            include: { participants: true }
+          }
+        }
+      }
+    }
+  });
+  const canRead = attachment?.message.conversation.participants.some((participant) => participant.profileId === profile.id && participant.canRead);
+  if (!attachment || !canRead) {
+    res.status(404).json({ error: "Attachment not found" });
+    return;
+  }
+  const relativeAssetPath = attachment.assetPath.replace(/^services\/api\/assets\//, "");
+  const fullPath = path.resolve(assetsRoot, relativeAssetPath);
+  if (!fullPath.startsWith(assetsRoot) || !fs.existsSync(fullPath)) {
+    res.status(404).json({ error: "Attachment file not found" });
+    return;
+  }
+  if (attachment.mimeType) res.type(attachment.mimeType);
+  res.sendFile(fullPath);
+});
+
+app.post("/api/v1/chat/conversations/:id/read", async (req, res) => {
+  const role = readRole(req.body.role ?? req.query.role);
+  const profile = await requireProfile(req, res, role);
+  if (!profile) return;
+  const participant = await findChatParticipant(req.params.id, profile.id);
+  if (!participant?.canRead) {
+    res.status(404).json({ error: "Conversation not found" });
+    return;
+  }
+  await markChatConversationRead(participant.id);
+  await publishChatLiveEvent({
+    type: "chat.conversation.read",
+    conversationId: req.params.id,
+    profileIds: [profile.id],
+    createdAt: new Date().toISOString()
+  });
+  res.json({ data: { read: true } });
 });
 
 app.get("/api/v1/bootstrap", async (req, res) => {
@@ -4798,6 +5106,414 @@ app.post("/api/v1/payments/orders/:id/refund", async (req, res) => {
   res.json({ data: { order: toPaymentOrderSummary(refunded), message: "Refund placeholder recorded. Gateway refund integration will process this later." } });
 });
 
+function readConversationType(input: unknown): ConversationType | null {
+  const value = String(input ?? "");
+  return value === "direct_student_educator" || value === "direct_student_student" || value === "batch_group" || value === "batch_announcement" ? value : null;
+}
+
+function chatConversationInclude(currentProfileId: string) {
+  return {
+    batch: { include: { tutorProfile: { include: { profile: true } } } },
+    participants: { include: { profile: true }, orderBy: { createdAt: "asc" as const } },
+    messages: {
+      where: { status: "sent" as const },
+      orderBy: { createdAt: "desc" as const },
+      take: 1,
+      include: { senderProfile: true, attachments: true }
+    },
+    _count: {
+      select: {
+        participants: true,
+        messages: { where: { status: "sent" as const, senderProfileId: { not: currentProfileId } } }
+      }
+    }
+  };
+}
+
+function profileDisplayName(profile: any) {
+  return `${profile?.firstName ?? ""} ${profile?.lastName ?? ""}`.trim() || "myTutor user";
+}
+
+function profileInitials(profile: any) {
+  const first = String(profile?.firstName ?? "").charAt(0);
+  const last = String(profile?.lastName ?? "").charAt(0);
+  return `${first}${last}`.toUpperCase() || "MT";
+}
+
+function toChatParticipantSummary(item: any): ChatParticipantSummary {
+  return {
+    id: item.id,
+    userId: item.userId,
+    profileId: item.profileId,
+    role: item.role,
+    name: profileDisplayName(item.profile),
+    initials: profileInitials(item.profile),
+    avatarUrl: item.profile?.avatarUrl ?? null,
+    canRead: item.canRead,
+    canWrite: item.canWrite,
+    lastReadAt: item.lastReadAt ? item.lastReadAt.toISOString() : null
+  };
+}
+
+function toChatMessageSummary(item: any): ChatMessageSummary {
+  return {
+    id: item.id,
+    conversationId: item.conversationId,
+    organizationId: item.organizationId ?? null,
+    senderUserId: item.senderUserId,
+    senderProfileId: item.senderProfileId,
+    role: item.role,
+    senderName: profileDisplayName(item.senderProfile),
+    body: item.status === "sent" ? item.body : "",
+    status: item.status,
+    attachments: (item.attachments ?? []).map((attachment: any) => ({
+      id: attachment.id,
+      kind: attachment.kind,
+      fileName: attachment.fileName ?? null,
+      assetPath: attachment.assetPath,
+      fileUrl: `/api/v1/chat/attachments/${attachment.id}/file`,
+      mimeType: attachment.mimeType ?? null,
+      sizeBytes: attachment.sizeBytes ?? null
+    })),
+    createdAt: item.createdAt.toISOString(),
+    updatedAt: item.updatedAt.toISOString()
+  };
+}
+
+function normalizeChatAttachmentKind(contentType: string, fileName: string) {
+  const normalized = contentType.toLowerCase();
+  const extension = path.extname(fileName).toLowerCase();
+  if (normalized.startsWith("image/") || [".png", ".jpg", ".jpeg", ".webp"].includes(extension)) return "image";
+  if (normalized.includes("pdf") || [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".txt", ".md"].includes(extension)) return "document";
+  if (normalized.startsWith("video/") || [".mp4", ".mov", ".webm"].includes(extension)) return "video";
+  return "file";
+}
+
+async function chatStorageNamespace(conversation: any) {
+  if (conversation.organizationId) {
+    const organization = await prisma.organization.findUnique({ where: { id: conversation.organizationId }, select: { bucketNamespace: true } });
+    if (organization?.bucketNamespace) return organization.bucketNamespace;
+  }
+  return `chat-${conversation.id}`;
+}
+
+function conversationTitle(item: any, currentProfileId: string) {
+  if (item.title) return item.title;
+  if (item.type === "batch_group") return item.batch?.title ? `${item.batch.title} chat` : "Batch chat";
+  if (item.type === "batch_announcement") return item.batch?.title ? `${item.batch.title} announcements` : "Batch announcements";
+  const other = item.participants?.find((participant: any) => participant.profileId !== currentProfileId);
+  return other ? profileDisplayName(other.profile) : "Direct message";
+}
+
+function conversationSubtitle(item: any) {
+  if (item.type === "batch_group") return "Batch group";
+  if (item.type === "batch_announcement") return "Educator announcement";
+  if (item.type === "direct_student_student") return "Student chat";
+  return "Student and educator";
+}
+
+async function toChatConversationSummaryWithUnread(item: any, currentProfileId: string): Promise<ChatConversationSummary> {
+  const currentParticipant = item.participants?.find((participant: any) => participant.profileId === currentProfileId);
+  const lastReadAt = currentParticipant?.lastReadAt ?? new Date(0);
+  const unreadCount = await prisma.message.count({
+    where: {
+      conversationId: item.id,
+      status: "sent",
+      senderProfileId: { not: currentProfileId },
+      createdAt: { gt: lastReadAt }
+    }
+  });
+  return toChatConversationSummary(item, currentProfileId, unreadCount);
+}
+
+function toChatConversationSummary(item: any, currentProfileId: string, unreadCount = 0): ChatConversationSummary {
+  const currentParticipant = item.participants?.find((participant: any) => participant.profileId === currentProfileId);
+  return {
+    id: item.id,
+    organizationId: item.organizationId ?? null,
+    type: item.type,
+    batchId: item.batchId ?? null,
+    title: conversationTitle(item, currentProfileId),
+    subtitle: conversationSubtitle(item),
+    status: item.status,
+    canWrite: Boolean(currentParticipant?.canWrite),
+    unreadCount,
+    participantCount: item._count?.participants ?? item.participants?.length ?? 0,
+    participants: (item.participants ?? []).map(toChatParticipantSummary),
+    lastMessage: item.messages?.[0] ? toChatMessageSummary(item.messages[0]) : null,
+    createdAt: item.createdAt.toISOString(),
+    updatedAt: item.updatedAt.toISOString()
+  };
+}
+
+async function findChatParticipant(conversationId: string, profileId: string) {
+  return prisma.conversationParticipant.findUnique({
+    where: { conversationId_profileId: { conversationId, profileId } },
+    include: {
+      conversation: {
+        include: {
+          participants: { include: { profile: true } },
+          batch: true
+        }
+      }
+    }
+  });
+}
+
+async function markChatConversationRead(participantId: string) {
+  const readAt = new Date();
+  await prisma.$transaction([
+    prisma.conversationParticipant.update({
+      where: { id: participantId },
+      data: { lastReadAt: readAt }
+    }),
+    prisma.messageReceipt.updateMany({
+      where: { participantId, readAt: null },
+      data: { readAt }
+    })
+  ]);
+}
+
+function deliverChatLiveEvent(event: ChatLiveEvent) {
+  const profileIds = new Set([...(event.profileIds ?? []), ...(event.recipientProfileIds ?? []), event.senderProfileId].filter((value): value is string => Boolean(value)));
+  chatSseClients.forEach((client) => {
+    if (!profileIds.has(client.profileId)) return;
+    try {
+      client.send(event);
+    } catch {
+      chatSseClients.delete(client.id);
+    }
+  });
+}
+
+async function publishChatLiveEvent(event: ChatLiveEvent) {
+  deliverChatLiveEvent(event);
+  try {
+    await prisma.$executeRawUnsafe("SELECT pg_notify('mytution_chat', $1)", JSON.stringify(event));
+  } catch (error) {
+    console.warn("chat live notify skipped", error);
+  }
+}
+
+async function startChatPgListener() {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    console.warn("Chat live updates disabled because DATABASE_URL is not configured");
+    return;
+  }
+  const useSsl = /sslmode=require/i.test(connectionString) || process.env.PGSSLMODE === "require";
+  const client = new PgClient({
+    connectionString,
+    ...(useSsl ? { ssl: { rejectUnauthorized: false } } : {})
+  });
+  client.on("notification", (message) => {
+    if (message.channel !== "mytution_chat" || !message.payload) return;
+    try {
+      deliverChatLiveEvent(JSON.parse(message.payload) as ChatLiveEvent);
+    } catch (error) {
+      console.warn("chat live event parse failed", error);
+    }
+  });
+  client.on("error", (error) => {
+    console.warn("chat live listener error", error);
+  });
+  try {
+    await client.connect();
+    await client.query("LISTEN mytution_chat");
+    console.log("Chat live updates listening on PostgreSQL channel mytution_chat");
+  } catch (error) {
+    console.warn("Chat live updates disabled", error);
+    await client.end().catch(() => undefined);
+  }
+}
+
+async function activeBatchWithChatAccess(batchId: string, profile: any, role: Role) {
+  const accessWhere = role === "tutor"
+    ? { tutorProfile: { profileId: profile.id } }
+    : { enrollments: { some: { studentProfileId: profile.id, status: "active" as const } } };
+  return prisma.tutorBatch.findFirst({
+    where: {
+      id: batchId,
+      status: { not: "archived" },
+      ...accessWhere
+    },
+    include: {
+      tutorProfile: { include: { profile: true } },
+      enrollments: { where: { status: "active" }, include: { studentProfile: true } }
+    }
+  });
+}
+
+async function ensureChatConversationsForProfile(profile: any, role: Role) {
+  const batches = role === "tutor"
+    ? await prisma.tutorBatch.findMany({
+      where: { status: { not: "archived" }, tutorProfile: { profileId: profile.id } },
+      include: { tutorProfile: { include: { profile: true } }, enrollments: { where: { status: "active" }, include: { studentProfile: true } } }
+    })
+    : await prisma.tutorBatch.findMany({
+      where: { status: { not: "archived" }, enrollments: { some: { studentProfileId: profile.id, status: "active" } } },
+      include: { tutorProfile: { include: { profile: true } }, enrollments: { where: { status: "active" }, include: { studentProfile: true } } }
+    });
+  for (const batch of batches) {
+    await ensureBatchConversation(batch, "batch_group", null);
+    await ensureBatchConversation(batch, "batch_announcement", `${batch.title} announcements`);
+  }
+}
+
+async function ensureBatchConversation(batch: any, type: ConversationType, title: string | null) {
+  const participants = [
+    { profile: batch.tutorProfile.profile, role: "tutor" as Role, canWrite: true },
+    ...batch.enrollments.map((enrollment: any) => ({ profile: enrollment.studentProfile, role: "student" as Role, canWrite: type === "batch_group" }))
+  ];
+  const existing = await prisma.conversation.findFirst({ where: { batchId: batch.id, type, status: "active" } });
+  const conversation = existing ?? await prisma.conversation.create({
+    data: {
+      organizationId: batch.organizationId ?? null,
+      type,
+      batchId: batch.id,
+      title,
+      sourceTag: "app"
+    }
+  });
+  await Promise.all(participants.map((participant) => prisma.conversationParticipant.upsert({
+    where: { conversationId_profileId: { conversationId: conversation.id, profileId: participant.profile.id } },
+    update: { canRead: true, canWrite: participant.canWrite },
+    create: {
+      conversationId: conversation.id,
+      userId: participant.profile.userId,
+      profileId: participant.profile.id,
+      role: participant.role,
+      canRead: true,
+      canWrite: participant.canWrite,
+      sourceTag: "app"
+    }
+  })));
+  return conversation;
+}
+
+async function upsertBatchConversation(req: express.Request, res: express.Response, profile: any, role: Role, type: ConversationType) {
+  const batchId = stringOrNull(req.body.batchId);
+  if (!batchId) {
+    res.status(400).json({ error: "Batch is required" });
+    return null;
+  }
+  const batch = await activeBatchWithChatAccess(batchId, profile, role);
+  if (!batch) {
+    res.status(404).json({ error: "Batch not found" });
+    return null;
+  }
+  if (type === "batch_announcement" && role !== "tutor") {
+    res.status(403).json({ error: "Only educators can create batch announcements" });
+    return null;
+  }
+  const title = stringOrNull(req.body.title);
+  const conversation = await ensureBatchConversation(batch, type, title);
+  return title ? prisma.conversation.update({ where: { id: conversation.id }, data: { title } }) : conversation;
+}
+
+async function upsertDirectConversation(req: express.Request, res: express.Response, profile: any, role: Role, type: ConversationType) {
+  const targetProfileId = stringOrNull(req.body.targetProfileId);
+  if (!targetProfileId) {
+    res.status(400).json({ error: "Target profile is required" });
+    return null;
+  }
+  const target = await prisma.profile.findUnique({ where: { id: targetProfileId } });
+  if (!target) {
+    res.status(404).json({ error: "Target profile not found" });
+    return null;
+  }
+  if (target.id === profile.id) {
+    res.status(400).json({ error: "Cannot start a conversation with yourself" });
+    return null;
+  }
+  if (type === "direct_student_educator" && !((role === "student" && target.role === "tutor") || (role === "tutor" && target.role === "student"))) {
+    res.status(400).json({ error: "Student and educator profiles are required" });
+    return null;
+  }
+  if (type === "direct_student_student" && !(role === "student" && target.role === "student")) {
+    res.status(400).json({ error: "Student profiles are required" });
+    return null;
+  }
+  const access = await findDirectChatAccess(profile, target, type, stringOrNull(req.body.batchId));
+  if (!access) {
+    res.status(403).json({ error: "No active enrollment relationship found" });
+    return null;
+  }
+  const existing = await prisma.conversation.findFirst({
+    where: {
+      type,
+      status: "active",
+      participants: { every: { profileId: { in: [profile.id, target.id] } } }
+    },
+    include: { participants: true }
+  });
+  if (existing && existing.participants.length === 2) return existing;
+  return prisma.conversation.create({
+    data: {
+      organizationId: access.organizationId ?? null,
+      type,
+      batchId: access.batchId ?? null,
+      sourceTag: "app",
+      participants: {
+        create: [profile, target].map((participant) => ({
+          userId: participant.userId,
+          profileId: participant.id,
+          role: participant.role,
+          canRead: true,
+          canWrite: true,
+          sourceTag: "app"
+        }))
+      }
+    }
+  });
+}
+
+async function findDirectChatAccess(profile: any, target: any, type: ConversationType, batchId?: string | null) {
+  if (type === "direct_student_educator") {
+    const student = profile.role === "student" ? profile : target;
+    const tutor = profile.role === "tutor" ? profile : target;
+    const enrollment = await prisma.batchEnrollment.findFirst({
+      where: {
+        studentProfileId: student.id,
+        status: "active",
+        batch: {
+          tutorProfile: { profileId: tutor.id },
+          ...(batchId ? { id: batchId } : {})
+        }
+      },
+      select: { batchId: true, organizationId: true }
+    });
+    return enrollment;
+  }
+  const enrollment = await prisma.batchEnrollment.findFirst({
+    where: {
+      status: "active",
+      studentProfileId: profile.id,
+      batch: {
+        enrollments: { some: { studentProfileId: target.id, status: "active" } },
+        ...(batchId ? { id: batchId } : {})
+      }
+    },
+    select: { batchId: true, organizationId: true }
+  });
+  return enrollment;
+}
+
+async function notifyChatRecipients(client: any, conversation: any, sender: any, body: string, recipients: any[]) {
+  const title = conversationTitle({ ...conversation, messages: [], participants: conversation.participants }, sender.id);
+  const preview = body.length > 90 ? `${body.slice(0, 87)}...` : body;
+  await Promise.all(recipients.filter((recipient) => !recipient.mutedAt).map((recipient) => enqueueNotification(client, {
+    userId: recipient.userId,
+    profileId: recipient.profileId,
+    role: recipient.role,
+    type: "chat.message.created",
+    title,
+    body: `${profileDisplayName(sender)}: ${preview}`,
+    data: { conversationId: conversation.id, batchId: conversation.batchId ?? null },
+    priority: "normal"
+  })));
+}
+
 const notificationProvider = {
   provider: "internal",
   async registerDevice(input: { pushToken: string; platform: string; provider: string }) {
@@ -6033,11 +6749,14 @@ function toStudentClass(batch: any, enrollmentId?: string) {
     classroomLocation: batch.classroomLocation,
     onlineVideoLink: classReadyLink(batch),
     startsAt: batch.startsAt.toISOString(),
+    tutorProfileId: tutorProfile.profile.id,
+    tutorUserId: tutorProfile.profile.userId,
     tutorName: tutorProfile.profile.firstName + " " + tutorProfile.profile.lastName,
     tutorHeadline: tutorProfile.headline,
     tutorRating: tutorProfile.rating,
     enrolledStudents: batch.enrollments?.map((enrollment: any) => ({
       id: enrollment.studentProfile.id,
+      userId: enrollment.studentProfile.userId,
       name: enrollment.studentProfile.firstName + " " + enrollment.studentProfile.lastName,
       city: enrollment.studentProfile.city
     })) ?? []
@@ -6047,6 +6766,7 @@ function toStudentClass(batch: any, enrollmentId?: string) {
 function studentProfileSummary(profile: any) {
   return {
     id: profile.id,
+    userId: profile.userId,
     name: `${profile.firstName} ${profile.lastName}`.trim(),
     city: profile.city
   };
@@ -6101,6 +6821,7 @@ function toTutorBatchClass(batch: any) {
     ...toStudentClass(batch),
     enrolledStudents: batch.enrollments?.map((enrollment: any) => ({
       id: enrollment.studentProfile.id,
+      userId: enrollment.studentProfile.userId,
       name: enrollment.studentProfile.firstName + " " + enrollment.studentProfile.lastName,
       city: enrollment.studentProfile.city
     })) ?? [],
@@ -7594,6 +8315,7 @@ process.on("uncaughtException", (error) => {
 
 app.listen(port, () => {
   console.log(`myTution API running on http://localhost:${port}`);
+  void startChatPgListener();
   void (async () => {
     await ensureParentStudentFixture();
   })().catch((error) => {

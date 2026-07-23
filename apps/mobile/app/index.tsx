@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { ActivityTimelineItem, BatchClass, BatchRequestSummary, CommunityComment, CommunityThread, ConsentDocumentSummary, ConsentRequirementResponse, CurriculumCatalogueResponse, CurriculumSelection, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, NotificationSummary, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorEnrollmentStudentDetail, TutorEnrollmentStudentSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
+import type { ActivityTimelineItem, BatchClass, BatchRequestSummary, ChatConversationSummary, ChatMessageSummary, ConversationType, ConsentDocumentSummary, ConsentRequirementResponse, CurriculumCatalogueResponse, CurriculumSelection, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, NotificationSummary, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorEnrollmentStudentDetail, TutorEnrollmentStudentSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -15,6 +15,7 @@ import {
   Animated,
   AppState,
   Image,
+  Linking,
   Modal,
   PanResponder,
   Pressable,
@@ -32,8 +33,8 @@ import AccountActiveIcon from "../assets/nav/Account_active.svg";
 import AccountInactiveIcon from "../assets/nav/Account_inactive.svg";
 import ClassActiveIcon from "../assets/nav/class_active.svg";
 import ClassInactiveIcon from "../assets/nav/class_inactive.svg";
-import CommunityActiveIcon from "../assets/nav/Community_active.svg";
-import CommunityInactiveIcon from "../assets/nav/Community_inactive.svg";
+import MessagesActiveIcon from "../assets/nav/Community_active.svg";
+import MessagesInactiveIcon from "../assets/nav/Community_inactive.svg";
 import HomeActiveIcon from "../assets/nav/Home_active.svg";
 import HomeInactiveIcon from "../assets/nav/Home_inactive.svg";
 import MilesActiveIcon from "../assets/nav/myMiles_active.svg";
@@ -332,6 +333,12 @@ function compactInitials(name: string) {
   return `${first}${second}`.toUpperCase() || "ST";
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function Index() {
   const [role, setRole] = useState<Role>("student");
   const [screen, setScreen] = useState<AppScreen>("role");
@@ -402,7 +409,6 @@ export default function Index() {
   const [programPreparing, setProgramPreparing] = useState(false);
   const [pendingProgramId, setPendingProgramId] = useState<string | null>(null);
   const [programRefreshKey, setProgramRefreshKey] = useState(0);
-  const [communityRefreshKey, setCommunityRefreshKey] = useState(0);
   const [programToast, setProgramToast] = useState("");
   const [programMenuOpen, setProgramMenuOpen] = useState(false);
   const [programArchiveModalVisible, setProgramArchiveModalVisible] = useState(false);
@@ -412,6 +418,11 @@ export default function Index() {
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [notifications, setNotifications] = useState<NotificationSummary[]>([]);
+  const [chatConversations, setChatConversations] = useState<ChatConversationSummary[]>([]);
+  const [selectedChatConversation, setSelectedChatConversation] = useState<ChatConversationSummary | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessageSummary[]>([]);
+  const [chatDraft, setChatDraft] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
   const [reminderTitle, setReminderTitle] = useState("Math revision reminder");
   const [reminderDate, setReminderDate] = useState("24/06/2026");
   const [reminderTime, setReminderTime] = useState("06:30 PM");
@@ -992,6 +1003,44 @@ export default function Index() {
     };
   }, [role, authSession?.accessToken, selectedProgramId, programRefreshKey, pendingProgramId, screen, apiRetryKey]);
 
+  useEffect(() => {
+    if (screen === "chat" && authSession?.accessToken) {
+      void refreshChatConversations();
+    }
+  }, [screen, role, authSession?.accessToken]);
+
+  useEffect(() => {
+    if (screen !== "chat" || !authSession?.accessToken) return undefined;
+    let closed = false;
+    let pollingTimer: ReturnType<typeof setInterval> | null = null;
+    const refreshChatLiveState = () => {
+      if (closed) return;
+      void refreshChatConversations();
+      if (selectedChatConversation) void openChatConversation(selectedChatConversation);
+    };
+    const EventSourceCtor = (globalThis as typeof globalThis & { EventSource?: new (url: string) => { addEventListener: (type: string, listener: (event: { data: string }) => void) => void; close: () => void; onerror?: () => void } }).EventSource;
+    if (EventSourceCtor) {
+      const params = new URLSearchParams({ role, accessToken: authSession.accessToken });
+      const source = new EventSourceCtor(`${appConfig.apiBaseUrl}/api/v1/chat/events?${params.toString()}`);
+      source.addEventListener("chat.message.created", refreshChatLiveState);
+      source.addEventListener("chat.conversation.read", refreshChatLiveState);
+      source.onerror = () => {
+        source.close();
+        if (!closed && !pollingTimer) pollingTimer = setInterval(refreshChatLiveState, 10_000);
+      };
+      return () => {
+        closed = true;
+        source.close();
+        if (pollingTimer) clearInterval(pollingTimer);
+      };
+    }
+    pollingTimer = setInterval(refreshChatLiveState, 10_000);
+    return () => {
+      closed = true;
+      if (pollingTimer) clearInterval(pollingTimer);
+    };
+  }, [screen, role, authSession?.accessToken, selectedChatConversation?.id]);
+
   async function pickAvatar() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -1123,6 +1172,123 @@ export default function Index() {
     }
   }
 
+  async function refreshChatConversations() {
+    if (!authSession?.accessToken) return;
+    setChatLoading(true);
+    try {
+      const response = await apiGet<{ data: ChatConversationSummary[] }>(`/api/v1/chat/conversations?role=${role}`, authSession.accessToken);
+      setChatConversations(response.data);
+      if (selectedChatConversation) {
+        const updatedSelected = response.data.find((conversation) => conversation.id === selectedChatConversation.id) ?? null;
+        setSelectedChatConversation(updatedSelected);
+      }
+      setApiNotice("");
+    } catch {
+      setChatConversations([]);
+      setApiNotice("Messages could not be loaded from API.");
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
+  async function openChatConversation(conversation: ChatConversationSummary) {
+    if (!authSession?.accessToken) return;
+    setSelectedChatConversation(conversation);
+    setChatLoading(true);
+    try {
+      const response = await apiGet<{ data: ChatMessageSummary[] }>(`/api/v1/chat/conversations/${conversation.id}/messages?role=${role}`, authSession.accessToken);
+      setChatMessages(response.data);
+      setChatConversations((items) => items.map((item) => item.id === conversation.id ? { ...item, unreadCount: 0 } : item));
+      const conversationsResponse = await apiGet<{ data: ChatConversationSummary[] }>(`/api/v1/chat/conversations?role=${role}`, authSession.accessToken);
+      setChatConversations(conversationsResponse.data);
+      setSelectedChatConversation(conversationsResponse.data.find((item) => item.id === conversation.id) ?? conversation);
+    } catch {
+      setChatMessages([]);
+      setApiNotice("This conversation could not be opened.");
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
+  async function sendChatMessage() {
+    if (!authSession?.accessToken || !selectedChatConversation || !chatDraft.trim()) return;
+    const body = chatDraft.trim();
+    setLoadingAction("sendChat");
+    setChatDraft("");
+    try {
+      const response = await apiPost<{ data: ChatMessageSummary }>(`/api/v1/chat/conversations/${selectedChatConversation.id}/messages`, { role, body }, authSession.accessToken);
+      setChatMessages((items) => [...items, response.data]);
+      await refreshChatConversations();
+    } catch {
+      setChatDraft(body);
+      setApiNotice("Message could not be sent.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function attachChatFile() {
+    if (!authSession?.accessToken || !selectedChatConversation?.canWrite) return;
+    const result = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false
+    });
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    if (!asset?.uri) return;
+    setLoadingAction("attachChat");
+    try {
+      const uploaded = await apiUploadChatAttachment(
+        selectedChatConversation.id,
+        role,
+        asset.uri,
+        authSession.accessToken,
+        asset.name,
+        asset.mimeType
+      );
+      setChatMessages((items) => [...items, uploaded]);
+      await refreshChatConversations();
+    } catch {
+      setApiNotice("Attachment could not be sent.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function openBatchConversation(batchId: string, type: Extract<ConversationType, "batch_group" | "batch_announcement">, title?: string | null) {
+    if (!authSession?.accessToken) return;
+    setLoadingAction(`openChat:${type}:${batchId}`);
+    try {
+      const response = await apiPost<{ data: ChatConversationSummary }>("/api/v1/chat/conversations", { role, type, batchId, title }, authSession.accessToken);
+      if (response.data) {
+        setScreen("chat");
+        await openChatConversation(response.data);
+        await refreshChatConversations();
+      }
+    } catch {
+      setApiNotice("Conversation could not be opened.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function openDirectConversation(targetProfileId: string, type: Extract<ConversationType, "direct_student_educator" | "direct_student_student">, batchId?: string | null) {
+    if (!authSession?.accessToken) return;
+    setLoadingAction(`openChat:${type}:${targetProfileId}`);
+    try {
+      const response = await apiPost<{ data: ChatConversationSummary }>("/api/v1/chat/conversations", { role, type, targetProfileId, batchId }, authSession.accessToken);
+      if (response.data) {
+        setScreen("chat");
+        await openChatConversation(response.data);
+        await refreshChatConversations();
+      }
+    } catch {
+      setApiNotice("Conversation could not be opened.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
   async function refreshBatchRequests() {
     setClassHubLoading(true);
     try {
@@ -1171,7 +1337,7 @@ export default function Index() {
       } else if (screen === "sessions") {
         await refreshProgramDataFromApi();
       } else if (screen === "chat") {
-        setCommunityRefreshKey((value) => value + 1);
+        await refreshChatConversations();
       } else if (role === "tutor") {
         await Promise.all([
           refreshTutorSupply(),
@@ -2286,15 +2452,33 @@ export default function Index() {
     }
 
     if (screen === "batchCreate") return <TutorBatchFormScreen role={role} supply={tutorSupply} batchDraft={tutorBatchDraft} setBatchDraft={setTutorBatchDraft} saveBatch={saveTutorBatch} actionLoading={loadingAction} back={() => setScreen("roleHub")} />;
-    if (screen === "tutorBatches") return <TutorBatchListScreen role={role} supply={tutorSupply} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} actionLoading={loadingAction} back={() => setScreen("roleHub")} />;
+    if (screen === "tutorBatches") return <TutorBatchListScreen role={role} supply={tutorSupply} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} actionLoading={loadingAction} openBatchConversation={openBatchConversation} back={() => setScreen("roleHub")} />;
     if (screen === "tutorRequests") return <TutorBatchRequestsScreen role={role} requests={batchRequests} approveRequest={approveBatchRequest} requestAction={actOnBatchRequest} actionLoading={loadingAction} back={() => setScreen("roleHub")} />;
     if (screen === "tutorEnrollments") return <TutorEnrollmentListScreen role={role} students={tutorEnrollmentStudents} openStudent={(student) => { setSelectedTutorStudent(student); setScreen("tutorStudentDetail"); }} back={() => setScreen("roleHub")} />;
-    if (screen === "tutorStudentDetail" && selectedTutorStudent) return <TutorStudentDetailScreen role={role} student={selectedTutorStudent} accessToken={authSession?.accessToken} back={() => setScreen("tutorEnrollments")} />;
+    if (screen === "tutorStudentDetail" && selectedTutorStudent) return <TutorStudentDetailScreen role={role} student={selectedTutorStudent} accessToken={authSession?.accessToken} openDirectConversation={openDirectConversation} back={() => setScreen("tutorEnrollments")} />;
     if (screen === "search" && role === "student") return <TutorDiscovery role={role} tutors={tutorResults} marketplaceTarget={marketplaceTarget} clearTargetTutor={() => setMarketplaceTarget(null)} options={tutorFilterOptions} loading={tutorSearchLoading} requestBatch={requestBatch} addTutorProgram={addTutorProgramToStudent} requestProgramPurchase={requestProgramPurchase} requestLoading={loadingAction} search={refreshTutorSearch} back={() => { setMarketplaceTarget(null); setScreen("home"); }} />;
     if (screen === "search") return <SimpleScreen title="Tutor leads" role={role} back={() => setScreen("home")} />;
     if (screen === "payments") return <Payments role={role} accessToken={authSession?.accessToken} back={() => setScreen("account")} />;
-    if (screen === "roleHub") return <RoleHub role={role} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} tutorEnrollmentStudents={tutorEnrollmentStudents} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} openBatchCreate={startNewTutorBatch} openDashboardTarget={openTutorDashboardTile} />;
-    if (screen === "chat") return <Chat role={role} accessToken={authSession?.accessToken} refreshKey={communityRefreshKey} back={() => setScreen("home")} />;
+    if (screen === "roleHub") return <RoleHub role={role} currentProfileId={identityContext?.activeProfile?.id ?? null} classes={batchClasses} requests={batchRequests} learnerProgress={learnerProgress} loading={classHubLoading} actionLoading={loadingAction} back={() => setScreen("home")} tutorSupply={tutorSupply} tutorEnrollmentStudents={tutorEnrollmentStudents} editBatch={editTutorBatch} archiveBatch={archiveTutorBatch} openBatchCreate={startNewTutorBatch} openDashboardTarget={openTutorDashboardTile} openBatchConversation={openBatchConversation} openDirectConversation={openDirectConversation} />;
+    if (screen === "chat") return <Messages
+      role={role}
+      conversations={chatConversations}
+      selectedConversation={selectedChatConversation}
+      messages={chatMessages}
+      draft={chatDraft}
+      loading={chatLoading}
+      sending={loadingAction === "sendChat"}
+      attaching={loadingAction === "attachChat"}
+      currentProfileId={identityContext?.activeProfile?.id ?? null}
+      accessToken={authSession?.accessToken ?? null}
+      setDraft={setChatDraft}
+      openConversation={openChatConversation}
+      closeConversation={() => { setSelectedChatConversation(null); setChatMessages([]); }}
+      sendMessage={sendChatMessage}
+      attachFile={attachChatFile}
+      refresh={refreshChatConversations}
+      back={() => setScreen("home")}
+    />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} onEditProfile={() => {
       const profile = identityContext?.activeProfile;
       if (profile) {
@@ -3746,6 +3930,21 @@ function amsFileUrl(pathValue?: string | null) {
     return `${appConfig.apiBaseUrl}/api/v1/ams/files/${pathValue.replace(/^services\/api\/assets\//, "")}`;
   }
   return `${appConfig.apiBaseUrl}${pathValue}`;
+}
+
+function chatAttachmentUrl(fileUrl: string | null | undefined, role: Role, accessToken?: string | null) {
+  if (!fileUrl) return "";
+  const base = /^https?:\/\//.test(fileUrl) ? fileUrl : `${appConfig.apiBaseUrl}${fileUrl}`;
+  const separator = base.includes("?") ? "&" : "?";
+  const params = new URLSearchParams({ role });
+  if (accessToken) params.set("accessToken", accessToken);
+  return `${base}${separator}${params.toString()}`;
+}
+
+function isImageAttachment(attachment: { kind: string; mimeType?: string | null; fileName?: string | null }) {
+  const mimeType = String(attachment.mimeType ?? "").toLowerCase();
+  const fileName = String(attachment.fileName ?? "").toLowerCase();
+  return attachment.kind === "image" || mimeType.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(fileName);
 }
 
 function parseTimestamp(value: string) {
@@ -5399,6 +5598,7 @@ function FilterDropdown({ label, value, options, onSelect }: { label: string; va
 
 function RoleHub({
   role,
+  currentProfileId,
   classes,
   requests,
   learnerProgress,
@@ -5410,9 +5610,12 @@ function RoleHub({
   editBatch,
   archiveBatch,
   openBatchCreate,
-  openDashboardTarget
+  openDashboardTarget,
+  openBatchConversation,
+  openDirectConversation
 }: {
   role: Role;
+  currentProfileId: string | null;
   classes: BatchClass[];
   requests: BatchRequestSummary[];
   learnerProgress: LearnerProgressSummary[];
@@ -5425,14 +5628,16 @@ function RoleHub({
   archiveBatch: (batchId: string) => void;
   openBatchCreate: () => void;
   openDashboardTarget: (target: TutorDashboardTarget) => void;
+  openBatchConversation: (batchId: string, type: Extract<ConversationType, "batch_group" | "batch_announcement">, title?: string | null) => void;
+  openDirectConversation: (targetProfileId: string, type: Extract<ConversationType, "direct_student_educator" | "direct_student_student">, batchId?: string | null) => void;
 }) {
   const title = role === "tutor" ? "My Batches and Leads" : role === "student" ? "Classes" : "Child classes";
   const [selectedRosterClass, setSelectedRosterClass] = useState<BatchClass | null>(null);
   if (role === "tutor" && selectedRosterClass) {
-    return <ClassRoster role={role} item={selectedRosterClass} learnerProgress={learnerProgress} back={() => setSelectedRosterClass(null)} />;
+    return <ClassRoster role={role} item={selectedRosterClass} learnerProgress={learnerProgress} openBatchConversation={openBatchConversation} openDirectConversation={openDirectConversation} back={() => setSelectedRosterClass(null)} />;
   }
   if (role === "student" && selectedRosterClass) {
-    return <StudentClassDetail role={role} item={selectedRosterClass} requests={requests.filter((request) => request.batch.batchId === selectedRosterClass.batchId)} back={() => setSelectedRosterClass(null)} />;
+    return <StudentClassDetail role={role} currentProfileId={currentProfileId} item={selectedRosterClass} requests={requests.filter((request) => request.batch.batchId === selectedRosterClass.batchId)} openBatchConversation={openBatchConversation} openDirectConversation={openDirectConversation} back={() => setSelectedRosterClass(null)} />;
   }
   if (role === "parent" && selectedRosterClass) {
     return <StudentClassDetail role={role} item={selectedRosterClass} requests={[]} back={() => setSelectedRosterClass(null)} />;
@@ -5463,6 +5668,7 @@ function RoleHub({
           actionLoading={actionLoading}
           openBatchCreate={openBatchCreate}
           openDashboardTarget={openDashboardTarget}
+          openBatchConversation={openBatchConversation}
         />
       </>
     );
@@ -5527,7 +5733,7 @@ function TutorSupplyDashboard({ supply, classes, requests, enrollmentStudents, o
   );
 }
 
-function TutorBatchListScreen({ role, supply, editBatch, archiveBatch, actionLoading, back }: { role: Role; supply: TutorSupplyState | null; editBatch: (batch: TutorBatchSummary) => void; archiveBatch: (batchId: string) => void; actionLoading: string | null; back: () => void }) {
+function TutorBatchListScreen({ role, supply, editBatch, archiveBatch, actionLoading, openBatchConversation, back }: { role: Role; supply: TutorSupplyState | null; editBatch: (batch: TutorBatchSummary) => void; archiveBatch: (batchId: string) => void; actionLoading: string | null; openBatchConversation: (batchId: string, type: Extract<ConversationType, "batch_group" | "batch_announcement">, title?: string | null) => void; back: () => void }) {
   const batches = sortedTutorBatches(supply?.batches ?? []);
   return (
     <>
@@ -5545,6 +5751,10 @@ function TutorBatchListScreen({ role, supply, editBatch, archiveBatch, actionLoa
           <View style={styles.supplyActionRow}>
             <Button role={role} variant="secondary" label="Edit" onPress={() => editBatch(batch)} />
             <Button role={role} variant="secondary" label="Archive" onPress={() => archiveBatch(batch.id)} loading={actionLoading === "archiveTutorBatch:" + batch.id} />
+          </View>
+          <View style={styles.supplyActionRow}>
+            <Button role={role} label="Batch chat" onPress={() => openBatchConversation(batch.id, "batch_group")} loading={actionLoading === `openChat:batch_group:${batch.id}`} />
+            <Button role={role} variant="secondary" label="Announcements" onPress={() => openBatchConversation(batch.id, "batch_announcement", `${batch.title} announcements`)} loading={actionLoading === `openChat:batch_announcement:${batch.id}`} />
           </View>
         </View>
       ))}
@@ -5587,7 +5797,7 @@ function TutorEnrollmentListScreen({ role, students, openStudent, back }: { role
   );
 }
 
-function TutorStudentDetailScreen({ role, student, accessToken, back }: { role: Role; student: TutorEnrollmentStudentSummary; accessToken?: string; back: () => void }) {
+function TutorStudentDetailScreen({ role, student, accessToken, openDirectConversation, back }: { role: Role; student: TutorEnrollmentStudentSummary; accessToken?: string; openDirectConversation: (targetProfileId: string, type: Extract<ConversationType, "direct_student_educator" | "direct_student_student">, batchId?: string | null) => void; back: () => void }) {
   const [detail, setDetail] = useState<TutorEnrollmentStudentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   useEffect(() => {
@@ -5619,6 +5829,7 @@ function TutorStudentDetailScreen({ role, student, accessToken, back }: { role: 
         <Text style={styles.classMeta}>{student.student.city ?? "City not added"}</Text>
         <Text style={styles.classRosterCount}>{student.enrollmentCount} active enrollment{student.enrollmentCount === 1 ? "" : "s"} • {student.modes.join(", ") || "Mode not added"}</Text>
       </View>
+      <Button role={role} label="Message student" onPress={() => openDirectConversation(student.student.id, "direct_student_educator", enrollments[0]?.batch.batchId ?? null)} />
       {detailLoading ? <ActivityIndicator /> : null}
       <SectionTitle>Enrollments</SectionTitle>
       {enrollments.map((item) => <TutorStudentEnrollmentCard key={item.id} enrollment={item} />)}
@@ -5717,7 +5928,8 @@ function TutorSupplyPanel({
   archiveBatch,
   actionLoading,
   openBatchCreate,
-  openDashboardTarget
+  openDashboardTarget,
+  openBatchConversation
 }: {
   role: Role;
   supply: TutorSupplyState | null;
@@ -5729,6 +5941,7 @@ function TutorSupplyPanel({
   actionLoading: string | null;
   openBatchCreate: () => void;
   openDashboardTarget: (target: TutorDashboardTarget) => void;
+  openBatchConversation: (batchId: string, type: Extract<ConversationType, "batch_group" | "batch_announcement">, title?: string | null) => void;
 }) {
   const programs = supply?.programs ?? [];
   const batches = supply?.batches ?? [];
@@ -5752,6 +5965,10 @@ function TutorSupplyPanel({
           <View style={styles.supplyActionRow}>
             <Button role={role} variant="secondary" label="Edit" onPress={() => editBatch(batch)} />
             <Button role={role} variant="secondary" label="Archive" onPress={() => archiveBatch(batch.id)} loading={actionLoading === "archiveTutorBatch:" + batch.id} />
+          </View>
+          <View style={styles.supplyActionRow}>
+            <Button role={role} label="Batch chat" onPress={() => openBatchConversation(batch.id, "batch_group")} loading={actionLoading === `openChat:batch_group:${batch.id}`} />
+            <Button role={role} variant="secondary" label="Announcements" onPress={() => openBatchConversation(batch.id, "batch_announcement", `${batch.title} announcements`)} loading={actionLoading === `openChat:batch_announcement:${batch.id}`} />
           </View>
         </View>
       ))}
@@ -5872,7 +6089,7 @@ function ClassTile({ role, item, onPress, actionLabel }: { role: Role; item: Bat
   );
 }
 
-function StudentClassDetail({ role, item, requests, back }: { role: Role; item: BatchClass; requests: BatchRequestSummary[]; back: () => void }) {
+function StudentClassDetail({ role, currentProfileId, item, requests, openBatchConversation, openDirectConversation, back }: { role: Role; currentProfileId?: string | null; item: BatchClass; requests: BatchRequestSummary[]; openBatchConversation?: (batchId: string, type: Extract<ConversationType, "batch_group" | "batch_announcement">, title?: string | null) => void; openDirectConversation?: (targetProfileId: string, type: Extract<ConversationType, "direct_student_educator" | "direct_student_student">, batchId?: string | null) => void; back: () => void }) {
   const classmates = item.enrolledStudents ?? [];
   return (
     <>
@@ -5890,6 +6107,15 @@ function StudentClassDetail({ role, item, requests, back }: { role: Role; item: 
         <Muted>{item.classroomLocation ?? "Online session"}</Muted>
         {role === "parent" ? <Text style={styles.classLocked}>Parent view only. Joining actions stay with the student account.</Text> : item.onlineVideoLink ? <Text style={styles.classLink}>{item.onlineVideoLink}</Text> : <Text style={styles.classLocked}>Video link unlocks 5 minutes before class.</Text>}
       </Card>
+      {role === "student" ? (
+        <View style={styles.supplyActionRow}>
+          <Button role={role} label="Batch chat" onPress={() => openBatchConversation?.(item.batchId, "batch_group")} />
+          <Button role={role} variant="secondary" label="Announcements" onPress={() => openBatchConversation?.(item.batchId, "batch_announcement", `${item.title} announcements`)} />
+        </View>
+      ) : null}
+      {role === "student" && item.tutorProfileId ? (
+        <Button role={role} variant="secondary" label="Message educator" onPress={() => openDirectConversation?.(item.tutorProfileId!, "direct_student_educator", item.batchId)} />
+      ) : null}
       <SectionTitle>Classmates</SectionTitle>
       {classmates.map((student) => (
         <View key={student.id} style={styles.rosterStudentRow}>
@@ -5900,6 +6126,11 @@ function StudentClassDetail({ role, item, requests, back }: { role: Role; item: 
             <Text style={styles.parentRowName}>{student.name}</Text>
             <Text style={styles.parentRowMeta}>{student.city ?? "City not added"}</Text>
           </View>
+          {role === "student" && student.id !== currentProfileId ? (
+            <Pressable style={styles.chatMiniButton} onPress={() => openDirectConversation?.(student.id, "direct_student_student", item.batchId)}>
+              <Text style={styles.chatMiniButtonText}>Message</Text>
+            </Pressable>
+          ) : null}
         </View>
       ))}
       {!classmates.length ? <Card role={role}><CardTitle>No classmates listed yet</CardTitle><Muted>Roster details will appear after enrollments are synced.</Muted></Card> : null}
@@ -5928,7 +6159,7 @@ function StudentClassDetail({ role, item, requests, back }: { role: Role; item: 
   );
 }
 
-function ClassRoster({ role, item, learnerProgress, back }: { role: Role; item: BatchClass; learnerProgress: LearnerProgressSummary[]; back: () => void }) {
+function ClassRoster({ role, item, learnerProgress, openBatchConversation, openDirectConversation, back }: { role: Role; item: BatchClass; learnerProgress: LearnerProgressSummary[]; openBatchConversation: (batchId: string, type: Extract<ConversationType, "batch_group" | "batch_announcement">, title?: string | null) => void; openDirectConversation: (targetProfileId: string, type: Extract<ConversationType, "direct_student_educator" | "direct_student_student">, batchId?: string | null) => void; back: () => void }) {
   const students = item.enrolledStudents ?? [];
   return (
     <>
@@ -5939,6 +6170,10 @@ function ClassRoster({ role, item, learnerProgress, back }: { role: Role; item: 
         <Text style={styles.classMeta}>{item.schedule} • {formatReminderDateTime(item.startsAt)}</Text>
         <Text style={styles.classMeta}>{item.mode} • {item.classroomLocation ?? "Online"}</Text>
         {typeof item.pendingRequests === "number" ? <Text style={styles.classRosterCount}>{students.length} enrolled • {item.pendingRequests} pending</Text> : <Text style={styles.classRosterCount}>{students.length} enrolled</Text>}
+      </View>
+      <View style={styles.supplyActionRow}>
+        <Button role={role} label="Batch chat" onPress={() => openBatchConversation(item.batchId, "batch_group")} />
+        <Button role={role} variant="secondary" label="Announcements" onPress={() => openBatchConversation(item.batchId, "batch_announcement", `${item.title} announcements`)} />
       </View>
       <SectionTitle>Students</SectionTitle>
       {students.map((student) => (
@@ -5951,6 +6186,9 @@ function ClassRoster({ role, item, learnerProgress, back }: { role: Role; item: 
               <Text style={styles.parentRowName}>{student.name}</Text>
               <Text style={styles.parentRowMeta}>{student.city ?? "City not added"}</Text>
             </View>
+            <Pressable style={styles.chatMiniButton} onPress={() => openDirectConversation(student.id, "direct_student_educator", item.batchId)}>
+              <Text style={styles.chatMiniButtonText}>Message</Text>
+            </Pressable>
           </View>
           {(learnerProgress.find((summary) => summary.profileId === student.id)?.programs ?? []).slice(0, 2).map((program) => (
             <View key={program.programId} style={styles.learnerProgressBox}>
@@ -6182,364 +6420,154 @@ function Payments({ role, accessToken, back }: { role: Role; accessToken?: strin
   );
 }
 
-type DoubtItem = {
-  id: string;
-  author: string;
-  initials: string;
-  time: string;
-  title: string;
-  body: string;
-  status: "solved" | "open";
-  votes: number;
-  replies: number;
-  pinned?: boolean;
-  anonymous?: boolean;
-  attachment?: boolean;
-  verified?: boolean;
-  visibility?: string;
-  reportCount?: number;
-  moderatedStatus?: string;
-  canComment?: boolean;
-  canReport?: boolean;
-  comments?: CommunityComment[];
-};
-
-function communityThreadToDoubt(thread: CommunityThread): DoubtItem {
-  return {
-    id: thread.id,
-    author: thread.author.name,
-    initials: thread.author.initials,
-    time: relativeTime(thread.createdAt),
-    title: thread.title,
-    body: thread.body,
-    status: thread.status === "solved" ? "solved" : "open",
-    votes: thread.reactionCounts.upvote + thread.reactionCounts.helpful + thread.reactionCounts.like,
-    replies: thread.commentCount,
-    pinned: thread.pinned,
-    anonymous: thread.anonymous,
-    attachment: !!thread.attachmentUrl,
-    verified: thread.comments?.some((comment) => comment.verified),
-    visibility: thread.visibility,
-    reportCount: thread.reportCount,
-    moderatedStatus: thread.moderatedStatus,
-    canComment: thread.canComment,
-    canReport: thread.canReport,
-    comments: thread.comments
+function Messages({
+  role,
+  conversations,
+  selectedConversation,
+  messages,
+  draft,
+  loading,
+  sending,
+  attaching,
+  currentProfileId,
+  accessToken,
+  setDraft,
+  openConversation,
+  closeConversation,
+  sendMessage,
+  attachFile,
+  refresh,
+  back
+}: {
+  role: Role;
+  conversations: ChatConversationSummary[];
+  selectedConversation: ChatConversationSummary | null;
+  messages: ChatMessageSummary[];
+  draft: string;
+  loading: boolean;
+  sending: boolean;
+  attaching: boolean;
+  currentProfileId: string | null;
+  accessToken: string | null;
+  setDraft: (value: string) => void;
+  openConversation: (conversation: ChatConversationSummary) => void;
+  closeConversation: () => void;
+  sendMessage: () => void;
+  attachFile: () => void;
+  refresh: () => void;
+  back: () => void;
+}) {
+  const theme = useRoleTheme(role);
+  const unreadConversations = conversations.filter((item) => item.unreadCount > 0);
+  const readConversations = conversations.filter((item) => item.unreadCount === 0);
+  const grouped = {
+    announcement: readConversations.filter((item) => item.type === "batch_announcement"),
+    batch: readConversations.filter((item) => item.type === "batch_group"),
+    direct: readConversations.filter((item) => item.type === "direct_student_educator" || item.type === "direct_student_student")
   };
-}
-
-function relativeTime(value: string) {
-  const date = new Date(value);
-  const diffMs = Date.now() - date.getTime();
-  const minutes = Math.max(0, Math.round(diffMs / 60000));
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes} mins ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hours ago`;
-  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-}
-
-function Chat({ role, accessToken, refreshKey, back }: { role: Role; accessToken?: string; refreshKey: number; back: () => void }) {
-  const theme = useRoleTheme(role);
-  const [filter, setFilter] = useState<"all" | "open" | "solved">("all");
-  const [search, setSearch] = useState("");
-  const [selectedDoubt, setSelectedDoubt] = useState<DoubtItem | null>(null);
-  const [asking, setAsking] = useState(false);
-  const [newDoubt, setNewDoubt] = useState("");
-  const [replyText, setReplyText] = useState("");
-  const [anonymous, setAnonymous] = useState(false);
-  const [apiDoubts, setApiDoubts] = useState<DoubtItem[] | null>(null);
-  const [doubtLoading, setDoubtLoading] = useState(false);
-  const [doubtNotice, setDoubtNotice] = useState("");
-  const readOnly = role === "parent";
-  const allDoubts = apiDoubts ?? [];
-  const filteredDoubts = allDoubts.filter((item) => {
-    const statusMatch = filter === "all" || item.status === filter;
-    const text = `${item.title} ${item.body} ${item.author}`.toLowerCase();
-    return statusMatch && text.includes(search.trim().toLowerCase());
-  });
-  const pinned = filteredDoubts.filter((item) => item.pinned);
-  const peerDoubts = filteredDoubts.filter((item) => !item.pinned);
-
-  async function refreshDoubts() {
-    setDoubtLoading(true);
-    try {
-      const response = await apiGet<{ data: CommunityThread[] }>(`/api/v1/community/threads?role=${role}`, accessToken);
-      const apiItems = response.data.map(communityThreadToDoubt);
-      setApiDoubts(apiItems);
-      setDoubtNotice("");
-    } catch {
-      setDoubtNotice("Something went wrong. Please try again.");
-      setApiDoubts([]);
-    } finally {
-      setDoubtLoading(false);
-    }
-  }
-
-  async function openDoubt(item: DoubtItem) {
-    setSelectedDoubt(item);
-    try {
-      const response = await apiGet<{ data: CommunityThread }>(`/api/v1/community/threads/${item.id}?role=${role}`, accessToken);
-      setSelectedDoubt(communityThreadToDoubt(response.data));
-      setDoubtNotice("");
-    } catch {
-      setDoubtNotice(apiDoubts ? "Thread details could not be refreshed." : "");
-    }
-  }
-
-  async function submitDoubt() {
-    if (readOnly) return;
-    const body = newDoubt.trim();
-    if (!body) return;
-    const title = body.length > 64 ? `${body.slice(0, 61)}...` : body;
-    try {
-      const response = await apiPost<{ data: CommunityThread }>("/api/v1/community/threads", {
-        role,
-        title,
-        body,
-        subject: "Physics",
-        milestoneTitle: "Milestone 3: Gauss's Law",
-        anonymous
-      }, accessToken);
-      const next = communityThreadToDoubt(response.data);
-      setApiDoubts((items) => [next, ...(items ?? [])]);
-      setNewDoubt("");
-      setAnonymous(false);
-      setAsking(false);
-      setDoubtNotice("");
-    } catch {
-      setDoubtNotice("Please sign in again to post a doubt.");
-    }
-  }
-
-  async function submitReply() {
-    if (readOnly || selectedDoubt?.canComment === false) return;
-    if (!selectedDoubt || !replyText.trim()) return;
-    try {
-      await apiPost<{ data: CommunityComment }>(`/api/v1/community/threads/${selectedDoubt.id}/comments`, {
-        role,
-        body: replyText.trim()
-      }, accessToken);
-      setReplyText("");
-      await openDoubt(selectedDoubt);
-      await refreshDoubts();
-    } catch {
-      setDoubtNotice("Reply could not be posted. Please check login/API.");
-    }
-  }
-
-  async function reportThread(item: DoubtItem) {
-    if (!item.canReport) return;
-    try {
-      await apiPost("/api/v1/community/reports", {
-        role,
-        threadId: item.id,
-        reason: "inappropriate",
-        details: "Reported from mobile community detail."
-      }, accessToken);
-      setDoubtNotice("Thanks. This thread has been sent for review.");
-      await openDoubt(item);
-    } catch {
-      setDoubtNotice("Report could not be submitted. Please check login/API.");
-    }
-  }
-
-  useEffect(() => {
-    refreshDoubts();
-  }, [role, accessToken, refreshKey]);
-
-  if (asking && !readOnly) {
+  if (selectedConversation) {
     return (
-      <View style={styles.doubtScreen}>
-        <DoubtHeader title="Create Doubt" subtitle="Board forum • Physics" back={() => setAsking(false)} />
-        <View style={styles.askDoubtCard}>
-          <Title>Post a new doubt</Title>
-          <Muted>Describe the exact step, formula, or question where you are stuck.</Muted>
-          <FieldLabel>What are you struggling with?</FieldLabel>
-          <TextInput
-            value={newDoubt}
-            onChangeText={setNewDoubt}
-            multiline
-            placeholder="Type your equation, query, or question context here..."
-            placeholderTextColor="#8D7BA0"
-            style={styles.askDoubtInput}
-          />
-          <FieldLabel>Attach photo of the problem</FieldLabel>
-          <Pressable style={({ pressed }) => [styles.attachmentUploader, pressed && styles.pressed]}>
-            <Text style={styles.attachmentIcon}>▧</Text>
-            <Text style={[styles.attachmentText, { color: theme.text }]}>Upload photo or screenshot</Text>
-          </Pressable>
-          <Pressable style={({ pressed }) => [styles.anonymousToggle, pressed && styles.pressed]} onPress={() => setAnonymous(!anonymous)}>
-            <View>
-              <Text style={styles.anonymousTitle}>Hide my identity</Text>
-              <Text style={styles.anonymousCopy}>Display as Anonymous to peers</Text>
-            </View>
-            <View style={[styles.consentCheck, anonymous && { backgroundColor: theme.accentStrong, borderColor: theme.accentStrong }]}>
-              <Text style={styles.consentCheckText}>{anonymous ? "✓" : ""}</Text>
-            </View>
-          </Pressable>
-          {doubtNotice ? <Text style={styles.apiNotice}>{doubtNotice}</Text> : null}
-          <Button role={role} label="Submit to board forum" disabled={!newDoubt.trim()} onPress={submitDoubt} />
+      <>
+        <TopBar title={selectedConversation.title} left="‹" onLeft={closeConversation} right="Refresh" onRight={refresh} />
+        <View style={styles.classRosterHero}>
+          <Text style={styles.classTitle}>{selectedConversation.title}</Text>
+          <Text style={styles.classMeta}>{selectedConversation.subtitle} • {selectedConversation.participantCount} participant{selectedConversation.participantCount === 1 ? "" : "s"}</Text>
         </View>
-      </View>
+        {loading ? <ActivityIndicator color={theme.text} /> : null}
+        {messages.length ? messages.map((message) => {
+          const mine = message.senderProfileId === currentProfileId;
+          return (
+            <View key={message.id} style={[styles.chatBubble, mine ? styles.chatBubbleMine : styles.chatBubbleOther]}>
+              <Text style={styles.chatSender}>{mine ? "You" : message.senderName}</Text>
+              <Text style={styles.chatBody}>{message.body}</Text>
+              {message.attachments.length ? (
+                <View style={styles.chatAttachmentStack}>
+                  {message.attachments.map((attachment) => {
+                    const url = chatAttachmentUrl(attachment.fileUrl, role, accessToken);
+                    const image = isImageAttachment(attachment);
+                    return (
+                      <Pressable key={attachment.id} style={({ pressed }) => [styles.chatAttachmentPill, pressed && styles.pressablePressed]} onPress={() => url ? Linking.openURL(url).catch(() => undefined) : undefined}>
+                        {image && url ? <Image source={{ uri: url }} style={styles.chatAttachmentImage} resizeMode="cover" /> : null}
+                        <Text style={styles.chatAttachmentName} numberOfLines={1}>{attachment.fileName ?? capitalize(attachment.kind)}</Text>
+                        <Text style={styles.chatAttachmentMeta}>{image ? "Tap to open image" : "Tap to open file"}{attachment.sizeBytes ? ` • ${formatFileSize(attachment.sizeBytes)}` : ""}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+              <Text style={styles.chatTime}>{formatReminderDateTime(message.createdAt)}</Text>
+            </View>
+          );
+        }) : (
+          <EmptyStateCard title="No messages yet" copy={selectedConversation.canWrite ? "Start the conversation when you are ready." : "Messages will appear here when they are sent."} />
+        )}
+        {selectedConversation.canWrite ? (
+          <View style={styles.chatComposer}>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              multiline
+              placeholder="Write a message"
+              placeholderTextColor="#94A3B8"
+              style={styles.chatComposerInput}
+            />
+            <View style={styles.supplyActionRow}>
+              <Button role={role} variant="secondary" label="Attach" onPress={attachFile} loading={attaching} />
+              <Button role={role} label="Send" onPress={sendMessage} disabled={!draft.trim()} loading={sending} />
+            </View>
+          </View>
+        ) : (
+          <View style={styles.emptyInlineCard}>
+            <Text style={styles.todayTitle}>Read-only conversation</Text>
+            <Text style={styles.todayMeta}>Only the educator can post announcements in this chat.</Text>
+          </View>
+        )}
+      </>
     );
   }
-
-  if (selectedDoubt) {
-    return (
-      <View style={styles.doubtScreen}>
-        <DoubtHeader title="Doubt Details" subtitle="Physics • Milestone 3" back={() => setSelectedDoubt(null)} />
-        <View style={styles.doubtDetailCard}>
-          <View style={styles.doubtCardHeader}>
-            <View style={styles.doubtUserRow}>
-              <View style={[styles.doubtAvatar, selectedDoubt.anonymous && styles.doubtAvatarMuted]}>
-                <Text style={styles.doubtAvatarText}>{selectedDoubt.initials}</Text>
-              </View>
-              <View>
-                <Text style={styles.doubtUserName}>{selectedDoubt.author}</Text>
-                <Text style={styles.doubtTime}>{selectedDoubt.time}</Text>
-              </View>
-            </View>
-            <DoubtStatus status={selectedDoubt.status} />
-          </View>
-          <Text style={styles.doubtDetailTitle}>{selectedDoubt.title}</Text>
-          <Text style={styles.doubtScopeText}>{selectedDoubt.visibility === "batch" ? "Batch discussion" : selectedDoubt.visibility === "program" ? "Program discussion" : "Community discussion"}{selectedDoubt.reportCount ? ` • ${selectedDoubt.reportCount} report${selectedDoubt.reportCount === 1 ? "" : "s"}` : ""}</Text>
-          <Text style={styles.doubtDetailBody}>{selectedDoubt.body}</Text>
-          {selectedDoubt.moderatedStatus && selectedDoubt.moderatedStatus !== "active" ? <Text style={styles.doubtModerationText}>This thread is under moderation review.</Text> : null}
-          {selectedDoubt.verified ? (
-            <View style={styles.teacherSolutionBox}>
-              <Text style={styles.teacherBadge}>TEACHER VERIFIED SOLUTION</Text>
-              <Text style={styles.teacherSolutionText}>
-                Use a cylindrical Gaussian surface because it matches the symmetry of a line charge. The field is constant on the curved surface and perpendicular to the end caps, so the cap flux is zero and only the curved area contributes.
-              </Text>
-              <Text style={styles.formulaBox}>E = lambda / (2 pi epsilon0 r)</Text>
-            </View>
-          ) : selectedDoubt.comments?.length ? (
-            selectedDoubt.comments.map((comment) => (
-              <View key={comment.id} style={styles.communityAnswerCard}>
-                <Text style={styles.peerTutorLabel}>{comment.verified ? "Tutor verified" : comment.author.name}</Text>
-                <Text style={styles.teacherSolutionText}>{comment.body}</Text>
-              </View>
-            ))
-          ) : (
-            <View style={styles.noAnswerCard}>
-              <Text style={styles.noAnswerTitle}>No answers yet</Text>
-              <Muted>Be the first to help your peer.</Muted>
-            </View>
-          )}
-        </View>
-        <View style={styles.communityDetailActions}>
-          {selectedDoubt.canReport ? (
-            <Pressable style={({ pressed }) => [styles.communityReportButton, pressed && styles.pressed]} onPress={() => reportThread(selectedDoubt)}>
-              <Text style={styles.communityReportText}>Report</Text>
-            </Pressable>
-          ) : null}
-        </View>
-        {!readOnly && selectedDoubt.canComment !== false ? (
-          <View style={styles.replyBar}>
-            <Text style={[styles.replyAttach, { color: theme.text }]}>▧</Text>
-            <TextInput value={replyText} onChangeText={setReplyText} placeholder="Type your helpful reply..." placeholderTextColor="#8D7BA0" style={styles.replyInput} />
-            <Pressable style={({ pressed }) => [styles.replySend, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={submitReply}>
-              <Text style={styles.replySendText}>›</Text>
-            </Pressable>
-          </View>
-        ) : null}
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.doubtScreen}>
-      <View style={styles.doubtSearchBox}>
-        <View style={styles.doubtSearchBar}>
-          <Text style={styles.doubtSearchIcon}>⌕</Text>
-          <TextInput
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Search doubts about Gauss's Law..."
-            placeholderTextColor="#8D7BA0"
-            style={styles.doubtSearchInput}
-          />
-        </View>
-        <View style={styles.doubtFilterRow}>
-          {[
-            ["all", "All Doubts"],
-            ["open", "Unsolved"],
-            ["solved", "Solved"]
-          ].map(([id, label]) => (
-            <Pressable key={id} style={({ pressed }) => [styles.doubtChip, filter === id && { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={() => setFilter(id as "all" | "open" | "solved")}>
-              <Text style={[styles.doubtChipText, filter === id && styles.doubtChipTextActive]}>{label}</Text>
-            </Pressable>
-          ))}
-        </View>
-        {doubtNotice ? <Text style={styles.apiNotice}>{doubtNotice}</Text> : null}
-        {doubtLoading ? <ActivityIndicator color={theme.text} /> : null}
+    <>
+      <TopBar title="Messages" left="‹" onLeft={back} />
+      <View style={styles.classRosterHero}>
+        <Text style={styles.classTitle}>Messages</Text>
+        <Text style={styles.classMeta}>{role === "parent" ? "Parent accounts have no messaging conversations in this phase." : "Batch chats, announcements, and direct messages from your active enrollments appear here."}</Text>
       </View>
-      <View style={styles.doubtFeed}>
-        {pinned.length ? <Text style={styles.doubtSectionLabel}>PINNED FAQ</Text> : null}
-        {pinned.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => openDoubt(item)} />)}
-        <Text style={styles.doubtSectionLabel}>{readOnly ? "CHILD THREADS" : "PEER DISCUSSIONS"}</Text>
-        {peerDoubts.length ? peerDoubts.map((item) => <DoubtCard key={item.id} role={role} item={item} onPress={() => openDoubt(item)} />) : <Muted>{readOnly ? "No child community threads found." : "No matching doubts found."}</Muted>}
-      </View>
-      {!readOnly ? (
-        <Pressable style={({ pressed }) => [styles.askFab, { backgroundColor: theme.text }, pressed && styles.pressed]} onPress={() => setAsking(true)}>
-          <Text style={styles.askFabText}>+ Ask a Doubt</Text>
+      {loading ? <ActivityIndicator color={theme.text} /> : null}
+      {conversations.length ? (
+        <>
+          <ConversationGroup title="Unread" items={unreadConversations} openConversation={openConversation} />
+          <ConversationGroup title="Announcements" items={grouped.announcement} openConversation={openConversation} />
+          <ConversationGroup title="Batch chats" items={grouped.batch} openConversation={openConversation} />
+          <ConversationGroup title="Direct messages" items={grouped.direct} openConversation={openConversation} />
+        </>
+      ) : (
+        <EmptyStateCard title="No conversations yet" copy={role === "tutor" ? "Chats will appear after you create a batch conversation or receive enrolled students." : "Chats will appear after you join an active batch."} />
+      )}
+    </>
+  );
+}
+
+function ConversationGroup({ title, items, openConversation }: { title: string; items: ChatConversationSummary[]; openConversation: (conversation: ChatConversationSummary) => void }) {
+  if (!items.length) return null;
+  return (
+    <>
+      <SectionTitle>{title}</SectionTitle>
+      {items.map((conversation) => (
+        <Pressable key={conversation.id} onPress={() => openConversation(conversation)} style={styles.chatConversationRow}>
+          <View style={styles.rosterAvatar}>
+            <Text style={styles.rosterAvatarText}>{conversation.type === "batch_announcement" ? "AN" : conversation.type === "batch_group" ? "BG" : conversation.participants[0]?.initials ?? "MT"}</Text>
+          </View>
+          <View style={styles.flex}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.parentRowName}>{conversation.title}</Text>
+              {conversation.unreadCount ? <Text style={styles.chatUnread}>{conversation.unreadCount}</Text> : null}
+            </View>
+            <Text style={styles.parentRowMeta}>{conversation.subtitle} • {conversation.participantCount} participant{conversation.participantCount === 1 ? "" : "s"}</Text>
+            <Text style={styles.parentRowMeta} numberOfLines={1}>{conversation.lastMessage ? `${conversation.lastMessage.senderName}: ${conversation.lastMessage.body}` : "No messages yet"}</Text>
+          </View>
         </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-function DoubtHeader({ title, subtitle, back }: { title: string; subtitle: string; back: () => void }) {
-  return (
-    <View style={styles.doubtHeader}>
-      <Pressable style={({ pressed }) => [styles.doubtBackButton, pressed && styles.pressed]} onPress={back}>
-        <Text style={styles.doubtBackText}>‹</Text>
-      </Pressable>
-      <View style={styles.flex}>
-        <Text style={styles.doubtHeaderTitle}>{title}</Text>
-        <Text style={styles.doubtHeaderSubtitle}>{subtitle}</Text>
-      </View>
-    </View>
-  );
-}
-
-function DoubtStatus({ status }: { status: "solved" | "open" }) {
-  return (
-    <View style={[styles.doubtStatus, status === "solved" ? styles.doubtSolved : styles.doubtOpen]}>
-      <Text style={[styles.doubtStatusText, status === "solved" ? styles.doubtSolvedText : styles.doubtOpenText]}>{status === "solved" ? "Solved" : "Open"}</Text>
-    </View>
-  );
-}
-
-function DoubtCard({ role, item, onPress }: { role: Role; item: DoubtItem; onPress: () => void }) {
-  const theme = useRoleTheme(role);
-  return (
-    <Pressable style={({ pressed }) => [styles.doubtCard, item.pinned && styles.doubtCardPinned, item.pinned && { borderLeftColor: theme.text }, pressed && styles.pressed]} onPress={onPress}>
-      <View style={styles.doubtCardHeader}>
-        <View style={styles.doubtUserRow}>
-          <View style={[styles.doubtAvatar, item.anonymous && styles.doubtAvatarMuted]}>
-            <Text style={styles.doubtAvatarText}>{item.initials}</Text>
-          </View>
-          <View>
-            <Text style={styles.doubtUserName}>{item.author} {item.verified ? <Text style={styles.inlineTeacherBadge}>Tutor</Text> : null}</Text>
-            <Text style={styles.doubtTime}>{item.time}</Text>
-          </View>
-        </View>
-        <DoubtStatus status={item.status} />
-      </View>
-      <View style={styles.doubtCardBody}>
-        <View style={styles.flex}>
-          <Text style={styles.doubtCardTitle}>{item.title}</Text>
-          <Text style={styles.doubtCardText}>{item.body}</Text>
-        </View>
-        {item.attachment ? <View style={styles.doubtAttachment}><Text style={styles.doubtAttachmentText}>IMG</Text></View> : null}
-      </View>
-      <View style={styles.doubtCardFooter}>
-        <Text style={[styles.doubtInteraction, item.pinned && { color: theme.text }]}>↑ {item.votes}</Text>
-        <Text style={styles.doubtInteraction}>{item.replies} {item.replies === 1 ? "Solution" : "Replies"}</Text>
-      </View>
-    </Pressable>
+      ))}
+    </>
   );
 }
 
@@ -6649,7 +6677,7 @@ function BottomNav({ role, screen, setScreen }: { role: Role; screen: AppScreen;
     { id: "home", label: "Home", activeIcon: HomeActiveIcon, inactiveIcon: HomeInactiveIcon },
     { id: "sessions", label: "Program", activeIcon: MilesActiveIcon, inactiveIcon: MilesInactiveIcon },
     { id: "events", label: "Reminders", activeIcon: ClassActiveIcon, inactiveIcon: ClassInactiveIcon },
-    { id: "chat", label: "Community", activeIcon: CommunityActiveIcon, inactiveIcon: CommunityInactiveIcon },
+    { id: "chat", label: "Messages", activeIcon: MessagesActiveIcon, inactiveIcon: MessagesInactiveIcon },
     { id: "account", label: "Account", activeIcon: AccountActiveIcon, inactiveIcon: AccountInactiveIcon }
   ];
   return (
@@ -6785,6 +6813,34 @@ async function apiUploadMaterial(uri: string, kind: string, accessToken: string,
   if (response.status === 401) authSessionBridge?.expireSession();
   if (!response.ok) throw new ApiStatusError(response.status);
   const payload = await response.json() as { data: { assetPath: string; previewUrl: string; organizationId: string; bucketNamespace: string; kind: string } };
+  return payload.data;
+}
+
+async function apiUploadChatAttachment(conversationId: string, role: Role, uri: string, accessToken: string, fileName?: string | null, mimeType?: string | null) {
+  const upload = async (token: string) => {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    const params = new URLSearchParams({
+      role,
+      fileName: fileName ?? `attachment-${Date.now()}`
+    });
+    return fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/attachments?${params.toString()}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": mimeType ?? blob.type ?? "application/octet-stream",
+        Authorization: `Bearer ${token}`
+      },
+      body: blob
+    });
+  };
+  let response = await upload(accessToken);
+  if (response.status === 401) {
+    const refreshed = await refreshAuthSession();
+    if (refreshed?.accessToken) response = await upload(refreshed.accessToken);
+  }
+  if (response.status === 401) authSessionBridge?.expireSession();
+  if (!response.ok) throw new ApiStatusError(response.status);
+  const payload = await response.json() as { data: ChatMessageSummary };
   return payload.data;
 }
 
@@ -7099,76 +7155,6 @@ const styles = StyleSheet.create({
   todayMeta: { color: "#536A86", fontSize: 14, fontWeight: "600", lineHeight: 18 },
   todayBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   todayBadgeText: { fontSize: 11, fontWeight: "900" },
-  doubtScreen: { gap: 14 },
-  doubtHeader: { alignItems: "center", backgroundColor: "#2C1645", borderRadius: 24, flexDirection: "row", gap: 12, marginHorizontal: -4, marginTop: -14, paddingHorizontal: 16, paddingVertical: 16 },
-  doubtBackButton: { alignItems: "center", height: 34, justifyContent: "center", width: 34 },
-  doubtBackText: { color: "#FFFFFF", fontSize: 28, fontWeight: "800", lineHeight: 30 },
-  doubtHeaderTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "900", lineHeight: 22 },
-  doubtHeaderSubtitle: { color: "#F1D5F2", fontSize: 12, fontWeight: "700", lineHeight: 17, marginTop: 2, opacity: 0.85 },
-  doubtSearchBox: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "rgba(221,231,239,0.9)", borderRadius: 20, borderWidth: 1, gap: 10, padding: 12 },
-  doubtSearchBar: { alignItems: "center", backgroundColor: "#F5EEF6", borderRadius: 14, flexDirection: "row", gap: 9, minHeight: 44, paddingHorizontal: 12 },
-  doubtSearchIcon: { color: "#6B5B7B", fontSize: 17, fontWeight: "900" },
-  doubtSearchInput: { color: "#1E1030", flex: 1, fontSize: 14, fontWeight: "700", minHeight: 42, padding: 0 },
-  doubtFilterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  doubtChip: { backgroundColor: "#F5EEF6", borderRadius: 999, minHeight: 32, paddingHorizontal: 14, justifyContent: "center" },
-  doubtChipText: { color: "#6B5B7B", fontSize: 12, fontWeight: "900" },
-  doubtChipTextActive: { color: "#FFFFFF" },
-  doubtFeed: { gap: 14 },
-  doubtSectionLabel: { color: "#6B5B7B", fontSize: 11, fontWeight: "900", letterSpacing: 0.8, marginTop: 4 },
-  doubtCard: { backgroundColor: "#FFFFFF", borderColor: "rgba(221,231,239,0.95)", borderLeftColor: "transparent", borderLeftWidth: 4, borderRadius: 18, borderWidth: 1, gap: 10, padding: 15, shadowColor: "#5A3284", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.06, shadowRadius: 14 },
-  doubtCardPinned: { backgroundColor: "#F2FAFA" },
-  doubtCardHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", gap: 10 },
-  doubtUserRow: { alignItems: "center", flexDirection: "row", gap: 8, flex: 1 },
-  doubtAvatar: { alignItems: "center", backgroundColor: "#5A3284", borderRadius: 999, height: 30, justifyContent: "center", width: 30 },
-  doubtAvatarMuted: { backgroundColor: "#6B5B7B" },
-  doubtAvatarText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
-  doubtUserName: { color: "#1E1030", fontSize: 13, fontWeight: "900", lineHeight: 17 },
-  inlineTeacherBadge: { color: "#FFFFFF", backgroundColor: "#5A3284", fontSize: 9, fontWeight: "900" },
-  doubtTime: { color: "#6B5B7B", fontSize: 11, fontWeight: "700", lineHeight: 15 },
-  doubtStatus: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  doubtSolved: { backgroundColor: "#E8F8EE" },
-  doubtOpen: { backgroundColor: "#FFF3E0" },
-  doubtStatusText: { fontSize: 11, fontWeight: "900" },
-  doubtSolvedText: { color: "#27AE60" },
-  doubtOpenText: { color: "#E65100" },
-  doubtCardBody: { flexDirection: "row", gap: 12 },
-  doubtCardTitle: { color: "#1E1030", fontSize: 14, fontWeight: "900", lineHeight: 19 },
-  doubtCardText: { color: "#1E1030", fontSize: 14, fontWeight: "600", lineHeight: 20, marginTop: 3 },
-  doubtAttachment: { alignItems: "center", backgroundColor: "#EFE7F4", borderRadius: 10, height: 52, justifyContent: "center", width: 52 },
-  doubtAttachmentText: { color: "#5A3284", fontSize: 10, fontWeight: "900" },
-  doubtCardFooter: { borderTopColor: "#F5EEF6", borderTopWidth: 1, flexDirection: "row", gap: 18, paddingTop: 10 },
-  doubtInteraction: { color: "#6B5B7B", fontSize: 12, fontWeight: "900" },
-  askFab: { alignItems: "center", alignSelf: "flex-end", borderRadius: 999, minHeight: 48, justifyContent: "center", paddingHorizontal: 18, shadowColor: "#5A3284", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 18 },
-  askFabText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
-  doubtDetailCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 14, padding: 16 },
-  doubtDetailTitle: { color: "#1E1030", fontSize: 19, fontWeight: "900", lineHeight: 24 },
-  doubtScopeText: { color: "#7C5C9E", fontSize: 12, fontWeight: "900", lineHeight: 17, textTransform: "uppercase" },
-  doubtDetailBody: { color: "#1E1030", fontSize: 15, fontWeight: "600", lineHeight: 23 },
-  doubtModerationText: { backgroundColor: "#FEF3C7", borderRadius: 12, color: "#92400E", fontSize: 12, fontWeight: "800", lineHeight: 17, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 8 },
-  teacherSolutionBox: { backgroundColor: "#F9F3FC", borderColor: "#5A3284", borderRadius: 18, borderWidth: 1.5, gap: 10, padding: 15 },
-  teacherBadge: { alignSelf: "flex-start", backgroundColor: "#5A3284", borderRadius: 6, color: "#FFFFFF", fontSize: 10, fontWeight: "900", overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4 },
-  teacherSolutionText: { color: "#1E1030", fontSize: 14, fontWeight: "600", lineHeight: 21 },
-  formulaBox: { backgroundColor: "#FFFFFF", borderColor: "#E1D2EC", borderRadius: 10, borderWidth: 1, color: "#5A3284", fontSize: 15, fontWeight: "900", padding: 12, textAlign: "center" },
-  communityAnswerCard: { backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 16, borderWidth: 1, gap: 8, padding: 13 },
-  peerTutorLabel: { color: "#148087", fontSize: 12, fontWeight: "900" },
-  noAnswerCard: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E5E7EB", borderRadius: 16, borderWidth: 1, gap: 4, padding: 24 },
-  noAnswerTitle: { color: "#1E1030", fontSize: 15, fontWeight: "900" },
-  communityDetailActions: { alignItems: "flex-end", minHeight: 34 },
-  communityReportButton: { backgroundColor: "#F8FAFC", borderColor: "#E5E7EB", borderRadius: 999, borderWidth: 1, paddingHorizontal: 13, paddingVertical: 8 },
-  communityReportText: { color: "#64748B", fontSize: 12, fontWeight: "900" },
-  replyBar: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, flexDirection: "row", gap: 10, padding: 10 },
-  replyAttach: { fontSize: 20, fontWeight: "900" },
-  replyInput: { backgroundColor: "#F5EEF6", borderRadius: 999, color: "#1E1030", flex: 1, fontSize: 14, fontWeight: "700", minHeight: 40, paddingHorizontal: 14 },
-  replySend: { alignItems: "center", borderRadius: 999, height: 38, justifyContent: "center", width: 38 },
-  replySendText: { color: "#FFFFFF", fontSize: 24, fontWeight: "900", lineHeight: 26 },
-  askDoubtCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 22, borderWidth: 1, gap: 13, padding: 16 },
-  askDoubtInput: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, color: "#1E1030", fontSize: 14, fontWeight: "700", minHeight: 128, padding: 12, textAlignVertical: "top" },
-  attachmentUploader: { alignItems: "center", backgroundColor: "rgba(90,50,132,0.03)", borderColor: "#5A3284", borderRadius: 16, borderStyle: "dashed", borderWidth: 1.5, gap: 8, minHeight: 104, justifyContent: "center" },
-  attachmentIcon: { color: "#5A3284", fontSize: 28, fontWeight: "900" },
-  attachmentText: { fontSize: 13, fontWeight: "900" },
-  anonymousToggle: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", justifyContent: "space-between", padding: 13 },
-  anonymousTitle: { color: "#1E1030", fontSize: 14, fontWeight: "900" },
-  anonymousCopy: { color: "#6B5B7B", fontSize: 11, fontWeight: "700", marginTop: 2 },
   milesSummaryCard: { backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 22, borderWidth: 1, gap: 6, padding: 16, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.07, shadowRadius: 18 },
   milestoneDetailTitle: { color: "#111827", fontSize: 29, fontWeight: "900", lineHeight: 35, marginTop: 8 },
   milestoneDetailCopy: { color: "#111827", fontSize: 18, fontWeight: "500", lineHeight: 28, marginTop: 8 },
@@ -7709,6 +7695,23 @@ const styles = StyleSheet.create({
   parentRow: { backgroundColor: "rgba(255,255,255,0.92)", borderColor: "#DDE7EF", borderRadius: 14, borderWidth: 1, padding: 13 },
   parentRowName: { color: "#202A35", fontSize: 15, fontWeight: "900" },
   parentRowMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", marginTop: 2 },
+  chatConversationRow: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, padding: 13 },
+  chatUnread: { backgroundColor: "#3B7CFF", borderRadius: 999, color: "#FFFFFF", fontSize: 11, fontWeight: "900", minWidth: 22, overflow: "hidden", paddingHorizontal: 7, paddingVertical: 3, textAlign: "center" },
+  chatBubble: { borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, gap: 5, maxWidth: "88%", padding: 12 },
+  chatBubbleMine: { alignSelf: "flex-end", backgroundColor: "#DCEAFE", borderColor: "#BBD2FF" },
+  chatBubbleOther: { alignSelf: "flex-start", backgroundColor: "#FFFFFF" },
+  chatSender: { color: "#536A86", fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
+  chatBody: { color: "#111827", fontSize: 14, fontWeight: "700", lineHeight: 20 },
+  chatTime: { color: "#7C8EA5", fontSize: 11, fontWeight: "700" },
+  chatAttachmentStack: { gap: 7, marginTop: 3 },
+  chatAttachmentPill: { backgroundColor: "rgba(255,255,255,0.78)", borderColor: "#CBD5E1", borderRadius: 12, borderWidth: 1, maxWidth: 220, paddingHorizontal: 10, paddingVertical: 8 },
+  chatAttachmentImage: { backgroundColor: "#E2E8F0", borderRadius: 10, height: 112, marginBottom: 8, width: 198 },
+  chatAttachmentName: { color: "#111827", fontSize: 12, fontWeight: "900" },
+  chatAttachmentMeta: { color: "#536A86", fontSize: 11, fontWeight: "800", marginTop: 2 },
+  chatComposer: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 12 },
+  chatComposerInput: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 14, borderWidth: 1, color: "#111827", fontSize: 14, minHeight: 76, padding: 12, textAlignVertical: "top" },
+  chatMiniButton: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#C9D6E4", borderRadius: 999, borderWidth: 1, flexShrink: 0, justifyContent: "center", minHeight: 34, paddingHorizontal: 12 },
+  chatMiniButtonText: { color: "#202A35", fontSize: 12, fontWeight: "900" },
   monitoringCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, gap: 12, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
   monitoringHeaderRow: { alignItems: "center", flexDirection: "row", gap: 10, justifyContent: "space-between" },
   monitoringChildName: { color: "#202A35", fontSize: 18, fontWeight: "900", lineHeight: 23 },
