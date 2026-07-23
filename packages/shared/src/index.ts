@@ -27,6 +27,39 @@ export interface ConsentRequirementResponse {
   required: ConsentDocumentSummary[];
 }
 
+export type ConsentAssignmentActorType = "role" | "user";
+
+export interface ConsentAssignmentActor {
+  type: ConsentAssignmentActorType;
+  role?: Role | null;
+  userId?: string | null;
+  profileId?: string | null;
+}
+
+export interface ConsentAssignmentSummary {
+  id: string;
+  consentDocumentId: string;
+  consentKey: string;
+  consentVersion: string;
+  assigner: ConsentAssignmentActor;
+  assignee: ConsentAssignmentActor;
+  status: string;
+  permissionSet: Record<string, unknown>;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConsentEffectivePermissionsResponse {
+  service: "access-control";
+  module: "consent-assignment";
+  role: Role;
+  userId: string;
+  profileId: string | null;
+  permissions: Record<string, unknown>;
+  assignments: ConsentAssignmentSummary[];
+}
+
 export type FeatureFlagKey =
   | "aiMatching"
   | "avatarUpload"
@@ -142,6 +175,7 @@ export interface IdentityContext {
   activeProfile: IdentityProfile | null;
   profiles: IdentityProfile[];
   permissions: string[];
+  accessControlPermissions?: Record<string, unknown>;
 }
 
 export interface Recommendation {

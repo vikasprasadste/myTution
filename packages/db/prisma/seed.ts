@@ -8,6 +8,7 @@ const sourceTag = "mock";
 async function main() {
   await prisma.authSession.deleteMany();
   await prisma.mobileClient.deleteMany();
+  await prisma.consentAssignment.deleteMany();
   await prisma.userConsentAcceptance.deleteMany();
   await prisma.consentDocument.deleteMany();
   await prisma.communityReaction.deleteMany();

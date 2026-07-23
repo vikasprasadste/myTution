@@ -10,7 +10,7 @@ import morgan from "morgan";
 import type { Prisma } from "@prisma/client";
 import { featureFlags, isFeatureEnabled, paletteConfig, roleThemes } from "@mytution/config";
 import { prisma } from "@mytution/db";
-import type { CommunityReactionType, ConsentDocumentSummary, ConsentRequirementResponse, CurriculumCatalogueResponse, CurriculumSelection, MarketplaceBatchRecommendation, MarketplaceProgramRecommendation, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
+import type { CommunityReactionType, ConsentAssignmentActor, ConsentAssignmentSummary, ConsentDocumentSummary, ConsentEffectivePermissionsResponse, ConsentRequirementResponse, CurriculumCatalogueResponse, CurriculumSelection, MarketplaceBatchRecommendation, MarketplaceProgramRecommendation, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
 
 const app = express();
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
@@ -283,7 +283,7 @@ function isMissingParentLinkTable(error: unknown) {
 function isMissingAccessControlTable(error: unknown) {
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined;
   const table = typeof error === "object" && error !== null && "meta" in error ? (error as { meta?: { table?: string } }).meta?.table : undefined;
-  return code === "P2021" && (table === "public.ConsentDocument" || table === "public.UserConsentAcceptance");
+  return code === "P2021" && (table === "public.ConsentDocument" || table === "public.UserConsentAcceptance" || table === "public.ConsentAssignment");
 }
 
 type RateLimitBucket = { count: number; resetAt: number };
@@ -1050,6 +1050,10 @@ app.get("/api/v1/identity/me", async (req, res) => {
 
   const profiles = user.profiles.map(toIdentityProfile);
   const activeProfile = profiles.find((profile) => requestedRole && profile.role === requestedRole) ?? profiles[0] ?? null;
+  const accessControlAssignments = activeProfile
+    ? await listConsentAssignmentsForActor({ role: activeProfile.role, userId, profileId: activeProfile.id })
+    : [];
+  const accessControlPermissions = accessControlAssignments.reduce<Record<string, unknown>>((merged, assignment) => mergePermissionSets(merged, assignment.permissionSet), {});
   res.json({
     data: {
       user: {
@@ -1061,7 +1065,8 @@ app.get("/api/v1/identity/me", async (req, res) => {
       },
       activeProfile,
       profiles,
-      permissions: activeProfile ? permissionsForRole(activeProfile.role) : []
+      permissions: activeProfile ? permissionsForRole(activeProfile.role) : [],
+      accessControlPermissions
     }
   });
 });
@@ -2130,6 +2135,85 @@ app.get("/api/v1/access-control/consent-management/requirements", async (req, re
   const role = req.query.role ? readRole(req.query.role) : null;
   const required = await activeConsentRequirements(role);
   res.json({ data: { service: "access-control", module: "consent-management", required } satisfies ConsentRequirementResponse });
+});
+
+app.get("/api/v1/access-control/consent-assignments", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const profile = await findProfile(role, userId);
+  const assignments = await listConsentAssignmentsForActor({ role, userId, profileId: profile?.id ?? null });
+  res.json({ data: assignments.map(toConsentAssignmentSummary) });
+});
+
+app.post("/api/v1/access-control/consent-assignments", async (req, res) => {
+  const role = readRole(req.body.role ?? req.query.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const profile = await findProfile(role, userId);
+  if (!profile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+  const assignmentInput = normalizeConsentAssignmentInput(req.body, { role, userId, profileId: profile.id });
+  if (!assignmentInput) {
+    res.status(400).json({ error: "Valid consent assignment is required" });
+    return;
+  }
+  const consent = await resolveConsentDocumentForAssignment(assignmentInput.consentDocumentId, assignmentInput.consentKey, assignmentInput.consentVersion);
+  if (!consent) {
+    res.status(404).json({ error: "Consent document not found" });
+    return;
+  }
+  const assignment = await prisma.consentAssignment.create({
+    data: {
+      consentDocumentId: consent.id,
+      consentKey: consent.key,
+      consentVersion: consent.version,
+      assignerType: assignmentInput.assigner.type,
+      assignerRole: assignmentInput.assigner.role ?? null,
+      assignerUserId: assignmentInput.assigner.userId ?? null,
+      assignerProfileId: assignmentInput.assigner.profileId ?? null,
+      assigneeType: assignmentInput.assignee.type,
+      assigneeRole: assignmentInput.assignee.role ?? null,
+      assigneeUserId: assignmentInput.assignee.userId ?? null,
+      assigneeProfileId: assignmentInput.assignee.profileId ?? null,
+      status: assignmentInput.status,
+      permissionSet: assignmentInput.permissionSet as Prisma.InputJsonValue,
+      metadata: assignmentInput.metadata as Prisma.InputJsonValue,
+      sourceTag: "app"
+    }
+  });
+  await logAudit({
+    userId,
+    profileId: profile.id,
+    role,
+    action: "access_control.consent_assignment.create",
+    entityType: "ConsentAssignment",
+    entityId: assignment.id,
+    metadata: { consentDocumentId: consent.id, assigner: assignmentInput.assigner, assignee: assignmentInput.assignee }
+  });
+  res.status(201).json({ data: toConsentAssignmentSummary(assignment) });
+});
+
+app.get("/api/v1/access-control/consent-assignments/effective-permissions", async (req, res) => {
+  const role = readRole(req.query.role);
+  const userId = await requireUserId(req, res);
+  if (!userId) return;
+  const profile = await findProfile(role, userId);
+  const assignments = await listConsentAssignmentsForActor({ role, userId, profileId: profile?.id ?? null });
+  const permissions = assignments.reduce<Record<string, unknown>>((merged, assignment) => mergePermissionSets(merged, assignment.permissionSet), {});
+  res.json({
+    data: {
+      service: "access-control",
+      module: "consent-assignment",
+      role,
+      userId,
+      profileId: profile?.id ?? null,
+      permissions,
+      assignments: assignments.map(toConsentAssignmentSummary)
+    } satisfies ConsentEffectivePermissionsResponse
+  });
 });
 
 app.get("/api/v1/theme/palette", (_req, res) => {
@@ -6120,6 +6204,119 @@ async function ensureDefaultRegistrationConsent() {
       sourceTag: "app"
     }
   });
+}
+
+function toConsentAssignmentSummary(assignment: any): ConsentAssignmentSummary {
+  return {
+    id: assignment.id,
+    consentDocumentId: assignment.consentDocumentId,
+    consentKey: assignment.consentKey,
+    consentVersion: assignment.consentVersion,
+    assigner: {
+      type: assignment.assignerType === "role" ? "role" : "user",
+      role: assignment.assignerRole ?? null,
+      userId: assignment.assignerUserId ?? null,
+      profileId: assignment.assignerProfileId ?? null
+    },
+    assignee: {
+      type: assignment.assigneeType === "role" ? "role" : "user",
+      role: assignment.assigneeRole ?? null,
+      userId: assignment.assigneeUserId ?? null,
+      profileId: assignment.assigneeProfileId ?? null
+    },
+    status: assignment.status,
+    permissionSet: assignment.permissionSet ?? {},
+    metadata: assignment.metadata ?? null,
+    createdAt: assignment.createdAt.toISOString(),
+    updatedAt: assignment.updatedAt.toISOString()
+  };
+}
+
+function normalizeConsentActor(input: unknown, fallback?: { role: Role; userId: string; profileId?: string | null }): ConsentAssignmentActor | null {
+  const value = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const type = value.type === "role" ? "role" : value.type === "user" ? "user" : fallback ? "user" : null;
+  if (!type) return null;
+  const role = value.role ? readRole(value.role) : fallback?.role ?? null;
+  const userId = stringOrNull(value.userId) ?? (type === "user" ? fallback?.userId ?? null : null);
+  const profileId = stringOrNull(value.profileId) ?? (type === "user" ? fallback?.profileId ?? null : null);
+  if (type === "role" && !role) return null;
+  if (type === "user" && !userId) return null;
+  return {
+    type,
+    role,
+    userId,
+    profileId
+  };
+}
+
+function normalizeConsentAssignmentInput(input: unknown, current: { role: Role; userId: string; profileId: string }) {
+  const value = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const assigner = normalizeConsentActor(value.assigner, current);
+  const assignee = normalizeConsentActor(value.assignee);
+  const permissionSet = value.permissionSet && typeof value.permissionSet === "object" ? value.permissionSet as Record<string, unknown> : null;
+  if (!assigner || !assignee || !permissionSet) return null;
+  const assignerAllowed = assigner.type === "user"
+    ? assigner.userId === current.userId
+    : assigner.role === current.role;
+  if (!assignerAllowed) return null;
+  return {
+    consentDocumentId: stringOrNull(value.consentDocumentId),
+    consentKey: stringOrNull(value.consentKey),
+    consentVersion: stringOrNull(value.consentVersion),
+    assigner,
+    assignee,
+    status: stringOrNull(value.status) ?? "active",
+    permissionSet,
+    metadata: value.metadata && typeof value.metadata === "object" ? value.metadata as Record<string, unknown> : null
+  };
+}
+
+async function resolveConsentDocumentForAssignment(consentDocumentId?: string | null, consentKey?: string | null, consentVersion?: string | null) {
+  await ensureDefaultRegistrationConsent();
+  if (consentDocumentId) {
+    return prisma.consentDocument.findUnique({ where: { id: consentDocumentId } });
+  }
+  if (consentKey && consentVersion) {
+    return prisma.consentDocument.findUnique({ where: { key_version: { key: consentKey, version: consentVersion } } });
+  }
+  return prisma.consentDocument.findUnique({ where: { id: defaultRegistrationConsent.id } });
+}
+
+async function listConsentAssignmentsForActor(actor: { role: Role; userId: string; profileId?: string | null }) {
+  try {
+    return await prisma.consentAssignment.findMany({
+      where: {
+        status: "active",
+        OR: [
+          { assigneeType: "role", assigneeRole: actor.role },
+          { assigneeType: "user", assigneeUserId: actor.userId },
+          ...(actor.profileId ? [{ assigneeType: "user", assigneeProfileId: actor.profileId }] : [])
+        ]
+      },
+      orderBy: { createdAt: "asc" }
+    });
+  } catch (error) {
+    if (!isMissingAccessControlTable(error)) throw error;
+    return [];
+  }
+}
+
+function mergePermissionSets(left: Record<string, unknown>, right: unknown): Record<string, unknown> {
+  if (!right || typeof right !== "object" || Array.isArray(right)) return left;
+  const merged: Record<string, unknown> = { ...left };
+  Object.entries(right as Record<string, unknown>).forEach(([key, value]) => {
+    const existing = merged[key];
+    if (Array.isArray(existing) || Array.isArray(value)) {
+      merged[key] = Array.from(new Set([...(Array.isArray(existing) ? existing : []), ...(Array.isArray(value) ? value : [value])]));
+      return;
+    }
+    if (existing && typeof existing === "object" && value && typeof value === "object") {
+      merged[key] = mergePermissionSets(existing as Record<string, unknown>, value);
+      return;
+    }
+    merged[key] = value;
+  });
+  return merged;
 }
 
 function fallbackPersona(role: Role) {

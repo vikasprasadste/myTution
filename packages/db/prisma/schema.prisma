@@ -818,6 +818,7 @@ model ConsentDocument {
   permissionSet Json
   sourceTag     String   @default("app")
   acceptances   UserConsentAcceptance[]
+  assignments   ConsentAssignment[]
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -848,6 +849,33 @@ model UserConsentAcceptance {
   @@unique([userId, role, consentDocumentId])
   @@index([userId, role, status])
   @@index([profileId, status])
+  @@index([consentKey, consentVersion, status])
+}
+
+model ConsentAssignment {
+  id                String          @id @default(cuid())
+  consentDocumentId String
+  consentKey        String
+  consentVersion    String
+  assignerType      String
+  assignerRole      Role?
+  assignerUserId    String?
+  assignerProfileId String?
+  assigneeType      String
+  assigneeRole      Role?
+  assigneeUserId    String?
+  assigneeProfileId String?
+  status            String          @default("active")
+  permissionSet     Json
+  metadata          Json?
+  sourceTag         String          @default("app")
+  consentDocument   ConsentDocument @relation(fields: [consentDocumentId], references: [id], onDelete: Restrict)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([consentDocumentId, status])
+  @@index([assignerType, assignerRole, assignerUserId, status])
+  @@index([assigneeType, assigneeRole, assigneeUserId, status])
   @@index([consentKey, consentVersion, status])
 }
 
