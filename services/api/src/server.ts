@@ -501,12 +501,14 @@ function readMediaUrl(resource?: ResourceAssetShape | null) {
 
 type ResourceAssetShape = {
   id?: string | null;
+  organizationId?: string | null;
   assetProvider?: string | null;
   accessLevel?: string | null;
   assetVersion?: string | null;
   storageType?: string | null;
   assetSlug?: string | null;
   type?: string | null;
+  sourceTag?: string | null;
   thumbnailPath?: string | null;
   bannerPath?: string | null;
   vttPath?: string | null;
@@ -517,6 +519,8 @@ type ResourceAssetShape = {
 
 function assetPathForKind(resource: ResourceAssetShape | null | undefined, kind: AssetKind) {
   if (!resource) return null;
+  const fixturePath = mockFixtureAssetPathForKind(resource, kind);
+  if (fixturePath) return fixturePath;
   if (kind === "thumbnail") return normalizeLegacyMockImagePath(resource.thumbnailPath ?? null);
   if (kind === "banner") return normalizeLegacyMockImagePath(resource.bannerPath ?? null);
   if (kind === "vtt") return resource.vttPath ?? null;
@@ -526,6 +530,18 @@ function assetPathForKind(resource: ResourceAssetShape | null | undefined, kind:
     return mediaUrl;
   }
   return resource.metadataPath ?? null;
+}
+
+function mockFixtureAssetPathForKind(resource: ResourceAssetShape, kind: AssetKind) {
+  if (resource.sourceTag !== "mock") return null;
+  const type = String(resource.type ?? "");
+  if (!["video", "article", "flashcard", "quiz"].includes(type)) return null;
+  const paths = resource.organizationId ? ensureFixtureMaterialPaths(resource.organizationId) : defaultFixtureMaterialPaths();
+  const typedPaths = paths[type as keyof ReturnType<typeof defaultFixtureMaterialPaths>];
+  if (kind === "thumbnail" || kind === "banner" || kind === "metadata") return typedPaths[kind] ?? null;
+  if (kind === "vtt" && type === "video") return paths.video.vtt;
+  if (kind === "media" && (type === "video" || type === "article")) return paths[type].media;
+  return null;
 }
 
 function normalizeLegacyMockImagePath(assetPath: string | null) {

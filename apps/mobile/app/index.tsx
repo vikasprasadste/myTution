@@ -910,7 +910,7 @@ export default function Index() {
       const [identity, bootstrap, recs, marketplace, eventData, notificationData, dashboard, programList, monitoring] = await Promise.all([
         token ? apiGet<{ data: IdentityContext }>(`/api/v1/identity/me?role=${role}`, token) : Promise.resolve({ data: null as IdentityContext | null }),
         apiGet<{ persona: Persona }>(`/api/v1/bootstrap?role=${role}`, token),
-        apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`),
+        apiGet<{ data: Recommendation[] }>(`/api/v1/recommendations?role=${role}`, token),
         role === "student" ? apiGet<{ data: MarketplaceRecommendationResponse }>(`/api/v1/marketplace/recommendations?role=student`, token) : Promise.resolve({ data: null as MarketplaceRecommendationResponse | null }),
         token ? apiGet<{ data: Reminder[] }>(`/api/v1/reminders/sync?role=${role}`, token) : Promise.resolve({ data: [] }),
         token ? apiGet<{ data: NotificationSummary[] }>(`/api/v1/notifications?role=${role}&limit=12`, token) : Promise.resolve({ data: [] }),
@@ -1720,6 +1720,7 @@ export default function Index() {
       title: activity.title,
       description: activity.description,
       thumbnailLabel: capitalize(activity.type),
+      assetUrls: activity.assetUrls,
       milestoneId: milestone.id,
       activityId: activity.id,
       activitySequence: activity.sequence,
