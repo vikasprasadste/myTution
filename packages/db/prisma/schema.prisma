@@ -82,6 +82,7 @@ model User {
   communityReports CommunityReport[] @relation("CommunityReportUser")
   parentActivationCodes ParentActivationCode[] @relation("StudentActivationCodes")
   consentAcceptances UserConsentAcceptance[] @relation("UserConsentAcceptances")
+  ownedOrganizations Organization[] @relation("OrganizationOwnerUser")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -116,6 +117,41 @@ model MobileClient {
   updatedAt    DateTime      @updatedAt
 }
 
+model Organization {
+  id             String     @id @default(cuid())
+  ownerUserId    String
+  ownerProfileId String?
+  type           String     @default("individual_tutor")
+  name           String
+  bucketNamespace String    @unique
+  status         String     @default("active")
+  sourceTag      String     @default("app")
+  ownerUser      User       @relation("OrganizationOwnerUser", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  ownerProfile   Profile?   @relation("OrganizationOwnerProfile", fields: [ownerProfileId], references: [id], onDelete: SetNull)
+  profiles       Profile[]  @relation("ProfileOrganization")
+  userManagementRecords UserManagement[]
+  tutorProfiles  TutorProfile[]
+  programs       Program[]
+  batches        TutorBatch[]
+  batchRequests  BatchRequest[]
+  batchEnrollments BatchEnrollment[]
+  resources      Resource[]
+  paymentOrders  PaymentOrder[]
+  programPurchases ProgramPurchase[]
+  studentProgramSelections StudentProgramSelection[]
+  programProgress ProgramProgress[]
+  resourceProgress ResourceProgress[]
+  activityProgress ActivityProgress[]
+  quizAttempts   QuizAttempt[]
+  quizCheckpoints QuizCheckpoint[]
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([ownerUserId, status])
+  @@index([ownerProfileId, status])
+  @@index([type, status])
+}
+
 model AuthSession {
   id                  String       @id @default(cuid())
   userId              String
@@ -137,6 +173,7 @@ model AuthSession {
 model Profile {
   id                 String             @id @default(cuid())
   userId             String
+  organizationId     String?
   role               Role
   firstName          String
   lastName           String
@@ -150,6 +187,8 @@ model Profile {
   curriculumSelections Json?
   sourceTag          String             @default("app")
   user               User               @relation(fields: [userId], references: [id])
+  organization       Organization?      @relation("ProfileOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
+  ownedOrganization  Organization[]     @relation("OrganizationOwnerProfile")
   reminders          Reminder[]
   deviceRegistrations DeviceRegistration[]
   notifications      Notification[]
@@ -178,6 +217,7 @@ model Profile {
   updatedAt          DateTime           @updatedAt
 
   @@index([userId, role])
+  @@index([organizationId, role])
 }
 
 model ParentActivationCode {
@@ -320,6 +360,7 @@ model CommunityReport {
 model UserManagement {
   id                   String   @id @default(cuid())
   userId               String
+  organizationId        String?
   role                 Role
   firstName            String
   lastName             String
@@ -333,16 +374,21 @@ model UserManagement {
   curriculumSelections Json?
   sourceTag            String   @default("app")
   user                 User     @relation(fields: [userId], references: [id])
+  organization         Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
   @@unique([userId, role])
   @@index([role, city])
+  @@index([organizationId, role])
 }
 
 model TutorProfile {
   id              String       @id @default(cuid())
   profileId       String       @unique
+  organizationId  String?
+  organizationType String      @default("individual_tutor")
+  organizationName String?
   headline        String
   subjects        String
   boards          String
@@ -361,6 +407,7 @@ model TutorProfile {
   outreachPlan    String?
   sourceTag       String       @default("app")
   profile         Profile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   batches         TutorBatch[]
   accountingEntries TutorAccountingEntry[]
   paymentOrders   PaymentOrder[]
@@ -370,11 +417,13 @@ model TutorProfile {
   @@index([location, gender])
   @@index([rating, experienceYears])
   @@index([verificationStatus, profileStatus, updatedAt])
+  @@index([organizationId, profileStatus])
 }
 
 model TutorBatch {
   id                String            @id @default(cuid())
   tutorProfileId    String
+  organizationId    String?
   programId         String?
   title             String
   course            String
@@ -392,6 +441,7 @@ model TutorBatch {
   feeAmount         Int?
   sourceTag         String            @default("app")
   tutorProfile      TutorProfile      @relation(fields: [tutorProfileId], references: [id], onDelete: Cascade)
+  organization      Organization?     @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   program           Program?          @relation(fields: [programId], references: [id], onDelete: SetNull)
   requests          BatchRequest[]
   enrollments       BatchEnrollment[]
@@ -403,6 +453,7 @@ model TutorBatch {
   @@index([subject, grade, board, mode])
   @@index([tutorProfileId, status])
   @@index([programId, status])
+  @@index([organizationId, status])
   @@index([status, startsAt])
   @@index([startsAt])
 }
@@ -410,6 +461,7 @@ model TutorBatch {
 model BatchRequest {
   id               String             @id @default(cuid())
   batchId          String
+  organizationId   String?
   suggestedBatchId String?
   studentProfileId String
   paymentOrderId   String?            @unique
@@ -418,6 +470,7 @@ model BatchRequest {
   tutorResponse    String?
   sourceTag        String             @default("app")
   batch            TutorBatch         @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  organization     Organization?      @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   studentProfile   Profile            @relation("StudentBatchRequests", fields: [studentProfileId], references: [id], onDelete: Cascade)
   paymentOrder     PaymentOrder?      @relation(fields: [paymentOrderId], references: [id], onDelete: SetNull)
   enrollment       BatchEnrollment?
@@ -427,16 +480,19 @@ model BatchRequest {
   @@unique([batchId, studentProfileId])
   @@index([studentProfileId, status])
   @@index([batchId, status])
+  @@index([organizationId, status])
 }
 
 model BatchEnrollment {
   id               String           @id @default(cuid())
   batchId          String
+  organizationId   String?
   studentProfileId String
   requestId        String?          @unique
   status           EnrollmentStatus @default(active)
   sourceTag        String           @default("app")
   batch            TutorBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  organization     Organization?    @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   studentProfile   Profile          @relation("StudentBatchEnrollments", fields: [studentProfileId], references: [id], onDelete: Cascade)
   request          BatchRequest?    @relation(fields: [requestId], references: [id], onDelete: SetNull)
   createdAt        DateTime         @default(now())
@@ -444,6 +500,7 @@ model BatchEnrollment {
 
   @@unique([batchId, studentProfileId])
   @@index([studentProfileId, status])
+  @@index([organizationId, status])
 }
 
 model Recommendation {
@@ -462,6 +519,7 @@ model Recommendation {
 model Resource {
   id               String             @id @default(cuid())
   creatorProfileId String?
+  organizationId   String?
   type             ResourceType
   title            String
   description      String
@@ -484,10 +542,12 @@ model Resource {
   quizAttempts     QuizAttempt[]
   quizCheckpoints  QuizCheckpoint[]
   creatorProfile   Profile?           @relation("ResourceCreator", fields: [creatorProfileId], references: [id], onDelete: SetNull)
+  organization      Organization?      @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   sourceTag        String             @default("app")
   createdAt        DateTime           @default(now())
 
   @@index([creatorProfileId, type])
+  @@index([organizationId, type])
 }
 
 model Flashcard {
@@ -572,6 +632,7 @@ model Notification {
 model Program {
   id          String             @id @default(cuid())
   creatorProfileId String?
+  organizationId String?
   role        Role
   title       String
   description String
@@ -581,6 +642,7 @@ model Program {
   feeAmount   Int?
   sourceTag   String             @default("app")
   creatorProfile Profile?         @relation("ProgramCreator", fields: [creatorProfileId], references: [id], onDelete: SetNull)
+  organization Organization?       @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   batches     TutorBatch[]
   milestones  ProgramMilestone[]
   progress    ProgramProgress[]
@@ -590,6 +652,7 @@ model Program {
   purchases ProgramPurchase[]
 
   @@index([creatorProfileId, status])
+  @@index([organizationId, status])
   @@index([role, status, visibility])
   @@index([status, visibility])
 }
@@ -598,6 +661,7 @@ model PaymentOrder {
   id               String   @id @default(cuid())
   userId           String
   profileId        String
+  organizationId   String?
   role             Role
   targetType       String
   targetId         String
@@ -622,6 +686,7 @@ model PaymentOrder {
   sourceTag        String   @default("app")
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   profile          Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   program          Program? @relation(fields: [programId], references: [id], onDelete: SetNull)
   batch            TutorBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
   batchRequest     BatchRequest?
@@ -632,6 +697,7 @@ model PaymentOrder {
   updatedAt        DateTime @updatedAt
 
   @@index([profileId, status, createdAt])
+  @@index([organizationId, status])
   @@index([targetType, targetId])
   @@index([tutorProfileId, status])
   @@index([status, createdAt])
@@ -641,6 +707,7 @@ model ProgramPurchase {
   id               String   @id @default(cuid())
   orderId          String   @unique
   programId        String
+  organizationId   String?
   studentProfileId String
   status           String   @default("pending")
   accessStatus     String   @default("locked")
@@ -650,12 +717,14 @@ model ProgramPurchase {
   sourceTag        String   @default("app")
   order            PaymentOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   program          Program @relation(fields: [programId], references: [id], onDelete: Cascade)
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   studentProfile   Profile @relation("StudentProgramPurchases", fields: [studentProfileId], references: [id], onDelete: Cascade)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   @@unique([programId, studentProfileId])
   @@index([studentProfileId, status])
+  @@index([organizationId, status])
 }
 
 model TutorAccountingEntry {
@@ -684,16 +753,19 @@ model StudentProgramSelection {
   id        String   @id @default(cuid())
   profileId String
   programId String
+  organizationId String?
   status    String   @default("active")
   sourceTag String   @default("app")
   profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
   program   Program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([profileId, programId])
   @@index([profileId, status])
   @@index([programId, status])
+  @@index([organizationId, status])
 }
 
 model ProgramMilestone {
@@ -730,48 +802,58 @@ model ProgramProgress {
   id                         String   @id @default(cuid())
   profileId                  String
   programId                  String
+  organizationId             String?
   unlockedMilestoneSequence  Int      @default(1)
   completedMilestoneSequence Int      @default(0)
   sourceTag                  String   @default("app")
   profile                    Profile  @relation(fields: [profileId], references: [id])
   program                    Program  @relation(fields: [programId], references: [id])
+  organization               Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
   @@unique([profileId, programId])
+  @@index([organizationId])
 }
 
 model ResourceProgress {
   id          String    @id @default(cuid())
   profileId   String
   resourceId  String
+  organizationId String?
   status      String    @default("started")
   completedAt DateTime?
   sourceTag   String    @default("app")
   profile     Profile   @relation(fields: [profileId], references: [id])
   resource    Resource  @relation(fields: [resourceId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
   @@unique([profileId, resourceId])
+  @@index([organizationId])
 }
 
 model ActivityProgress {
   id          String         @id @default(cuid())
   profileId   String
   activityId  String
+  organizationId String?
   status      ActivityStatus @default(in_progress)
   completedAt DateTime?
   sourceTag   String         @default("app")
   profile     Profile        @relation(fields: [profileId], references: [id])
   activity    MilestoneActivity @relation(fields: [activityId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
   @@unique([profileId, activityId])
   @@index([profileId, status])
+  @@index([organizationId])
 }
 
 model QuizAttempt {
   id          String   @id @default(cuid())
   profileId   String
   resourceId  String
+  organizationId String?
   score       Int
   total       Int
   percent     Int
@@ -779,16 +861,19 @@ model QuizAttempt {
   sourceTag   String   @default("app")
   profile     Profile  @relation(fields: [profileId], references: [id])
   resource    Resource @relation(fields: [resourceId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
 
   @@index([profileId, resourceId, createdAt])
   @@index([resourceId, createdAt])
+  @@index([organizationId, createdAt])
 }
 
 model QuizCheckpoint {
   id             String   @id @default(cuid())
   profileId      String
   resourceId     String
+  organizationId String?
   answers        Json
   submitted      Json
   currentIndex   Int      @default(0)
@@ -796,11 +881,13 @@ model QuizCheckpoint {
   sourceTag      String   @default("app")
   profile        Profile  @relation(fields: [profileId], references: [id])
   resource       Resource @relation(fields: [resourceId], references: [id])
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   @@unique([profileId, resourceId])
   @@index([resourceId, updatedAt])
+  @@index([organizationId, updatedAt])
 }
 
 model ConsentDocument {

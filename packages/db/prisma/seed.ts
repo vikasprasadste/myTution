@@ -5,6 +5,25 @@ import { PrismaClient, ResourceType, Role } from "@prisma/client";
 const prisma = new PrismaClient();
 const sourceTag = "mock";
 
+async function createSeedOrganization(userId: string, profileId: string, name: string, type: string) {
+  const organization = await prisma.organization.create({
+    data: {
+      ownerUserId: userId,
+      ownerProfileId: profileId,
+      type,
+      name,
+      bucketNamespace: `organizations/pending-${profileId}`,
+      sourceTag
+    }
+  });
+  const updated = await prisma.organization.update({
+    where: { id: organization.id },
+    data: { bucketNamespace: `organizations/${organization.id}` }
+  });
+  await prisma.profile.update({ where: { id: profileId }, data: { organizationId: updated.id } });
+  return updated;
+}
+
 async function main() {
   await prisma.authSession.deleteMany();
   await prisma.mobileClient.deleteMany();
@@ -34,6 +53,7 @@ async function main() {
   await prisma.userManagement.deleteMany();
   await prisma.profile.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.organization.deleteMany();
 
   await prisma.mobileClient.create({
     data: {
@@ -369,9 +389,11 @@ async function main() {
       include: { profiles: true }
     });
     const profile = tutorUser.profiles[0];
+    const organization = await createSeedOrganization(tutorUser.id, profile.id, `${firstName} ${lastName}`, "individual_tutor");
     await prisma.userManagement.create({
       data: {
         userId: tutorUser.id,
+        organizationId: organization.id,
         role: Role.tutor,
         firstName,
         lastName,
@@ -387,6 +409,9 @@ async function main() {
     const tutorProfile = await prisma.tutorProfile.create({
       data: {
         profileId: profile.id,
+        organizationId: organization.id,
+        organizationType: organization.type,
+        organizationName: organization.name,
         headline,
         subjects,
         boards,
@@ -409,6 +434,7 @@ async function main() {
       data: [
         {
           tutorProfileId: tutorProfile.id,
+          organizationId: organization.id,
           title: primaryGrade + " " + primarySubject + " weekday batch",
           course: primaryBoard + " " + primarySubject + " foundation",
           subject: primarySubject,
@@ -424,6 +450,7 @@ async function main() {
         },
         {
           tutorProfileId: tutorProfile.id,
+          organizationId: organization.id,
           title: primarySubject + " weekend booster",
           course: primarySubject + " exam practice",
           subject: primarySubject,
@@ -443,6 +470,7 @@ async function main() {
       await prisma.tutorBatch.create({
         data: {
           tutorProfileId: tutorProfile.id,
+          organizationId: organization.id,
           title: "Class 10 Mathematics offline intensive",
           course: "CBSE Mathematics board intensive",
           subject: primarySubject,
@@ -457,14 +485,14 @@ async function main() {
           sourceTag
         }
       });
-      const freeProgram = await createMockTutorProgram(profile.id, {
+      const freeProgram = await createMockTutorProgram(profile.id, organization.id, {
         title: "Class 10 board exam free foundation",
         description: "Free starter program with algebra notes, video, flashcards, and a diagnostic quiz.",
         milestoneTitle: "Milestone 1: Algebra foundations",
         feeType: "free",
         feeAmount: null
       });
-      const paidProgram = await createMockTutorProgram(profile.id, {
+      const paidProgram = await createMockTutorProgram(profile.id, organization.id, {
         title: "Class 10 board exam 2 month crash course",
         description: "Paid crash course with weekly milestones for board exam revision and practice.",
         milestoneTitle: "Milestone 1: High-yield algebra revision",
@@ -823,6 +851,10 @@ async function main() {
 }
 
 async function seedKnownStudentTutorMappings(studentUserId: string, studentProfileId: string, tutorProfileId: string, freeProgramId: string, paidProgramId: string) {
+  const [freeProgram, paidProgram] = await Promise.all([
+    prisma.program.findUnique({ where: { id: freeProgramId } }),
+    prisma.program.findUnique({ where: { id: paidProgramId } })
+  ]);
   const [freeBatch, paidBatch] = await Promise.all([
     prisma.tutorBatch.update({
       where: {
@@ -831,7 +863,7 @@ async function seedKnownStudentTutorMappings(studentUserId: string, studentProfi
           select: { id: true }
         })).id
       },
-      data: { programId: freeProgramId, feeType: "free", feeAmount: null }
+      data: { programId: freeProgramId, organizationId: freeProgram?.organizationId ?? null, feeType: "free", feeAmount: null }
     }),
     prisma.tutorBatch.update({
       where: {
@@ -840,14 +872,15 @@ async function seedKnownStudentTutorMappings(studentUserId: string, studentProfi
           select: { id: true }
         })).id
       },
-      data: { programId: paidProgramId, feeType: "paid", feeAmount: 2500 }
+      data: { programId: paidProgramId, organizationId: paidProgram?.organizationId ?? null, feeType: "paid", feeAmount: 2500 }
     })
   ]);
 
   for (const programId of [freeProgramId, paidProgramId]) {
-    await prisma.studentProgramSelection.create({ data: { profileId: studentProfileId, programId, sourceTag } });
+    const program = programId === freeProgramId ? freeProgram : paidProgram;
+    await prisma.studentProgramSelection.create({ data: { profileId: studentProfileId, programId, organizationId: program?.organizationId ?? null, sourceTag } });
     await prisma.programProgress.create({
-      data: { profileId: studentProfileId, programId, unlockedMilestoneSequence: 1, completedMilestoneSequence: 0, sourceTag }
+      data: { profileId: studentProfileId, programId, organizationId: program?.organizationId ?? null, unlockedMilestoneSequence: 1, completedMilestoneSequence: 0, sourceTag }
     });
   }
 
@@ -855,6 +888,7 @@ async function seedKnownStudentTutorMappings(studentUserId: string, studentProfi
     data: {
       userId: studentUserId,
       profileId: studentProfileId,
+      organizationId: paidProgram?.organizationId ?? null,
       role: Role.student,
       targetType: "program_purchase",
       targetId: paidProgramId,
@@ -876,6 +910,7 @@ async function seedKnownStudentTutorMappings(studentUserId: string, studentProfi
     data: {
       orderId: paidProgramOrder.id,
       programId: paidProgramId,
+      organizationId: paidProgram?.organizationId ?? null,
       studentProfileId,
       status: "active",
       accessStatus: "active",
@@ -889,6 +924,7 @@ async function seedKnownStudentTutorMappings(studentUserId: string, studentProfi
       data: {
         userId: studentUserId,
         profileId: studentProfileId,
+        organizationId: batch.organizationId,
         role: Role.student,
         targetType: "batch_admission",
         targetId: batch.id,
@@ -910,6 +946,7 @@ async function seedKnownStudentTutorMappings(studentUserId: string, studentProfi
     const request = await prisma.batchRequest.create({
       data: {
         batchId: batch.id,
+        organizationId: batch.organizationId,
         studentProfileId,
         status: "approved",
         paymentOrderId: paymentOrder?.id ?? null,
@@ -918,16 +955,17 @@ async function seedKnownStudentTutorMappings(studentUserId: string, studentProfi
       }
     });
     await prisma.batchEnrollment.create({
-      data: { batchId: batch.id, studentProfileId, requestId: request.id, status: "active", sourceTag }
+      data: { batchId: batch.id, organizationId: batch.organizationId, studentProfileId, requestId: request.id, status: "active", sourceTag }
     });
   }
 }
 
-async function createMockTutorProgram(profileId: string, input: { title: string; description: string; milestoneTitle: string; feeType: "free" | "paid"; feeAmount: number | null }) {
+async function createMockTutorProgram(profileId: string, organizationId: string | null, input: { title: string; description: string; milestoneTitle: string; feeType: "free" | "paid"; feeAmount: number | null }) {
   const resourceSlugBase = input.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const article = await prisma.resource.create({
     data: {
       creatorProfileId: profileId,
+      organizationId,
       type: ResourceType.article,
       title: input.title + " notes",
       description: "Board-focused micro-notes with formulas, examples, and answer-writing tips.",
@@ -947,6 +985,7 @@ async function createMockTutorProgram(profileId: string, input: { title: string;
   const video = await prisma.resource.create({
     data: {
       creatorProfileId: profileId,
+      organizationId,
       type: ResourceType.video,
       title: input.title + " concept video",
       description: "Short lesson explaining the core concept before practice.",
@@ -967,6 +1006,7 @@ async function createMockTutorProgram(profileId: string, input: { title: string;
   const flashcard = await prisma.resource.create({
     data: {
       creatorProfileId: profileId,
+      organizationId,
       type: ResourceType.flashcard,
       title: input.title + " recall cards",
       description: "Quick active recall cards for identities, terms, and common traps.",
@@ -988,6 +1028,7 @@ async function createMockTutorProgram(profileId: string, input: { title: string;
   const quiz = await prisma.resource.create({
     data: {
       creatorProfileId: profileId,
+      organizationId,
       type: ResourceType.quiz,
       title: input.title + " diagnostic quiz",
       description: "Short MCQ check before moving to the next milestone.",
@@ -1020,6 +1061,7 @@ async function createMockTutorProgram(profileId: string, input: { title: string;
   const program = await prisma.program.create({
     data: {
       creatorProfileId: profileId,
+      organizationId,
       role: Role.tutor,
       title: input.title,
       description: input.description,

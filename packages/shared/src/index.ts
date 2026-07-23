@@ -94,6 +94,9 @@ export interface IdentityLinkedProfile {
 
 export interface IdentityTutorProfile {
   id: string;
+  organizationId?: string | null;
+  organizationType?: string | null;
+  organizationName?: string | null;
   headline: string;
   subjects: string[];
   boards: string[];
@@ -143,6 +146,9 @@ export interface CurriculumCatalogueResponse {
 export interface IdentityProfile {
   id: string;
   userId: string;
+  organizationId?: string | null;
+  organizationName?: string | null;
+  organizationType?: string | null;
   role: Role;
   firstName: string;
   lastName: string;

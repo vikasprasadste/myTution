@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   Image,
   Modal,
   PanResponder,
@@ -42,6 +43,7 @@ import { useRoleTheme } from "@/theme/useRoleTheme";
 type AppScreen =
   | "role"
   | "value"
+  | "educatorType"
   | "phone"
   | "otp"
   | "createPassword"
@@ -81,7 +83,18 @@ const roleCarouselCardBg: Record<Role, string> = {
 };
 
 type StreamKey = "junior" | "senior" | "ug" | "pg";
-type AuthSession = { accessToken: string; refreshToken: string; tokenType: string };
+type AuthSession = {
+  accessToken: string;
+  refreshToken: string;
+  tokenType: string;
+  accessTokenExpiresAt?: string;
+  refreshTokenExpiresAt?: string;
+};
+type AuthSessionBridge = {
+  getSession: () => AuthSession | null;
+  setSession: (session: AuthSession) => void;
+  expireSession: () => void;
+};
 type ParentLink = { id: string; name: string; relationship: string; status: string };
 type DashboardCard = { value: string; label: string; target: AppScreen };
 type TutorDashboardTarget = "programs" | "batches" | "requests" | "enrollments";
@@ -154,6 +167,8 @@ type ValuePropItem = { id: string; icon: string; title: string; description: str
 type ValuePropsSetting = { key: "valueprops"; folder: string; version: number; value: Record<Role, ValuePropItem[]> };
 type RoleThumbnailItem = { title: string; description: string; imageUrl: string };
 type RoleThumbnailsSetting = { key: "rolethumbnails"; folder: string; version: number; accessLevel: "public"; value: Record<Role, RoleThumbnailItem> };
+type EducatorOrganizationTypeItem = { id: string; title: string; description: string };
+type EducatorOrganizationTypesSetting = { key: "educatororganizationtypes"; folder: string; version: number; accessLevel: "public"; value: EducatorOrganizationTypeItem[] };
 type ProfileDraft = {
   firstName: string;
   lastName: string;
@@ -230,7 +245,7 @@ function personaFromIdentity(profile: IdentityProfile | null | undefined, phone 
     phone,
     profileLabel: profile.role === "parent"
       ? `Parent • ${profile.linkedStudents[0]?.name ?? "Linked student"}`
-      : `${capitalize(profile.role)} • ${profile.stream ?? "Senior"} • ${curriculumLabel(profile.curriculumSelections) ?? profile.specialization ?? "myTution"}`
+      : `${roleDisplayLabel(profile.role)} • ${profile.stream ?? "Senior"} • ${curriculumLabel(profile.curriculumSelections) ?? profile.specialization ?? "myTution"}`
   };
 }
 
@@ -331,6 +346,9 @@ export default function Index() {
   const [valueIndex, setValueIndex] = useState(0);
   const [valuePropsSetting, setValuePropsSetting] = useState<ValuePropsSetting | null>(null);
   const [roleThumbnailsSetting, setRoleThumbnailsSetting] = useState<RoleThumbnailsSetting | null>(null);
+  const [educatorOrganizationTypesSetting, setEducatorOrganizationTypesSetting] = useState<EducatorOrganizationTypesSetting | null>(null);
+  const [educatorOrganizationType, setEducatorOrganizationType] = useState("individual_tutor");
+  const [educatorOrganizationName, setEducatorOrganizationName] = useState("");
   const [valuePropsLoading, setValuePropsLoading] = useState(false);
   const [consent, setConsent] = useState(false);
   const [consentDocuments, setConsentDocuments] = useState<ConsentDocumentSummary[]>([]);
@@ -420,6 +438,43 @@ export default function Index() {
   const [learnerProgress, setLearnerProgress] = useState<LearnerProgressSummary[]>([]);
   const [parentMonitoring, setParentMonitoring] = useState<ParentMonitoringResponse | null>(null);
   const [tutorSupply, setTutorSupply] = useState<TutorSupplyState | null>(null);
+  const authSessionRef = useRef<AuthSession | null>(null);
+  const nextRegistrationScreen = role === "tutor" ? "educatorType" : "phone";
+
+  function expireActiveSession() {
+    authSessionRef.current = null;
+    setAuthSession(null);
+    setIdentityContext(null);
+    setSignInMode("returning");
+    setScreen("signin");
+    setApiNotice("Your session expired. Please sign in again.");
+  }
+
+  useEffect(() => {
+    authSessionRef.current = authSession;
+    if (isTimestampExpired(authSession?.refreshTokenExpiresAt)) expireActiveSession();
+  }, [authSession?.accessToken, authSession?.refreshTokenExpiresAt]);
+
+  useEffect(() => {
+    authSessionBridge = {
+      getSession: () => authSessionRef.current,
+      setSession: (session) => {
+        authSessionRef.current = session;
+        setAuthSession(session);
+      },
+      expireSession: expireActiveSession
+    };
+    return () => {
+      authSessionBridge = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active" && isTimestampExpired(authSessionRef.current?.refreshTokenExpiresAt)) expireActiveSession();
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     let ignore = false;
@@ -464,7 +519,7 @@ export default function Index() {
     lastName: "",
     initials: role.charAt(0).toUpperCase(),
     phone: phoneForApi,
-    profileLabel: `${capitalize(role)} • myTution`
+    profileLabel: `${roleDisplayLabel(role)} • myTution`
   }), [phoneForApi, role]);
   const identityPersona = personaFromIdentity(identityContext?.activeProfile, identityContext?.user.phone);
   const persona = (authSession || screen === "signin") && identityPersona?.role === role ? identityPersona : (authSession || screen === "signin") && apiPersona?.role === role ? apiPersona : emptyPersona;
@@ -575,18 +630,21 @@ export default function Index() {
     async function loadPreAuthConfiguration() {
       setValuePropsLoading(true);
       try {
-        const [valueProps, roleThumbnails] = await Promise.all([
+        const [valueProps, roleThumbnails, educatorOrganizationTypes] = await Promise.all([
           apiGet<{ data: ValuePropsSetting }>("/api/v1/configuration/settings/valueprops"),
-          apiGet<{ data: RoleThumbnailsSetting }>("/api/v1/configuration/settings/rolethumbnails")
+          apiGet<{ data: RoleThumbnailsSetting }>("/api/v1/configuration/settings/rolethumbnails"),
+          apiGet<{ data: EducatorOrganizationTypesSetting }>("/api/v1/configuration/settings/educatororganizationtypes")
         ]);
         if (!ignore) {
           setValuePropsSetting(valueProps.data);
           setRoleThumbnailsSetting(roleThumbnails.data);
+          setEducatorOrganizationTypesSetting(educatorOrganizationTypes.data);
         }
       } catch {
         if (!ignore) {
           setValuePropsSetting(null);
           setRoleThumbnailsSetting(null);
+          setEducatorOrganizationTypesSetting(null);
           setApiNotice("App configuration could not be loaded.");
         }
       } finally {
@@ -1370,6 +1428,8 @@ export default function Index() {
           city: profileDraft.city.trim(),
           communicationAddress: profileDraft.communicationAddress.trim(),
           alternatePhone: profileDraft.alternatePhone.trim(),
+          organizationType: role === "tutor" ? educatorOrganizationType : undefined,
+          organizationName: role === "tutor" ? educatorOrganizationName.trim() || undefined : undefined,
           stream,
           specialization,
           curriculumSelections: role === "parent" ? [] : profileDraft.curriculumSelections
@@ -1818,6 +1878,8 @@ export default function Index() {
               setSelectedProgramId(null);
               setConsent(false);
               setAcceptedConsentIds([]);
+              setEducatorOrganizationType("individual_tutor");
+              setEducatorOrganizationName("");
             }}>
               <View style={styles.roleThumbnailFrame}>
                 {roleThumbnailsSetting?.value[item]?.imageUrl ? (
@@ -1827,7 +1889,7 @@ export default function Index() {
                 )}
               </View>
               <View style={styles.flex}>
-                <CardTitle>{roleThumbnailsSetting?.value[item]?.title ?? capitalize(item)}</CardTitle>
+                <CardTitle>{roleThumbnailsSetting?.value[item]?.title ?? roleDisplayLabel(item)}</CardTitle>
                 <Muted>{roleThumbnailsSetting?.value[item]?.description ?? (item === "student" ? "Discover tutors and book trial classes." : item === "tutor" ? "Manage leads, calendar, and payments." : "Track classes, payments, and progress.")}</Muted>
               </View>
               <Text style={styles.check}>{role === item ? "✓" : ""}</Text>
@@ -1849,7 +1911,7 @@ export default function Index() {
       const last = valueIndex >= Math.max(0, configuredValueProps.length - 1);
       return (
         <>
-          <TopBar title="Why myTution" left="‹" onLeft={() => setScreen("role")} right={last ? "" : "Skip"} onRight={() => setScreen("phone")} />
+          <TopBar title="Why myTution" left="‹" onLeft={() => setScreen("role")} right={last ? "" : "Skip"} onRight={() => setScreen(nextRegistrationScreen)} />
           {valuePropsLoading ? (
             <View style={styles.valueStage}>
               <View style={[styles.propArt, { backgroundColor: theme.surface }]}>
@@ -1881,7 +1943,42 @@ export default function Index() {
               </View>
             </View>
           )}
-          <Button role={role} label={last ? "Get started" : "Next"} disabled={!prop} onPress={() => last ? setScreen("phone") : setValueIndex((index) => index + 1)} />
+          <Button role={role} label={last ? "Get started" : "Next"} disabled={!prop} onPress={() => last ? setScreen(nextRegistrationScreen) : setValueIndex((index) => index + 1)} />
+        </>
+      );
+    }
+
+    if (screen === "educatorType") {
+      const options = educatorOrganizationTypesSetting?.value?.length ? educatorOrganizationTypesSetting.value : [
+        { id: "individual_tutor", title: "Individual Tutor", description: "I teach as an individual educator." },
+        { id: "coaching_center", title: "Coaching Center", description: "I run a local or online coaching center." },
+        { id: "institute", title: "Institute", description: "I represent an education institute." }
+      ];
+      const selectedOption = options.find((item) => item.id === educatorOrganizationType) ?? options[0];
+      return (
+        <>
+          <TopBar title="Educator setup" left="‹" onLeft={() => setScreen("value")} />
+          <Title>How do you teach?</Title>
+          <Muted>Select the educator profile type that best matches your registration.</Muted>
+          {options.map((item) => (
+            <Card key={item.id} role={role} selected={educatorOrganizationType === item.id} onPress={() => {
+              setEducatorOrganizationType(item.id);
+              if (item.id === "individual_tutor") setEducatorOrganizationName("");
+            }}>
+              <View style={styles.flex}>
+                <CardTitle>{item.title}</CardTitle>
+                <Muted>{item.description}</Muted>
+              </View>
+              <Text style={styles.check}>{educatorOrganizationType === item.id ? "✓" : ""}</Text>
+            </Card>
+          ))}
+          {selectedOption?.id !== "individual_tutor" ? (
+            <>
+              <FieldLabel>Establishment name</FieldLabel>
+              <Input value={educatorOrganizationName} onChangeText={setEducatorOrganizationName} placeholder={selectedOption?.title ?? "Name"} />
+            </>
+          ) : null}
+          <Button role={role} label="Continue" onPress={() => setScreen("phone")} disabled={selectedOption?.id !== "individual_tutor" && !educatorOrganizationName.trim()} />
         </>
       );
     }
@@ -1889,7 +1986,7 @@ export default function Index() {
     if (screen === "phone") {
       return (
         <>
-          <TopBar title="Registration" left="‹" onLeft={() => setScreen("value")} />
+          <TopBar title="Registration" left="‹" onLeft={() => setScreen(role === "tutor" ? "educatorType" : "value")} />
           <View style={styles.registrationBrand}>
             <Image source={icon} style={styles.registrationLogo} resizeMode="contain" />
           </View>
@@ -2210,7 +2307,7 @@ export default function Index() {
     }} actionLoading={loadingAction} generateActivationCode={generateActivationCode} activationCode={activationCode} activationSeconds={activationSeconds} activationRelationship={activationRelationship} setActivationRelationship={setActivationRelationship} parents={linkedParents} />;
     if (screen === "ratings") return <Ratings role={role} back={() => setScreen("home")} />;
     if (screen === "events") return <Events role={role} reminders={roleReminders} connectedPeopleByReminder={connectedPeopleByReminder} editReminder={editReminder} deleteReminder={deleteReminder} back={() => setScreen("home")} title={reminderTitle} date={reminderDate} time={reminderTime} setTitle={setReminderTitle} setDate={setReminderDate} setTime={setReminderTime} connectedPeople={connectedPeople} setConnectedPeople={setConnectedPeople} openDatePicker={() => setPicker({ target: "reminderDate", mode: "date", value: parseDisplayDate(reminderDate) ?? new Date() })} openTimePicker={() => setPicker({ target: "reminderTime", mode: "time", value: parseDisplayTime(reminderTime) })} createReminder={createReminder} loading={loadingAction === "createReminder"} submitLabel={editingReminderId ? "Update reminder" : "Create reminder"} />;
-    if (screen === "sessions") return <Sessions role={role} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} programDataReady={!authSession?.accessToken || apiMilestones !== null || programs.length > 0} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? []} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} restoreProgram={restoreTutorProgram} archiveModalVisible={programArchiveModalVisible} setArchiveModalVisible={setProgramArchiveModalVisible} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
+    if (screen === "sessions") return <Sessions role={role} accessToken={authSession?.accessToken} setApiNotice={setApiNotice} setLoadingAction={setLoadingAction} programs={programs} selectedPrograms={selectedPrograms} selectedProgramId={selectedProgramId} programDataReady={!authSession?.accessToken || apiMilestones !== null || programs.length > 0} switchProgram={(programId) => { setSelectedProgramId(programId); setProgramRefreshKey((value) => value + 1); }} milestones={apiMilestones ?? []} completedMilestone={completedMilestone} openMilestone={openMilestone} menuOpen={programMenuOpen} setMenuOpen={setProgramMenuOpen} openProgramPicker={openProgramPicker} archiveProgram={archiveTutorProgram} restoreProgram={restoreTutorProgram} archiveModalVisible={programArchiveModalVisible} setArchiveModalVisible={setProgramArchiveModalVisible} publishProgram={publishTutorProgram} tutorProgramDraft={tutorProgramDraft} setTutorProgramDraft={setTutorProgramDraft} tutorProgramComposerOpen={tutorProgramComposerOpen} setTutorProgramComposerOpen={setTutorProgramComposerOpen} createTutorProgram={createTutorProgram} createTutorProgramLoading={loadingAction === "createTutorProgram"} editingProgramId={editingTutorProgramId} setEditingProgramId={setEditingTutorProgramId} loadTutorProgramForEdit={loadTutorProgramForEdit} loadingAction={loadingAction} />;
     if (screen === "milestoneDetail" && selectedMilestone) {
       const selectedProgram = programs.find((program) => program.id === selectedProgramId);
       return <MilestoneDetail role={role} milestone={selectedMilestone} openActivity={(activityId) => openMilestoneActivity(selectedMilestone, activityId)} back={() => setScreen("sessions")} editableActivities={role === "tutor" && !isPublishedProgram(selectedProgram)} onEditActivity={editTutorActivityFromMilestone} />;
@@ -4044,6 +4141,9 @@ function ActivityRow({ activity, onPress, disabled, editable, onEdit }: { activi
 
 function Sessions({
   role,
+  accessToken,
+  setApiNotice,
+  setLoadingAction,
   programs,
   selectedPrograms,
   selectedProgramId,
@@ -4072,6 +4172,9 @@ function Sessions({
   loadingAction
 }: {
   role: Role;
+  accessToken?: string;
+  setApiNotice: (value: string) => void;
+  setLoadingAction: (value: string | null) => void;
   programs: ProgramSummary[];
   selectedPrograms: ProgramSummary[];
   selectedProgramId: string | null;
@@ -4174,6 +4277,9 @@ function Sessions({
           setEditingProgramId={setEditingProgramId}
           loadProgramForEdit={loadTutorProgramForEdit}
           loadingAction={loadingAction}
+          accessToken={accessToken}
+          setApiNotice={setApiNotice}
+          setLoadingAction={setLoadingAction}
         />
       ) : null}
       {role === "tutor" && selectedProgram ? (
@@ -4377,7 +4483,10 @@ function TutorProgramAuthoring({
   editingProgramId,
   setEditingProgramId,
   loadProgramForEdit,
-  loadingAction
+  loadingAction,
+  accessToken,
+  setApiNotice,
+  setLoadingAction
 }: {
   role: Role;
   programs: ProgramSummary[];
@@ -4395,6 +4504,9 @@ function TutorProgramAuthoring({
   setEditingProgramId: (value: string | null) => void;
   loadProgramForEdit: (programId: string) => void;
   loadingAction: string | null;
+  accessToken?: string;
+  setApiNotice: (value: string) => void;
+  setLoadingAction: (value: string | null) => void;
 }) {
   const theme = useRoleTheme(role);
   const updateDraft = (patch: Partial<TutorProgramDraft>) => setDraft((current) => ({ ...current, ...patch }));
@@ -4450,21 +4562,39 @@ function TutorProgramAuthoring({
         : milestone)
     }));
   };
-  const pickAuthoringFile = async (onPicked: (uri: string) => void) => {
+  const uploadAuthoringAsset = async (asset: { uri: string; name?: string | null; mimeType?: string | null }, kind: string, onUploaded: (path: string) => void) => {
+    if (!accessToken) {
+      setApiNotice("Please sign in again before uploading material.");
+      return;
+    }
+    setLoadingAction("uploadMaterial");
+    try {
+      const uploaded = await apiUploadMaterial(asset.uri, kind, accessToken, asset.name, asset.mimeType);
+      onUploaded(uploaded.assetPath);
+      setApiNotice("");
+    } catch {
+      setApiNotice("Material upload failed. Please try again.");
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+  const pickAuthoringFile = async (kind: string, onPicked: (uri: string) => void) => {
     const result = await DocumentPicker.getDocumentAsync({
       copyToCacheDirectory: true,
       multiple: false,
       type: "*/*"
     });
-    if (!result.canceled && result.assets[0]?.uri) onPicked(result.assets[0].uri);
+    const asset = result.canceled ? null : result.assets[0];
+    if (asset?.uri) await uploadAuthoringAsset(asset, kind, onPicked);
   };
-  const pickAuthoringImage = async (onPicked: (uri: string) => void) => {
+  const pickAuthoringImage = async (kind: string, onPicked: (uri: string) => void) => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       quality: 0.85
     });
-    if (!result.canceled && result.assets[0]?.uri) onPicked(result.assets[0].uri);
+    const asset = result.canceled ? null : result.assets[0];
+    if (asset?.uri) await uploadAuthoringAsset({ uri: asset.uri, name: asset.fileName, mimeType: asset.mimeType }, kind, onPicked);
   };
   const moveActivity = (milestoneIndex: number, resourceIndex: number, direction: -1 | 1) => {
     const nextIndex = resourceIndex + direction;
@@ -4847,23 +4977,23 @@ function TutorProgramAuthoring({
                   <FieldLabel>Description *</FieldLabel>
                   <TextInput multiline value={activeResource.description} onChangeText={(description) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { description })} placeholder={`Enter ${activeResource.type} description`} placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
                   <FieldLabel>Thumbnail</FieldLabel>
-                  {activeResource.thumbnailPath ? <Image source={{ uri: activeResource.thumbnailPath }} style={styles.authoringImagePreview} resizeMode="cover" /> : null}
-                  <UploadOption title={activeResource.thumbnailPath ? "Change thumbnail" : "Upload thumbnail"} action="Image" onPress={() => pickAuthoringImage((thumbnailPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { thumbnailPath }))} />
+                  {activeResource.thumbnailPath ? <Image source={{ uri: amsFileUrl(activeResource.thumbnailPath) }} style={styles.authoringImagePreview} resizeMode="cover" /> : null}
+                  <UploadOption title={activeResource.thumbnailPath ? "Change thumbnail" : "Upload thumbnail"} action="Image" onPress={() => pickAuthoringImage("thumbnail", (thumbnailPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { thumbnailPath }))} />
                   <FieldLabel>Banner</FieldLabel>
-                  {activeResource.bannerPath ? <Image source={{ uri: activeResource.bannerPath }} style={styles.authoringBannerPreview} resizeMode="cover" /> : null}
-                  <UploadOption title={activeResource.bannerPath ? "Change banner" : "Upload banner"} action="Image" onPress={() => pickAuthoringImage((bannerPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { bannerPath }))} />
+                  {activeResource.bannerPath ? <Image source={{ uri: amsFileUrl(activeResource.bannerPath) }} style={styles.authoringBannerPreview} resizeMode="cover" /> : null}
+                  <UploadOption title={activeResource.bannerPath ? "Change banner" : "Upload banner"} action="Image" onPress={() => pickAuthoringImage("banner", (bannerPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { bannerPath }))} />
                   {activeResource.type === "video" ? (
                     <View style={styles.authoringUploadGrid}>
                       <FieldLabel>Video file</FieldLabel>
-                      <UploadOption title="Upload video" action={activeResource.mediaUrl ? "Selected" : "MP4"} onPress={() => pickAuthoringFile((mediaUrl) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { mediaUrl }))} />
+                      <UploadOption title="Upload video" action={activeResource.mediaUrl ? "Selected" : "MP4"} onPress={() => pickAuthoringFile("video", (mediaUrl) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { mediaUrl }))} />
                       {activeResource.mediaUrl ? <Text style={styles.authoringUploadNote} numberOfLines={1}>{activeResource.mediaUrl}</Text> : null}
                       <Text style={styles.authoringUploadNote}>Supported file type: mp4</Text>
                       <FieldLabel>Subtitle file</FieldLabel>
-                      <UploadOption title="Upload captions" action={activeResource.vttPath ? "Selected" : "VTT"} onPress={() => pickAuthoringFile((vttPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { vttPath }))} />
+                      <UploadOption title="Upload captions" action={activeResource.vttPath ? "Selected" : "VTT"} onPress={() => pickAuthoringFile("vtt", (vttPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { vttPath }))} />
                       {activeResource.vttPath ? <Text style={styles.authoringUploadNote} numberOfLines={1}>{activeResource.vttPath}</Text> : null}
                       <Text style={styles.authoringUploadNote}>Supported file type: vtt</Text>
                       <FieldLabel>Body</FieldLabel>
-                      <UploadOption title="Upload notes" action={activeResource.metadataPath ? "Selected" : "Document"} onPress={() => pickAuthoringFile((metadataPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { metadataPath }))} />
+                      <UploadOption title="Upload notes" action={activeResource.metadataPath ? "Selected" : "Document"} onPress={() => pickAuthoringFile("metadata", (metadataPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { metadataPath }))} />
                       {activeResource.metadataPath ? <Text style={styles.authoringUploadNote} numberOfLines={1}>{activeResource.metadataPath}</Text> : null}
                       <Text style={styles.authoringUploadNote}>Supported file types: pdf, word, md</Text>
                     </View>
@@ -4871,7 +5001,7 @@ function TutorProgramAuthoring({
                   {activeResource.type === "article" ? (
                     <View style={styles.authoringUploadGrid}>
                       <FieldLabel>Article body</FieldLabel>
-                      <UploadOption title="Upload body" action={activeResource.metadataPath ? "Selected" : "Document"} onPress={() => pickAuthoringFile((metadataPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { metadataPath }))} />
+                      <UploadOption title="Upload body" action={activeResource.metadataPath ? "Selected" : "Document"} onPress={() => pickAuthoringFile("article", (metadataPath) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { metadataPath, mediaUrl: metadataPath }))} />
                       {activeResource.metadataPath ? <Text style={styles.authoringUploadNote} numberOfLines={1}>{activeResource.metadataPath}</Text> : null}
                       <Text style={styles.authoringUploadNote}>Supported file types: pdf, word</Text>
                       <TextInput multiline value={activeResource.body ?? ""} onChangeText={(body) => updateResource(activeEditor.milestoneIndex, activeEditor.resourceIndex, { body })} placeholder="Notes, examples, and board-style guidance" placeholderTextColor="#94A3B8" style={styles.textArea} />
@@ -4885,7 +5015,7 @@ function TutorProgramAuthoring({
                           <Input value={card.question} onChangeText={(question) => updateFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex, cardIndex, { question })} placeholder="Front question or term" />
                           <Input value={card.answer} onChangeText={(answer) => updateFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex, cardIndex, { answer })} placeholder="Back answer" />
                           <FieldLabel>More details</FieldLabel>
-                          <UploadOption title="Upload details" action="Document" onPress={() => pickAuthoringFile((learnMore) => updateFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex, cardIndex, { learnMore }))} />
+                          <UploadOption title="Upload details" action="Document" onPress={() => pickAuthoringFile("flashcard", (learnMore) => updateFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex, cardIndex, { learnMore }))} />
                           <Text style={styles.authoringUploadNote}>Supported file types: pdf, word, md</Text>
                           <TextInput multiline value={card.learnMore ?? ""} onChangeText={(learnMore) => updateFlashcard(activeEditor.milestoneIndex, activeEditor.resourceIndex, cardIndex, { learnMore })} placeholder="More details" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
                         </View>
@@ -4937,7 +5067,7 @@ function TutorProgramAuthoring({
                             </View>
                           )}
                           <FieldLabel>Explanation</FieldLabel>
-                          <UploadOption title="Upload explanation" action="Document" onPress={() => pickAuthoringFile((learnMore) => updateQuizQuestion(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, { learnMore }))} />
+                          <UploadOption title="Upload explanation" action="Document" onPress={() => pickAuthoringFile("quiz", (learnMore) => updateQuizQuestion(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, { learnMore }))} />
                           <Text style={styles.authoringUploadNote}>Supported file types: pdf, word, md</Text>
                           <TextInput multiline value={question.learnMore ?? ""} onChangeText={(learnMore) => updateQuizQuestion(activeEditor.milestoneIndex, activeEditor.resourceIndex, questionIndex, { learnMore })} placeholder="Explanation" placeholderTextColor="#94A3B8" style={styles.textAreaSmall} />
                         </View>
@@ -6497,6 +6627,10 @@ function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function roleDisplayLabel(value: Role) {
+  return value === "tutor" ? "Educator" : capitalize(value);
+}
+
 function formatDisplayDate(date: Date) {
   return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 }
@@ -6584,15 +6718,86 @@ async function apiDelete(path: string, accessToken?: string) {
   return apiRequest(path, { method: "DELETE", accessToken });
 }
 
+async function apiUploadMaterial(uri: string, kind: string, accessToken: string, fileName?: string | null, mimeType?: string | null) {
+  const upload = async (token: string) => {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    return fetch(`${appConfig.apiBaseUrl}/api/v1/ams/organizations/materials?kind=${encodeURIComponent(kind)}&fileName=${encodeURIComponent(fileName ?? `material-${Date.now()}`)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": mimeType ?? blob.type ?? "application/octet-stream",
+        Authorization: `Bearer ${token}`
+      },
+      body: blob
+    });
+  };
+  let response = await upload(accessToken);
+  if (response.status === 401) {
+    const refreshed = await refreshAuthSession();
+    if (refreshed?.accessToken) response = await upload(refreshed.accessToken);
+  }
+  if (response.status === 401) authSessionBridge?.expireSession();
+  if (!response.ok) throw new ApiStatusError(response.status);
+  const payload = await response.json() as { data: { assetPath: string; previewUrl: string; organizationId: string; bucketNamespace: string; kind: string } };
+  return payload.data;
+}
+
+let authSessionBridge: AuthSessionBridge | null = null;
+let refreshSessionInFlight: Promise<AuthSession | null> | null = null;
+
+function isTimestampExpired(value?: string | null) {
+  if (!value) return false;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) && timestamp <= Date.now();
+}
+
+async function refreshAuthSession() {
+  const bridge = authSessionBridge;
+  const session = bridge?.getSession();
+  if (!bridge || !session?.refreshToken || isTimestampExpired(session.refreshTokenExpiresAt)) {
+    bridge?.expireSession();
+    return null;
+  }
+  if (!refreshSessionInFlight) {
+    refreshSessionInFlight = fetch(`${appConfig.apiBaseUrl}/api/v1/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken: session.refreshToken })
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        const payload = await response.json() as { data?: AuthSession };
+        return payload.data ?? null;
+      })
+      .catch(() => null)
+      .finally(() => {
+        refreshSessionInFlight = null;
+      });
+  }
+  const refreshed = await refreshSessionInFlight;
+  if (refreshed?.accessToken) {
+    bridge.setSession(refreshed);
+    return refreshed;
+  }
+  bridge.expireSession();
+  return null;
+}
+
 async function apiRequest<T = unknown>(path: string, options: RequestInit & { accessToken?: string } = {}) {
-  const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
+  const request = (accessToken?: string) => fetch(`${appConfig.apiBaseUrl}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      ...(options.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : {}),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...options.headers
     }
   });
+  let response = await request(options.accessToken);
+  if (response.status === 401 && options.accessToken) {
+    const refreshed = await refreshAuthSession();
+    if (refreshed?.accessToken) response = await request(refreshed.accessToken);
+  }
+  if (response.status === 401 && options.accessToken) authSessionBridge?.expireSession();
   if (!response.ok) throw new ApiStatusError(response.status);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

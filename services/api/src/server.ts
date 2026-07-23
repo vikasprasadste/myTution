@@ -21,9 +21,13 @@ const mobileClientId = "mytution_mobile_app";
 const isProduction = process.env.NODE_ENV === "production";
 const jsonBodyLimit = process.env.API_JSON_BODY_LIMIT ?? "512kb";
 const allowedOrigins = splitCsv(process.env.API_ALLOWED_ORIGINS ?? "").filter(Boolean);
-const accessTokenTtlMinutes = Number(process.env.ACCESS_TOKEN_TTL_MINUTES ?? 15);
-const refreshTokenTtlDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 30);
+const authorizationSessionPolicy = {
+  service: "authorization",
+  accessTokenTtlMinutes: Number(process.env.ACCESS_TOKEN_TTL_MINUTES ?? 15),
+  refreshTokenTtlHours: Number(process.env.REFRESH_TOKEN_TTL_HOURS ?? Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 1) * 24)
+};
 const maxStaticAssetBytes = Number(process.env.AMS_MAX_STATIC_ASSET_BYTES ?? 25 * 1024 * 1024);
+const maxMaterialUploadBytes = Number(process.env.AMS_MAX_MATERIAL_UPLOAD_BYTES ?? 250 * 1024 * 1024);
 const allowedAssetExtensions = new Set([".svg", ".png", ".jpg", ".jpeg", ".webp", ".vtt", ".md", ".json", ".mp4", ".pdf"]);
 
 let curriculumCatalogueCache: CurriculumCatalogueResponse | null = null;
@@ -126,8 +130,8 @@ const roleThumbnailsSetting = {
       imageUrl: "/api/v1/ams/files/rolethumbnails/student.png"
     },
     tutor: {
-      title: "Tutor",
-      description: "Manage leads, calendar, and payments.",
+      title: "Educator",
+      description: "Manage programs, batches, leads, and payments.",
       imageUrl: "/api/v1/ams/files/rolethumbnails/tutor.png"
     },
     parent: {
@@ -138,9 +142,34 @@ const roleThumbnailsSetting = {
   }
 } satisfies ConfigurationSetting<Record<Role, { title: string; description: string; imageUrl: string }>>;
 
+const educatorOrganizationTypesSetting = {
+  key: "educatororganizationtypes",
+  folder: "authorization",
+  version: 1,
+  accessLevel: "public",
+  value: [
+    {
+      id: "individual_tutor",
+      title: "Individual Tutor",
+      description: "I teach as an individual educator."
+    },
+    {
+      id: "coaching_center",
+      title: "Coaching Center",
+      description: "I run a local or online coaching center."
+    },
+    {
+      id: "institute",
+      title: "Institute",
+      description: "I represent an education institute."
+    }
+  ]
+} satisfies ConfigurationSetting<Array<{ id: string; title: string; description: string }>>;
+
 const configurationSettings: Record<string, ConfigurationSetting<unknown>> = {
   [valuePropsSetting.key]: valuePropsSetting,
-  [roleThumbnailsSetting.key]: roleThumbnailsSetting
+  [roleThumbnailsSetting.key]: roleThumbnailsSetting,
+  [educatorOrganizationTypesSetting.key]: educatorOrganizationTypesSetting
 };
 
 const registrationConsentPermissionSet = {
@@ -349,7 +378,7 @@ function createRateLimiter(input: { windowMs: number; max: number; keyPrefix: st
 function validateStaticAssetRequest(req: express.Request, res: express.Response, next: express.NextFunction) {
   const decodedPath = decodeURIComponent(req.path);
   const extension = path.extname(decodedPath).toLowerCase();
-  if (decodedPath.includes("..") || !allowedAssetExtensions.has(extension)) {
+  if (decodedPath.includes("..") || decodedPath.startsWith("/private/") || !allowedAssetExtensions.has(extension)) {
     res.status(403).json({ error: "Unsupported asset request" });
     return;
   }
@@ -455,7 +484,7 @@ app.get("/", (_req, res) => {
   res.json({ ok: true, service: "myTution API" });
 });
 
-type AssetKind = "thumbnail" | "banner" | "vtt" | "metadata";
+type AssetKind = "thumbnail" | "banner" | "vtt" | "metadata" | "media";
 
 function toAssetUrl(assetPath?: string | null) {
   if (!assetPath) return null;
@@ -491,12 +520,43 @@ function assetPathForKind(resource: ResourceAssetShape | null | undefined, kind:
   if (kind === "thumbnail") return normalizeLegacyMockImagePath(resource.thumbnailPath ?? null);
   if (kind === "banner") return normalizeLegacyMockImagePath(resource.bannerPath ?? null);
   if (kind === "vtt") return resource.vttPath ?? null;
+  if (kind === "media") {
+    const mediaUrl = readMediaUrl(resource);
+    if (!mediaUrl || /^https?:\/\//i.test(mediaUrl) || mediaUrl.startsWith("/api/")) return null;
+    return mediaUrl;
+  }
   return resource.metadataPath ?? null;
 }
 
 function normalizeLegacyMockImagePath(assetPath: string | null) {
   if (!assetPath?.startsWith("services/api/assets/mock/")) return assetPath;
   return assetPath.replace(/\/(thumbnail|banner)\.svg$/i, "/$1.png");
+}
+
+function safeAssetFileName(value: unknown, fallbackExtension = ".bin") {
+  const raw = String(value ?? "").trim().split(/[\\/]/).pop() ?? "";
+  const cleaned = raw.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (cleaned && path.extname(cleaned)) return cleaned;
+  return `asset-${Date.now()}${fallbackExtension}`;
+}
+
+function extensionForContentType(contentType?: string | null) {
+  const normalized = String(contentType ?? "").toLowerCase();
+  if (normalized.includes("png")) return ".png";
+  if (normalized.includes("jpeg") || normalized.includes("jpg")) return ".jpg";
+  if (normalized.includes("webp")) return ".webp";
+  if (normalized.includes("mp4")) return ".mp4";
+  if (normalized.includes("vtt")) return ".vtt";
+  if (normalized.includes("pdf")) return ".pdf";
+  if (normalized.includes("markdown")) return ".md";
+  if (normalized.includes("json")) return ".json";
+  return ".bin";
+}
+
+function normalizeUploadKind(value: unknown) {
+  const kind = String(value ?? "").trim().toLowerCase();
+  if (["thumbnail", "banner", "video", "vtt", "article", "metadata", "flashcard", "quiz"].includes(kind)) return kind;
+  return "metadata";
 }
 
 function toPrivateAssetUrl(resource: ResourceAssetShape, kind: AssetKind, options?: { private?: boolean; role?: Role; accessToken?: string | null }) {
@@ -519,7 +579,7 @@ function assetUrlsFor(resource?: ResourceAssetShape | null, options?: { private?
     banner: toPrivateAssetUrl(resource, "banner", options),
     vtt: toPrivateAssetUrl(resource, "vtt", options),
     metadata: toPrivateAssetUrl(resource, "metadata", options),
-    media: readMediaUrl(resource)
+    media: toPrivateAssetUrl(resource, "media", options) ?? readMediaUrl(resource)
   };
 }
 
@@ -625,10 +685,11 @@ function defaultTutorFlashcards(title: string) {
   ];
 }
 
-function tutorResourceData(input: TutorProgramResourceInput, tutorId: string) {
+function tutorResourceData(input: TutorProgramResourceInput, tutorId: string, organizationId?: string | null) {
   const mediaUrl = input.mediaUrl || "";
   return {
     creatorProfileId: tutorId,
+    organizationId: organizationId ?? null,
     type: input.type,
     title: input.title,
     description: input.description,
@@ -692,6 +753,54 @@ function toTutorResourceSummary(resource: any) {
     publishedUsageCount,
     createdAt: resource.createdAt.toISOString()
   };
+}
+
+function normalizeOrganizationType(value: unknown) {
+  const requested = String(value ?? "").trim();
+  const allowed = new Set(educatorOrganizationTypesSetting.value.map((item) => item.id));
+  return allowed.has(requested) ? requested : "individual_tutor";
+}
+
+function defaultOrganizationName(profile: { firstName?: string | null; lastName?: string | null }, type = "individual_tutor") {
+  const personName = `${profile.firstName ?? ""} ${profile.lastName ?? ""}`.trim() || "Educator";
+  if (type === "coaching_center") return `${personName} Coaching Center`;
+  if (type === "institute") return `${personName} Institute`;
+  return personName;
+}
+
+async function ensureOrganizationForProfile(profile: { id: string; userId: string; firstName?: string | null; lastName?: string | null; organizationId?: string | null }, input?: { type?: unknown; name?: unknown; sourceTag?: string }) {
+  const type = normalizeOrganizationType(input?.type);
+  const name = String(input?.name ?? "").trim() || defaultOrganizationName(profile, type);
+  const sourceTag = input?.sourceTag ?? "app";
+  if (profile.organizationId) {
+    return prisma.organization.update({
+      where: { id: profile.organizationId },
+      data: { type, name, status: "active", sourceTag }
+    });
+  }
+  const existing = await prisma.organization.findFirst({
+    where: { ownerProfileId: profile.id, status: "active" },
+    orderBy: { createdAt: "asc" }
+  });
+  const organization = existing ?? await prisma.organization.create({
+    data: {
+      ownerUserId: profile.userId,
+      ownerProfileId: profile.id,
+      type,
+      name,
+      bucketNamespace: `organizations/pending-${profile.id}`,
+      status: "active",
+      sourceTag
+    }
+  });
+  const bucketNamespace = `organizations/${organization.id}`;
+  const updated = organization.bucketNamespace === bucketNamespace && organization.type === type && organization.name === name
+    ? organization
+    : await prisma.organization.update({ where: { id: organization.id }, data: { bucketNamespace, type, name, sourceTag } });
+  await prisma.profile.updateMany({ where: { id: profile.id }, data: { organizationId: updated.id } });
+  await prisma.userManagement.updateMany({ where: { userId: profile.userId, role: "tutor" }, data: { organizationId: updated.id } });
+  await prisma.tutorProfile.updateMany({ where: { profileId: profile.id }, data: { organizationId: updated.id, organizationType: type, organizationName: name } });
+  return updated;
 }
 
 async function resourcePublishedUsageCount(resourceId: string) {
@@ -803,9 +912,17 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
 
   const profile = user.profiles[0];
   if (profile) {
+    const organization = role === "tutor"
+      ? await ensureOrganizationForProfile(profile, {
+        type: profileInput.organizationType,
+        name: profileInput.organizationName,
+        sourceTag: "app"
+      })
+      : null;
     await prisma.userManagement.create({
       data: {
         userId: user.id,
+        organizationId: organization?.id ?? null,
         role,
         firstName: profile.firstName,
         lastName: profile.lastName,
@@ -1023,6 +1140,10 @@ app.post("/api/v1/auth/password/reset", async (req, res) => {
   res.json({ data: { passwordReset: true } });
 });
 
+app.get("/api/v1/authorization/session-policy", (_req, res) => {
+  res.json({ data: authorizationSessionPolicy });
+});
+
 app.post("/api/v1/auth/refresh", async (req, res) => {
   const refreshToken = String(req.body.refreshToken ?? "");
   const session = await prisma.authSession.findUnique({ where: { refreshToken }, include: { user: true } });
@@ -1152,6 +1273,11 @@ app.put("/api/v1/identity/student-education-profile", async (req, res) => {
 app.put("/api/v1/identity/tutor-profile", async (req, res) => {
   const profile = await requireProfile(req, res, "tutor");
   if (!profile) return;
+  const organization = await ensureOrganizationForProfile(profile, {
+    type: req.body.organizationType,
+    name: req.body.organizationName,
+    sourceTag: "app"
+  });
   const curriculumSelections = normalizeCurriculumSelections(req.body.curriculumSelections);
   if (curriculumSelections.length) {
     await prisma.profile.update({
@@ -1174,10 +1300,16 @@ app.put("/api/v1/identity/tutor-profile", async (req, res) => {
       location: String(req.body.location ?? ""),
       bio: String(req.body.bio ?? ""),
       outreachEnabled: Boolean(req.body.outreachEnabled ?? true),
-      outreachPlan: stringOrNull(req.body.outreachPlan) ?? "paid_outreach"
+      outreachPlan: stringOrNull(req.body.outreachPlan) ?? "paid_outreach",
+      organizationId: organization.id,
+      organizationType: organization.type,
+      organizationName: organization.name
     },
     create: {
       profileId: profile.id,
+      organizationId: organization.id,
+      organizationType: organization.type,
+      organizationName: organization.name,
       headline: String(req.body.headline ?? ""),
       subjects: csvString(req.body.subjects),
       boards: csvString(req.body.boards),
@@ -1262,6 +1394,7 @@ app.get("/api/v1/tutor/resources", async (req, res) => {
 app.post("/api/v1/tutor/resources", async (req, res) => {
   const profile = await requireProfile(req, res, "tutor");
   if (!profile) return;
+  const organization = await ensureOrganizationForProfile(profile);
   const input = normalizeTutorResourceInput(req.body);
   if (!input) {
     res.status(400).json({ error: "Valid resource type, title, and description are required" });
@@ -1269,7 +1402,7 @@ app.post("/api/v1/tutor/resources", async (req, res) => {
   }
   const resource = await prisma.$transaction(async (tx) => {
     const created = await tx.resource.create({
-      data: tutorResourceData(input, profile.id)
+      data: tutorResourceData(input, profile.id, organization.id)
     });
     await writeResourceFlashcards(tx, created.id, input);
     return tx.resource.findUnique({
@@ -1291,9 +1424,50 @@ app.post("/api/v1/tutor/resources", async (req, res) => {
   res.status(201).json({ data: toTutorResourceSummary(resource) });
 });
 
+app.post("/api/v1/ams/organizations/materials", express.raw({ type: "*/*", limit: maxMaterialUploadBytes }), async (req, res) => {
+  const profile = await requireProfile(req, res, "tutor");
+  if (!profile) return;
+  const organization = await ensureOrganizationForProfile(profile);
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    res.status(400).json({ error: "Asset file is required" });
+    return;
+  }
+  const kind = normalizeUploadKind(req.query.kind);
+  const contentType = String(req.header("content-type") ?? "application/octet-stream");
+  const fileName = safeAssetFileName(req.query.fileName, extensionForContentType(contentType));
+  const relativePath = path.join("private", organization.bucketNamespace, "education-materials", kind, `${Date.now()}-${fileName}`);
+  const fullPath = path.resolve(assetsRoot, relativePath);
+  if (!fullPath.startsWith(assetsRoot)) {
+    res.status(400).json({ error: "Invalid asset path" });
+    return;
+  }
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, req.body);
+  const assetPath = `services/api/assets/${relativePath.split(path.sep).join("/")}`;
+  await logAudit({
+    userId: profile.userId,
+    profileId: profile.id,
+    role: "tutor",
+    action: "ams.organization_material.upload",
+    entityType: "Organization",
+    entityId: organization.id,
+    metadata: { kind, fileName, assetPath, bytes: req.body.length }
+  });
+  res.status(201).json({
+    data: {
+      organizationId: organization.id,
+      bucketNamespace: organization.bucketNamespace,
+      kind,
+      assetPath,
+      previewUrl: toAssetUrl(assetPath)
+    }
+  });
+});
+
 app.put("/api/v1/tutor/resources/:id", async (req, res) => {
   const profile = await requireProfile(req, res, "tutor");
   if (!profile) return;
+  const organization = await ensureOrganizationForProfile(profile);
   const existing = await prisma.resource.findFirst({ where: { id: req.params.id, creatorProfileId: profile.id } });
   if (!existing) {
     res.status(404).json({ error: "Resource not found" });
@@ -1312,7 +1486,7 @@ app.put("/api/v1/tutor/resources/:id", async (req, res) => {
     await tx.flashcard.deleteMany({ where: { resourceId: existing.id } });
     const updated = await tx.resource.update({
       where: { id: existing.id },
-      data: tutorResourceData(input, profile.id)
+      data: tutorResourceData(input, profile.id, organization.id)
     });
     await writeResourceFlashcards(tx, updated.id, input);
     return tx.resource.findUnique({
@@ -1389,12 +1563,13 @@ app.post("/api/v1/tutor/batches", async (req, res) => {
     res.status(400).json({ error: "Tutor profile is required before creating batches" });
     return;
   }
+  const organization = await ensureOrganizationForProfile(profile);
   const programId = stringOrNull(req.body.programId);
   if (programId && !(await tutorOwnsProgram(profile.id, programId))) {
     res.status(404).json({ error: "Program not found" });
     return;
   }
-  const data = normalizeTutorBatchInput(req.body, tutorProfile.id, programId);
+  const data = normalizeTutorBatchInput(req.body, tutorProfile.id, programId, null, organization.id);
   if (!data.title || !data.course || !data.subject || !data.grade || !data.board || !data.schedule) {
     res.status(400).json({ error: "Batch title, course, subject, grade, board, and schedule are required" });
     return;
@@ -1423,6 +1598,7 @@ app.put("/api/v1/tutor/batches/:id", async (req, res) => {
     res.status(400).json({ error: "Tutor profile is required before updating batches" });
     return;
   }
+  const organization = await ensureOrganizationForProfile(profile);
   const existing = await prisma.tutorBatch.findFirst({ where: { id: req.params.id, tutorProfileId: tutorProfile.id } });
   if (!existing) {
     res.status(404).json({ error: "Batch not found" });
@@ -1433,7 +1609,7 @@ app.put("/api/v1/tutor/batches/:id", async (req, res) => {
     res.status(404).json({ error: "Program not found" });
     return;
   }
-  const data = normalizeTutorBatchInput(req.body, tutorProfile.id, programId, existing);
+  const data = normalizeTutorBatchInput(req.body, tutorProfile.id, programId, existing, organization.id);
   if (!data.title || !data.course || !data.subject || !data.grade || !data.board || !data.schedule) {
     res.status(400).json({ error: "Batch title, course, subject, grade, board, and schedule are required" });
     return;
@@ -2786,8 +2962,8 @@ app.post("/api/v1/usermanagement/batch-requests", async (req, res) => {
   }
   const request = await prisma.batchRequest.upsert({
     where: { batchId_studentProfileId: { batchId, studentProfileId: student.id } },
-    update: { status: "pending", message: stringOrNull(req.body.message), sourceTag: "app" },
-    create: { batchId, studentProfileId: student.id, message: stringOrNull(req.body.message), sourceTag: "app" },
+    update: { organizationId: batch.organizationId ?? null, status: "pending", message: stringOrNull(req.body.message), sourceTag: "app" },
+    create: { batchId, organizationId: batch.organizationId ?? null, studentProfileId: student.id, message: stringOrNull(req.body.message), sourceTag: "app" },
     include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true }
   });
   await notifyBatchRequestCreated(prisma, request);
@@ -2845,8 +3021,8 @@ app.post("/api/v1/usermanagement/batch-requests/:id/approve", async (req, res) =
     }
     const enrollment = await tx.batchEnrollment.upsert({
       where: { batchId_studentProfileId: { batchId: request.batchId, studentProfileId: request.studentProfileId } },
-      update: { status: "active", requestId: request.id },
-      create: { batchId: request.batchId, studentProfileId: request.studentProfileId, requestId: request.id, status: "active", sourceTag: "app" }
+      update: { organizationId: request.batch.organizationId ?? null, status: "active", requestId: request.id },
+      create: { batchId: request.batchId, organizationId: request.batch.organizationId ?? null, studentProfileId: request.studentProfileId, requestId: request.id, status: "active", sourceTag: "app" }
     });
     await ensureBatchScheduleReminders(tx, request);
     await notifyBatchRequestOutcome(tx, request, "batch.request.approved", "Batch request approved", `${request.batch.title} has been approved and added to your reminders.`);
@@ -3263,7 +3439,7 @@ app.post("/api/v1/notifications/read-all", async (req, res) => {
 app.get("/api/v1/education-plan/current", async (req, res) => {
   const role = readRole(req.query.role);
   const userId = await readUserId(req);
-  const plan = await getEducationPlan(role, userId, stringOrNull(req.query.programId));
+  const plan = await getEducationPlan(role, userId, stringOrNull(req.query.programId), readRequestAccessToken(req));
   if (!plan) {
     res.status(404).json({ error: "Education plan not found" });
     return;
@@ -3608,15 +3784,16 @@ app.post("/api/v1/education-plan/programs/select", async (req, res) => {
   const result = await prisma.$transaction(async (tx) => {
     const selection = await tx.studentProgramSelection.upsert({
       where: { profileId_programId: { profileId: profile.id, programId } },
-      update: { status: "active", sourceTag: "app" },
-      create: { profileId: profile.id, programId, status: "active", sourceTag: "app" }
+      update: { organizationId: program.organizationId ?? null, status: "active", sourceTag: "app" },
+      create: { profileId: profile.id, programId, organizationId: program.organizationId ?? null, status: "active", sourceTag: "app" }
     });
     const progress = await tx.programProgress.upsert({
       where: { profileId_programId: { profileId: profile.id, programId } },
-      update: {},
+      update: { organizationId: program.organizationId ?? null },
       create: {
         profileId: profile.id,
         programId,
+        organizationId: program.organizationId ?? null,
         unlockedMilestoneSequence: 1,
         completedMilestoneSequence: 0,
         sourceTag: "app"
@@ -3690,6 +3867,7 @@ app.post("/api/v1/marketplace/program-interest", async (req, res) => {
 app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
   const tutor = await requireProfile(req, res, "tutor");
   if (!tutor) return;
+  const organization = await ensureOrganizationForProfile(tutor);
 
   const input = normalizeTutorProgramInput(req.body);
   const publishing = input.visibility !== "private";
@@ -3709,6 +3887,7 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
         title: input.title,
         description: input.description,
         creatorProfileId: tutor.id,
+        organizationId: organization.id,
         visibility: input.visibility ?? "published",
         status: input.visibility === "private" ? "draft" : "published",
         feeType: input.feeType ?? "free",
@@ -3716,7 +3895,7 @@ app.post("/api/v1/education-plan/tutor/programs", async (req, res) => {
         sourceTag: "app"
       }
     });
-    await writeTutorProgramTree(tx, createdProgram.id, tutor.id, input);
+    await writeTutorProgramTree(tx, createdProgram.id, tutor.id, organization.id, input);
 
     return tx.program.findUnique({
       where: { id: createdProgram.id },
@@ -3820,7 +3999,7 @@ async function nextTutorProgramCopyTitle(tutorId: string, title: string) {
   return `${baseTitle} ${Date.now()}`;
 }
 
-async function writeTutorProgramTree(tx: any, programId: string, tutorId: string, input: TutorProgramCreateInput) {
+async function writeTutorProgramTree(tx: any, programId: string, tutorId: string, organizationId: string | null | undefined, input: TutorProgramCreateInput) {
   const orderedMilestones = [...(input.milestones ?? [])].sort((a, b) => a.sequence - b.sequence);
   for (const milestoneInput of orderedMilestones) {
     const milestone = await tx.programMilestone.create({
@@ -3833,7 +4012,7 @@ async function writeTutorProgramTree(tx: any, programId: string, tutorId: string
     });
     for (const [index, resourceInput] of milestoneInput.resources.entries()) {
       const resource = await tx.resource.create({
-        data: tutorResourceData(resourceInput, tutorId)
+        data: tutorResourceData(resourceInput, tutorId, organizationId)
       });
       await writeResourceFlashcards(tx, resource.id, resourceInput);
       await tx.milestoneActivity.create({
@@ -3873,6 +4052,7 @@ app.get("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
 app.put("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
   const tutor = await requireProfile(req, res, "tutor");
   if (!tutor) return;
+  const organization = await ensureOrganizationForProfile(tutor);
   const input = normalizeTutorProgramInput(req.body);
   if (!input.title || !input.description || !input.milestones?.length) {
     res.status(400).json({ error: "Program title, description, milestone, and resources are required" });
@@ -3910,13 +4090,14 @@ app.put("/api/v1/education-plan/tutor/programs/:id", async (req, res) => {
       data: {
         title: input.title,
         description: input.description,
+        organizationId: organization.id,
         visibility: input.visibility ?? "published",
         status: input.visibility === "private" ? "draft" : "published",
         feeType: input.feeType ?? "free",
         feeAmount: input.feeType === "paid" ? input.feeAmount ?? 0 : null
       }
     });
-    await writeTutorProgramTree(tx, updated.id, tutor.id, input);
+    await writeTutorProgramTree(tx, updated.id, tutor.id, organization.id, input);
     return tx.program.findUnique({
       where: { id: updated.id },
       include: { milestones: { include: { activities: true }, orderBy: { sequence: "asc" } } }
@@ -3990,6 +4171,7 @@ app.post("/api/v1/education-plan/tutor/programs/:id/archive", async (req, res) =
 app.post("/api/v1/education-plan/tutor/programs/:id/restore", async (req, res) => {
   const tutor = await requireProfile(req, res, "tutor");
   if (!tutor) return;
+  const organization = await ensureOrganizationForProfile(tutor);
   const archived = await prisma.program.findFirst({
     where: { id: req.params.id, creatorProfileId: tutor.id, role: "tutor", status: "archived" },
     include: {
@@ -4012,6 +4194,7 @@ app.post("/api/v1/education-plan/tutor/programs/:id/restore", async (req, res) =
         title,
         description: draft.description,
         creatorProfileId: tutor.id,
+        organizationId: organization.id,
         visibility: "private",
         status: "draft",
         feeType: draft.feeType ?? "free",
@@ -4019,7 +4202,7 @@ app.post("/api/v1/education-plan/tutor/programs/:id/restore", async (req, res) =
         sourceTag: "app"
       }
     });
-    await writeTutorProgramTree(tx, createdProgram.id, tutor.id, { ...draft, title, visibility: "private" });
+    await writeTutorProgramTree(tx, createdProgram.id, tutor.id, organization.id, { ...draft, title, visibility: "private" });
     return tx.program.findUnique({
       where: { id: createdProgram.id },
       include: { milestones: { include: { activities: true }, orderBy: { sequence: "asc" } } }
@@ -4040,7 +4223,7 @@ app.post("/api/v1/education-plan/tutor/programs/:id/restore", async (req, res) =
 app.get("/api/v1/programs/current", async (req, res) => {
   const role = readRole(req.query.role);
   const userId = await readUserId(req);
-  const plan = await getEducationPlan(role, userId, stringOrNull(req.query.programId));
+  const plan = await getEducationPlan(role, userId, stringOrNull(req.query.programId), readRequestAccessToken(req));
   if (!plan) {
     res.status(404).json({ error: "Program sessions disabled" });
     return;
@@ -4090,7 +4273,7 @@ app.get("/api/v1/ams/assets/:id", async (req, res) => {
 
 app.get("/api/v1/ams/assets/:id/file/:kind", async (req, res) => {
   const kind = String(req.params.kind) as AssetKind;
-  if (!["thumbnail", "banner", "vtt", "metadata"].includes(kind)) {
+  if (!["thumbnail", "banner", "vtt", "metadata", "media"].includes(kind)) {
     res.status(400).json({ error: "Unsupported asset kind" });
     return;
   }
@@ -4203,8 +4386,8 @@ app.post("/api/v1/resources/:id/quiz-checkpoint", async (req, res) => {
   const completed = Boolean(req.body.completed);
   const checkpoint = await prisma.quizCheckpoint.upsert({
     where: { profileId_resourceId: { profileId: profile.id, resourceId: resource.id } },
-    update: { answers, submitted, currentIndex, completed, sourceTag: "app" },
-    create: { profileId: profile.id, resourceId: resource.id, answers, submitted, currentIndex, completed, sourceTag: "app" }
+    update: { organizationId: resource.organizationId ?? null, answers, submitted, currentIndex, completed, sourceTag: "app" },
+    create: { profileId: profile.id, resourceId: resource.id, organizationId: resource.organizationId ?? null, answers, submitted, currentIndex, completed, sourceTag: "app" }
   });
   res.json({
     data: {
@@ -4225,12 +4408,14 @@ app.post("/api/v1/resources/:id/complete", async (req, res) => {
     res.status(404).json({ error: "Profile not found" });
     return;
   }
+  const resource = await prisma.resource.findUnique({ where: { id: req.params.id } });
   const progress = await prisma.resourceProgress.upsert({
     where: { profileId_resourceId: { profileId: profile.id, resourceId: req.params.id } },
-    update: { status: "complete", completedAt: new Date() },
+    update: { organizationId: resource?.organizationId ?? null, status: "complete", completedAt: new Date() },
     create: {
       profileId: profile.id,
       resourceId: req.params.id,
+      organizationId: resource?.organizationId ?? null,
       status: "complete",
       completedAt: new Date()
     }
@@ -4271,6 +4456,7 @@ app.post("/api/v1/resources/:id/quiz-attempts", async (req, res) => {
     data: {
       profileId: profile.id,
       resourceId: resource.id,
+      organizationId: resource.organizationId ?? null,
       score,
       total,
       percent,
@@ -4280,8 +4466,8 @@ app.post("/api/v1/resources/:id/quiz-attempts", async (req, res) => {
   });
   await prisma.quizCheckpoint.upsert({
     where: { profileId_resourceId: { profileId: profile.id, resourceId: resource.id } },
-    update: { answers, submitted: answers.map(() => true), currentIndex: Math.max(0, total - 1), completed: true, sourceTag: "app" },
-    create: { profileId: profile.id, resourceId: resource.id, answers, submitted: answers.map(() => true), currentIndex: Math.max(0, total - 1), completed: true, sourceTag: "app" }
+    update: { organizationId: resource.organizationId ?? null, answers, submitted: answers.map(() => true), currentIndex: Math.max(0, total - 1), completed: true, sourceTag: "app" },
+    create: { profileId: profile.id, resourceId: resource.id, organizationId: resource.organizationId ?? null, answers, submitted: answers.map(() => true), currentIndex: Math.max(0, total - 1), completed: true, sourceTag: "app" }
   });
   res.status(201).json({ data: toQuizAttemptSummary(attempt) });
 });
@@ -4304,10 +4490,11 @@ app.post("/api/v1/education-plan/activities/:id/complete", async (req, res) => {
 
     const completedActivity = await tx.activityProgress.upsert({
       where: { profileId_activityId: { profileId: profile.id, activityId: activity.id } },
-      update: { status: "complete", completedAt: new Date() },
+      update: { organizationId: activity.milestone.program.organizationId ?? null, status: "complete", completedAt: new Date() },
       create: {
         profileId: profile.id,
         activityId: activity.id,
+        organizationId: activity.milestone.program.organizationId ?? null,
         status: "complete",
         completedAt: new Date(),
         sourceTag: "app"
@@ -4315,10 +4502,11 @@ app.post("/api/v1/education-plan/activities/:id/complete", async (req, res) => {
     });
     await tx.resourceProgress.upsert({
       where: { profileId_resourceId: { profileId: profile.id, resourceId: activity.resourceId } },
-      update: { status: "complete", completedAt: new Date() },
+      update: { organizationId: activity.milestone.program.organizationId ?? null, status: "complete", completedAt: new Date() },
       create: {
         profileId: profile.id,
         resourceId: activity.resourceId,
+        organizationId: activity.milestone.program.organizationId ?? null,
         status: "complete",
         completedAt: new Date()
       }
@@ -4340,12 +4528,14 @@ app.post("/api/v1/education-plan/activities/:id/complete", async (req, res) => {
       progress = await tx.programProgress.upsert({
         where: { profileId_programId: { profileId: profile.id, programId: activity.milestone.programId } },
         update: {
+          organizationId: activity.milestone.program.organizationId ?? null,
           completedMilestoneSequence: Math.max(progress?.completedMilestoneSequence ?? 0, activity.milestone.sequence),
           unlockedMilestoneSequence: Math.max(progress?.unlockedMilestoneSequence ?? 1, activity.milestone.sequence + 1)
         },
         create: {
           profileId: profile.id,
           programId: activity.milestone.programId,
+          organizationId: activity.milestone.program.organizationId ?? null,
           completedMilestoneSequence: activity.milestone.sequence,
           unlockedMilestoneSequence: activity.milestone.sequence + 1,
           sourceTag: "app"
@@ -4389,7 +4579,7 @@ app.get("/api/v1/dis/dashboard", async (req, res) => {
   const userId = await readUserId(req);
   const [reminders, plan, recommendations, metrics] = await Promise.all([
     listReminders(role, userId),
-    getEducationPlan(role, userId, stringOrNull(req.query.programId)),
+    getEducationPlan(role, userId, stringOrNull(req.query.programId), readRequestAccessToken(req)),
     prisma.recommendation.count({ where: { role } }),
     dashboardMetrics(role, userId)
   ]);
@@ -4690,6 +4880,7 @@ async function createProgramPurchasePaymentOrder(profile: any, program: any, met
       role: "student",
       targetType: "program_purchase",
       targetId: program.id,
+      organizationId: program.organizationId ?? null,
       programId: program.id,
       tutorProfileId: program.creatorProfile?.tutorProfile?.id ?? null,
       amount,
@@ -4721,6 +4912,7 @@ async function createBatchAdmissionPaymentOrder(profile: any, batch: any, method
       role: "student",
       targetType: "batch_admission",
       targetId: batch.id,
+      organizationId: batch.organizationId ?? null,
       batchId: batch.id,
       tutorProfileId: batch.tutorProfileId,
       amount,
@@ -4751,18 +4943,18 @@ async function activatePaidOrder(orderId: string, gatewayPaymentId: string, meth
     if (order.targetType === "program_purchase" && order.programId) {
       const purchase = await tx.programPurchase.upsert({
         where: { programId_studentProfileId: { programId: order.programId, studentProfileId: order.profileId } },
-        update: { orderId: order.id, status: "active", accessStatus: "active", purchasedAt: new Date() },
-        create: { orderId: order.id, programId: order.programId, studentProfileId: order.profileId, status: "active", accessStatus: "active", purchasedAt: new Date(), sourceTag: "app" }
+        update: { organizationId: order.organizationId ?? null, orderId: order.id, status: "active", accessStatus: "active", purchasedAt: new Date() },
+        create: { orderId: order.id, programId: order.programId, organizationId: order.organizationId ?? null, studentProfileId: order.profileId, status: "active", accessStatus: "active", purchasedAt: new Date(), sourceTag: "app" }
       });
       await tx.studentProgramSelection.upsert({
         where: { profileId_programId: { profileId: order.profileId, programId: order.programId } },
-        update: { status: "active", sourceTag: "app" },
-        create: { profileId: order.profileId, programId: order.programId, status: "active", sourceTag: "app" }
+        update: { organizationId: order.organizationId ?? null, status: "active", sourceTag: "app" },
+        create: { profileId: order.profileId, programId: order.programId, organizationId: order.organizationId ?? null, status: "active", sourceTag: "app" }
       });
       await tx.programProgress.upsert({
         where: { profileId_programId: { profileId: order.profileId, programId: order.programId } },
-        update: {},
-        create: { profileId: order.profileId, programId: order.programId, unlockedMilestoneSequence: 1, completedMilestoneSequence: 0, sourceTag: "app" }
+        update: { organizationId: order.organizationId ?? null },
+        create: { profileId: order.profileId, programId: order.programId, organizationId: order.organizationId ?? null, unlockedMilestoneSequence: 1, completedMilestoneSequence: 0, sourceTag: "app" }
       });
       const profile = await tx.profile.findUnique({ where: { id: order.profileId } });
       const program = await tx.program.findUnique({ where: { id: order.programId } });
@@ -4784,8 +4976,8 @@ async function activatePaidOrder(orderId: string, gatewayPaymentId: string, meth
     if (order.targetType === "batch_admission" && order.batchId) {
       const request = await tx.batchRequest.upsert({
         where: { batchId_studentProfileId: { batchId: order.batchId, studentProfileId: order.profileId } },
-        update: { status: "pending", paymentOrderId: order.id, message: typeof order.metadata === "object" && order.metadata && "admissionMessage" in order.metadata ? String((order.metadata as any).admissionMessage ?? "") : null, sourceTag: "app" },
-        create: { batchId: order.batchId, studentProfileId: order.profileId, paymentOrderId: order.id, status: "pending", message: typeof order.metadata === "object" && order.metadata && "admissionMessage" in order.metadata ? String((order.metadata as any).admissionMessage ?? "") : null, sourceTag: "app" },
+        update: { organizationId: order.organizationId ?? null, status: "pending", paymentOrderId: order.id, message: typeof order.metadata === "object" && order.metadata && "admissionMessage" in order.metadata ? String((order.metadata as any).admissionMessage ?? "") : null, sourceTag: "app" },
+        create: { batchId: order.batchId, organizationId: order.organizationId ?? null, studentProfileId: order.profileId, paymentOrderId: order.id, status: "pending", message: typeof order.metadata === "object" && order.metadata && "admissionMessage" in order.metadata ? String((order.metadata as any).admissionMessage ?? "") : null, sourceTag: "app" },
         include: { batch: { include: { tutorProfile: { include: { profile: true } } } }, studentProfile: true }
       });
       await tx.paymentOrder.update({ where: { id: order.id }, data: { batchRequestId: request.id } });
@@ -4879,8 +5071,8 @@ async function createSession(userId: string) {
   });
   const accessToken = `access_${crypto.randomBytes(32).toString("hex")}`;
   const refreshToken = `refresh_${crypto.randomBytes(32).toString("hex")}`;
-  const accessTokenExpiresAt = addMinutes(accessTokenTtlMinutes);
-  const refreshTokenExpiresAt = addDays(refreshTokenTtlDays);
+  const accessTokenExpiresAt = addMinutes(authorizationSessionPolicy.accessTokenTtlMinutes);
+  const refreshTokenExpiresAt = addHours(authorizationSessionPolicy.refreshTokenTtlHours);
   await prisma.authSession.create({
     data: {
       userId,
@@ -5150,12 +5342,13 @@ async function resolveResourceEntitlement(req: express.Request, resource: any) {
   return { entitled: selectedCount > 0, readonly: true, role, profile };
 }
 
-function normalizeTutorBatchInput(input: any, tutorProfileId: string, programId?: string | null, existing?: any) {
+function normalizeTutorBatchInput(input: any, tutorProfileId: string, programId?: string | null, existing?: any, organizationId?: string | null) {
   const startsAt = parseDate(input.startsAt) || existing?.startsAt || new Date();
   const capacity = Number(input.capacity ?? existing?.capacity ?? 12) || 12;
   const feeType = String(input.feeType ?? existing?.feeType ?? "free") === "paid" ? "paid" : "free";
   return {
     tutorProfileId,
+    organizationId: organizationId ?? existing?.organizationId ?? null,
     programId: programId ?? null,
     title: String(input.title ?? existing?.title ?? "").trim(),
     course: String(input.course ?? existing?.course ?? "").trim(),
@@ -5817,7 +6010,7 @@ async function listProgramSummaries(role: Role, profileId?: string | null): Prom
   return [];
 }
 
-async function getEducationPlan(role: Role, userId?: string | null, programId?: string | null) {
+async function getEducationPlan(role: Role, userId?: string | null, programId?: string | null, accessToken?: string | null) {
   if (!isFeatureEnabled("programSessions", role)) return null;
   let scopedProfile: any = userId ? await findProfile(role, userId) : null;
   let effectiveRole = role;
@@ -5882,7 +6075,7 @@ async function getEducationPlan(role: Role, userId?: string | null, programId?: 
         type: activity.type,
         title: activity.title,
         description: activity.description,
-        assetUrls: assetUrlsFor(activity.resource),
+        assetUrls: assetUrlsFor(activity.resource, { private: true, role, accessToken }),
         status: activity.progress?.[0]?.status ?? "pending"
       }))
     }))
@@ -6043,7 +6236,7 @@ function toPersona(profile: Awaited<ReturnType<typeof findProfile>>) {
     phone: profile.user.phone,
     profileLabel: profile.role === "parent"
       ? `Parent • Apoorv Gulati • Class 10`
-      : `${capitalize(profile.role)} • ${profile.stream ?? "Senior"} • ${profileLabelFromCurriculum(curriculumSelectionsFromJson(profile.curriculumSelections)) ?? profile.specialization ?? "myTution"}`
+      : `${roleDisplayLabel(profile.role)} • ${profile.stream ?? "Senior"} • ${profileLabelFromCurriculum(curriculumSelectionsFromJson(profile.curriculumSelections)) ?? profile.specialization ?? "myTution"}`
   };
 }
 
@@ -6051,6 +6244,9 @@ function toIdentityProfile(profile: any) {
   return {
     id: profile.id,
     userId: profile.userId,
+    organizationId: profile.organizationId ?? profile.tutorProfile?.organizationId ?? null,
+    organizationName: profile.tutorProfile?.organizationName ?? null,
+    organizationType: profile.tutorProfile?.organizationType ?? null,
     role: profile.role,
     firstName: profile.firstName,
     lastName: profile.lastName,
@@ -6067,6 +6263,9 @@ function toIdentityProfile(profile: any) {
     profileCompletion: profileCompletionFor(profile),
     tutorProfile: profile.tutorProfile ? {
       id: profile.tutorProfile.id,
+      organizationId: profile.tutorProfile.organizationId ?? null,
+      organizationType: profile.tutorProfile.organizationType ?? null,
+      organizationName: profile.tutorProfile.organizationName ?? null,
       headline: profile.tutorProfile.headline,
       subjects: splitCsv(profile.tutorProfile.subjects),
       boards: splitCsv(profile.tutorProfile.boards),
@@ -6439,9 +6638,17 @@ async function ensureSharedTutorFixture() {
       sourceTag: "mock"
     }
   });
+  const organization = await ensureOrganizationForProfile(profile, {
+    type: "individual_tutor",
+    name: "Kartik Sohani",
+    sourceTag: "mock"
+  });
   const tutorProfile = await prisma.tutorProfile.upsert({
     where: { profileId: profile.id },
     update: {
+      organizationId: organization.id,
+      organizationType: organization.type,
+      organizationName: organization.name,
       headline: "Class 10 board booster",
       subjects: "Mathematics",
       boards: "CBSE",
@@ -6460,6 +6667,9 @@ async function ensureSharedTutorFixture() {
     },
     create: {
       profileId: profile.id,
+      organizationId: organization.id,
+      organizationType: organization.type,
+      organizationName: organization.name,
       headline: "Class 10 board booster",
       subjects: "Mathematics",
       boards: "CBSE",
@@ -6537,6 +6747,7 @@ async function ensureSharedTutorFixture() {
     const createdBatch = existingBatch ? await prisma.tutorBatch.update({
       where: { id: existingBatch.id },
       data: {
+        organizationId: organization.id,
         course: batch.course,
         subject: "Mathematics",
         grade: "Class 10",
@@ -6555,6 +6766,7 @@ async function ensureSharedTutorFixture() {
     }) : await prisma.tutorBatch.create({
       data: {
         tutorProfileId: tutorProfile.id,
+        organizationId: organization.id,
         title: batch.title,
         course: batch.course,
         subject: "Mathematics",
@@ -6700,21 +6912,93 @@ async function ensureParentStudentFixture() {
   await ensureKnownStudentTutorMappings();
 }
 
+function defaultFixtureMaterialPaths() {
+  return {
+    video: {
+      media: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4",
+      thumbnail: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png",
+      banner: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png",
+      vtt: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt",
+      metadata: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md"
+    },
+    article: {
+      media: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf",
+      thumbnail: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.png",
+      banner: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.png",
+      metadata: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/title-description.md"
+    },
+    flashcard: {
+      thumbnail: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.png",
+      banner: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.png",
+      metadata: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/title-description.md"
+    },
+    quiz: {
+      thumbnail: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.png",
+      banner: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.png",
+      metadata: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/title-description.md"
+    }
+  };
+}
+
+function ensureFixtureMaterialPaths(organizationId: string) {
+  const source = defaultFixtureMaterialPaths();
+  const copy = (assetPath: string, kind: string) => {
+    const sourceRelative = assetPath.replace(/^services\/api\/assets\//, "");
+    const sourcePath = path.resolve(assetsRoot, sourceRelative);
+    const destinationRelative = path.join("private", "organizations", organizationId, "education-materials", kind, path.basename(sourceRelative));
+    const destinationPath = path.resolve(assetsRoot, destinationRelative);
+    if (sourcePath.startsWith(assetsRoot) && destinationPath.startsWith(assetsRoot) && fs.existsSync(sourcePath)) {
+      fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+      fs.copyFileSync(sourcePath, destinationPath);
+      return `services/api/assets/${destinationRelative.split(path.sep).join("/")}`;
+    }
+    return assetPath;
+  };
+  return {
+    video: {
+      media: copy(source.video.media, "video"),
+      thumbnail: copy(source.video.thumbnail, "thumbnail"),
+      banner: copy(source.video.banner, "banner"),
+      vtt: copy(source.video.vtt, "vtt"),
+      metadata: copy(source.video.metadata, "metadata")
+    },
+    article: {
+      media: copy(source.article.media, "article"),
+      thumbnail: copy(source.article.thumbnail, "thumbnail"),
+      banner: copy(source.article.banner, "banner"),
+      metadata: copy(source.article.metadata, "metadata")
+    },
+    flashcard: {
+      thumbnail: copy(source.flashcard.thumbnail, "thumbnail"),
+      banner: copy(source.flashcard.banner, "banner"),
+      metadata: copy(source.flashcard.metadata, "metadata")
+    },
+    quiz: {
+      thumbnail: copy(source.quiz.thumbnail, "thumbnail"),
+      banner: copy(source.quiz.banner, "banner"),
+      metadata: copy(source.quiz.metadata, "metadata")
+    }
+  };
+}
+
 async function ensureSharedTutorProgram(profileId: string, input: { title: string; description: string; feeType: "free" | "paid"; feeAmount: number | null }) {
+  const profile = await prisma.profile.findUnique({ where: { id: profileId } });
+  const organization = profile ? await ensureOrganizationForProfile(profile, { type: "individual_tutor", name: "Kartik Sohani", sourceTag: "mock" }) : null;
   const existing = await prisma.program.findFirst({ where: { creatorProfileId: profileId, title: input.title } });
   if (existing) {
     const program = await prisma.program.update({
       where: { id: existing.id },
-      data: { description: input.description, visibility: "published", status: "published", feeType: input.feeType, feeAmount: input.feeAmount, sourceTag: "mock" }
+      data: { organizationId: organization?.id ?? existing.organizationId ?? null, description: input.description, visibility: "published", status: "published", feeType: input.feeType, feeAmount: input.feeAmount, sourceTag: "mock" }
     });
-    await ensureSharedTutorProgramAssets(program.id);
+    await ensureSharedTutorProgramAssets(program.id, organization?.id ?? program.organizationId ?? null);
     return program;
   }
+  const paths = organization ? ensureFixtureMaterialPaths(organization.id) : defaultFixtureMaterialPaths();
   const resources = await Promise.all([
-    prisma.resource.create({ data: { creatorProfileId: profileId, type: "video", title: input.title + " concept video", description: "Short lesson explaining the core concept before practice.", sourceUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4", storageType: "repo", thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png", bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png", vttPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt", metadataPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md", contentJson: { durationSeconds: 480, mediaUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4" }, sourceTag: "mock" } }),
-    prisma.resource.create({ data: { creatorProfileId: profileId, type: "article", title: input.title + " notes", description: "Board-focused micro-notes with formulas, examples, and answer-writing tips.", body: "Revise identities, worked examples, and step-by-step board answer patterns.", storageType: "repo", thumbnailPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.png", bannerPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.png", metadataPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/title-description.md", contentJson: { mediaUrl: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf", pdfUrl: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf" }, sourceTag: "mock" } }),
-    prisma.resource.create({ data: { creatorProfileId: profileId, type: "flashcard", title: input.title + " recall cards", description: "Quick active recall cards for identities, terms, and common traps.", storageType: "repo", thumbnailPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.png", bannerPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.png", metadataPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/title-description.md", sourceTag: "mock" } }),
-    prisma.resource.create({ data: { creatorProfileId: profileId, type: "quiz", title: input.title + " diagnostic quiz", description: "Short MCQ check before moving to the next milestone.", storageType: "repo", thumbnailPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.png", bannerPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.png", metadataPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/title-description.md", contentJson: { questions: [{ id: "class-10-board-q1", prompt: "Which expression is equal to a^2 - b^2?", options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + b^2", "2ab"], answerIndex: 0, learnMore: "Difference of squares factors into sum and difference terms." }] }, sourceTag: "mock" } })
+    prisma.resource.create({ data: { creatorProfileId: profileId, organizationId: organization?.id ?? null, type: "video", title: input.title + " concept video", description: "Short lesson explaining the core concept before practice.", sourceUrl: paths.video.media, storageType: "repo", thumbnailPath: paths.video.thumbnail, bannerPath: paths.video.banner, vttPath: paths.video.vtt, metadataPath: paths.video.metadata, contentJson: { durationSeconds: 480, mediaUrl: paths.video.media }, sourceTag: "mock" } }),
+    prisma.resource.create({ data: { creatorProfileId: profileId, organizationId: organization?.id ?? null, type: "article", title: input.title + " notes", description: "Board-focused micro-notes with formulas, examples, and answer-writing tips.", body: "Revise identities, worked examples, and step-by-step board answer patterns.", storageType: "repo", thumbnailPath: paths.article.thumbnail, bannerPath: paths.article.banner, metadataPath: paths.article.metadata, sourceUrl: paths.article.media, contentJson: { mediaUrl: paths.article.media, pdfUrl: paths.article.media }, sourceTag: "mock" } }),
+    prisma.resource.create({ data: { creatorProfileId: profileId, organizationId: organization?.id ?? null, type: "flashcard", title: input.title + " recall cards", description: "Quick active recall cards for identities, terms, and common traps.", storageType: "repo", thumbnailPath: paths.flashcard.thumbnail, bannerPath: paths.flashcard.banner, metadataPath: paths.flashcard.metadata, sourceTag: "mock" } }),
+    prisma.resource.create({ data: { creatorProfileId: profileId, organizationId: organization?.id ?? null, type: "quiz", title: input.title + " diagnostic quiz", description: "Short MCQ check before moving to the next milestone.", storageType: "repo", thumbnailPath: paths.quiz.thumbnail, bannerPath: paths.quiz.banner, metadataPath: paths.quiz.metadata, contentJson: { questions: [{ id: "class-10-board-q1", prompt: "Which expression is equal to a^2 - b^2?", options: ["(a + b)(a - b)", "(a - b)^2", "a^2 + b^2", "2ab"], answerIndex: 0, learnMore: "Difference of squares factors into sum and difference terms." }] }, sourceTag: "mock" } })
   ]);
   await prisma.flashcard.createMany({
     data: [
@@ -6726,6 +7010,7 @@ async function ensureSharedTutorProgram(profileId: string, input: { title: strin
   const program = await prisma.program.create({
     data: {
       creatorProfileId: profileId,
+      organizationId: organization?.id ?? null,
       role: "tutor",
       title: input.title,
       description: input.description,
@@ -6753,49 +7038,55 @@ async function ensureSharedTutorProgram(profileId: string, input: { title: strin
   return program;
 }
 
-async function ensureSharedTutorProgramAssets(programId: string) {
+async function ensureSharedTutorProgramAssets(programId: string, organizationId?: string | null) {
+  const paths = organizationId ? ensureFixtureMaterialPaths(organizationId) : defaultFixtureMaterialPaths();
   await Promise.all([
     prisma.resource.updateMany({
       where: { type: "video", milestoneActivities: { some: { milestone: { programId } } } },
       data: {
-        sourceUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4",
+        organizationId: organizationId ?? null,
+        sourceUrl: paths.video.media,
         storageType: "repo",
-        thumbnailPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/thumbnail.png",
-        bannerPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/banner.png",
-        vttPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/captions.vtt",
-        metadataPath: "services/api/assets/mock/video/program/neet-foundation/kinematics-motion/v1/title-description.md",
-        contentJson: { durationSeconds: 480, mediaUrl: "/api/v1/ams/files/mock/video/program/neet-foundation/kinematics-motion/v1/video.mp4" }
+        thumbnailPath: paths.video.thumbnail,
+        bannerPath: paths.video.banner,
+        vttPath: paths.video.vtt,
+        metadataPath: paths.video.metadata,
+        contentJson: { durationSeconds: 480, mediaUrl: paths.video.media }
       }
     }),
     prisma.resource.updateMany({
       where: { type: "article", milestoneActivities: { some: { milestone: { programId } } } },
       data: {
+        organizationId: organizationId ?? null,
         storageType: "repo",
-        thumbnailPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/thumbnail.png",
-        bannerPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/banner.png",
-        metadataPath: "services/api/assets/mock/article/program/neet-foundation/motion-micronotes/v1/title-description.md",
+        thumbnailPath: paths.article.thumbnail,
+        bannerPath: paths.article.banner,
+        metadataPath: paths.article.metadata,
+        sourceUrl: paths.article.media,
         contentJson: {
-          mediaUrl: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf",
-          pdfUrl: "/api/v1/ams/files/mock/article/program/neet-foundation/motion-micronotes/v1/article.pdf"
+          mediaUrl: paths.article.media,
+          pdfUrl: paths.article.media
         }
       }
     }),
     prisma.resource.updateMany({
       where: { type: "flashcard", milestoneActivities: { some: { milestone: { programId } } } },
       data: {
+        organizationId: organizationId ?? null,
         storageType: "repo",
-        thumbnailPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/thumbnail.png",
-        bannerPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/banner.png",
-        metadataPath: "services/api/assets/mock/flashcard/program/neet-foundation/motion-active-recall/v1/title-description.md"
+        thumbnailPath: paths.flashcard.thumbnail,
+        bannerPath: paths.flashcard.banner,
+        metadataPath: paths.flashcard.metadata
       }
     }),
     prisma.resource.updateMany({
       where: { type: "quiz", milestoneActivities: { some: { milestone: { programId } } } },
       data: {
+        organizationId: organizationId ?? null,
         storageType: "repo",
-        thumbnailPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/thumbnail.png",
-        bannerPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/banner.png",
-        metadataPath: "services/api/assets/mock/quiz/program/neet-foundation/motion-diagnostic/v1/title-description.md"
+        thumbnailPath: paths.quiz.thumbnail,
+        bannerPath: paths.quiz.banner,
+        metadataPath: paths.quiz.metadata
       }
     })
   ]);
@@ -6839,13 +7130,13 @@ async function ensureKnownStudentTutorMappings() {
   for (const program of programs) {
     await prisma.studentProgramSelection.upsert({
       where: { profileId_programId: { profileId: studentProfile.id, programId: program.id } },
-      update: { status: "active", sourceTag: "mock" },
-      create: { profileId: studentProfile.id, programId: program.id, status: "active", sourceTag: "mock" }
+      update: { organizationId: program.organizationId ?? null, status: "active", sourceTag: "mock" },
+      create: { profileId: studentProfile.id, programId: program.id, organizationId: program.organizationId ?? null, status: "active", sourceTag: "mock" }
     });
     await prisma.programProgress.upsert({
       where: { profileId_programId: { profileId: studentProfile.id, programId: program.id } },
-      update: {},
-      create: { profileId: studentProfile.id, programId: program.id, unlockedMilestoneSequence: 1, completedMilestoneSequence: 0, sourceTag: "mock" }
+      update: { organizationId: program.organizationId ?? null },
+      create: { profileId: studentProfile.id, programId: program.id, organizationId: program.organizationId ?? null, unlockedMilestoneSequence: 1, completedMilestoneSequence: 0, sourceTag: "mock" }
     });
     if (program.feeType === "paid" && (program.feeAmount ?? 0) > 0) {
       const existingOrder = await prisma.paymentOrder.findFirst({
@@ -6854,11 +7145,12 @@ async function ensureKnownStudentTutorMappings() {
       });
       const order = existingOrder ? await prisma.paymentOrder.update({
         where: { id: existingOrder.id },
-        data: { status: "paid", paidAt: existingOrder.paidAt ?? new Date(), methodType: existingOrder.methodType ?? "upi", paymentRail: existingOrder.paymentRail ?? "upi", tutorProfileId: tutorProfile.id, sourceTag: "mock" }
+        data: { organizationId: program.organizationId ?? null, status: "paid", paidAt: existingOrder.paidAt ?? new Date(), methodType: existingOrder.methodType ?? "upi", paymentRail: existingOrder.paymentRail ?? "upi", tutorProfileId: tutorProfile.id, sourceTag: "mock" }
       }) : await prisma.paymentOrder.create({
         data: {
           userId: studentUser.id,
           profileId: studentProfile.id,
+          organizationId: program.organizationId ?? null,
           role: "student",
           targetType: "program_purchase",
           targetId: program.id,
@@ -6878,8 +7170,8 @@ async function ensureKnownStudentTutorMappings() {
       });
       await prisma.programPurchase.upsert({
         where: { programId_studentProfileId: { programId: program.id, studentProfileId: studentProfile.id } },
-        update: { orderId: order.id, status: "active", accessStatus: "active", purchasedAt: new Date(), sourceTag: "mock" },
-        create: { orderId: order.id, programId: program.id, studentProfileId: studentProfile.id, status: "active", accessStatus: "active", purchasedAt: new Date(), sourceTag: "mock" }
+        update: { organizationId: program.organizationId ?? null, orderId: order.id, status: "active", accessStatus: "active", purchasedAt: new Date(), sourceTag: "mock" },
+        create: { orderId: order.id, programId: program.id, organizationId: program.organizationId ?? null, studentProfileId: studentProfile.id, status: "active", accessStatus: "active", purchasedAt: new Date(), sourceTag: "mock" }
       });
     }
   }
@@ -6898,11 +7190,12 @@ async function ensureKnownStudentTutorMappings() {
       });
       const order = existingOrder ? await prisma.paymentOrder.update({
         where: { id: existingOrder.id },
-        data: { status: "paid", paidAt: existingOrder.paidAt ?? new Date(), methodType: existingOrder.methodType ?? "upi", paymentRail: existingOrder.paymentRail ?? "upi", tutorProfileId: tutorProfile.id, sourceTag: "mock" }
+        data: { organizationId: batch.organizationId ?? null, status: "paid", paidAt: existingOrder.paidAt ?? new Date(), methodType: existingOrder.methodType ?? "upi", paymentRail: existingOrder.paymentRail ?? "upi", tutorProfileId: tutorProfile.id, sourceTag: "mock" }
       }) : await prisma.paymentOrder.create({
         data: {
           userId: studentUser.id,
           profileId: studentProfile.id,
+          organizationId: batch.organizationId ?? null,
           role: "student",
           targetType: "batch_admission",
           targetId: batch.id,
@@ -6925,13 +7218,13 @@ async function ensureKnownStudentTutorMappings() {
     }
     const request = await prisma.batchRequest.upsert({
       where: { batchId_studentProfileId: { batchId: batch.id, studentProfileId: studentProfile.id } },
-      update: { status: "approved", paymentOrderId, message: "Fixture enrollment for linked student account", sourceTag: "mock" },
-      create: { batchId: batch.id, studentProfileId: studentProfile.id, status: "approved", paymentOrderId, message: "Fixture enrollment for linked student account", sourceTag: "mock" }
+      update: { organizationId: batch.organizationId ?? null, status: "approved", paymentOrderId, message: "Fixture enrollment for linked student account", sourceTag: "mock" },
+      create: { batchId: batch.id, organizationId: batch.organizationId ?? null, studentProfileId: studentProfile.id, status: "approved", paymentOrderId, message: "Fixture enrollment for linked student account", sourceTag: "mock" }
     });
     await prisma.batchEnrollment.upsert({
       where: { batchId_studentProfileId: { batchId: batch.id, studentProfileId: studentProfile.id } },
-      update: { requestId: request.id, status: "active", sourceTag: "mock" },
-      create: { batchId: batch.id, studentProfileId: studentProfile.id, requestId: request.id, status: "active", sourceTag: "mock" }
+      update: { organizationId: batch.organizationId ?? null, requestId: request.id, status: "active", sourceTag: "mock" },
+      create: { batchId: batch.id, organizationId: batch.organizationId ?? null, studentProfileId: studentProfile.id, requestId: request.id, status: "active", sourceTag: "mock" }
     });
   }
 }
@@ -7134,12 +7427,16 @@ function addMinutes(minutes: number) {
   return new Date(Date.now() + minutes * 60 * 1000);
 }
 
-function addDays(days: number) {
-  return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+function addHours(hours: number) {
+  return new Date(Date.now() + hours * 60 * 60 * 1000);
 }
 
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function roleDisplayLabel(value: string) {
+  return value === "tutor" ? "Educator" : capitalize(value);
 }
 
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
