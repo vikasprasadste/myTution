@@ -67,6 +67,7 @@ enum ConversationType {
   direct_student_student
   batch_group
   batch_announcement
+  batch_custom_group
 }
 
 enum MessageStatus {

@@ -2456,7 +2456,9 @@ app.post("/api/v1/chat/conversations", async (req, res) => {
 
   const conversation = type === "batch_group" || type === "batch_announcement"
     ? await upsertBatchConversation(req, res, profile, role, type)
-    : await upsertDirectConversation(req, res, profile, role, type);
+    : type === "batch_custom_group"
+      ? await createBatchCustomGroupConversation(req, res, profile, role)
+      : await upsertDirectConversation(req, res, profile, role, type);
   if (!conversation) return;
 
   const hydrated = await prisma.conversation.findUnique({
@@ -5108,7 +5110,7 @@ app.post("/api/v1/payments/orders/:id/refund", async (req, res) => {
 
 function readConversationType(input: unknown): ConversationType | null {
   const value = String(input ?? "");
-  return value === "direct_student_educator" || value === "direct_student_student" || value === "batch_group" || value === "batch_announcement" ? value : null;
+  return value === "direct_student_educator" || value === "direct_student_student" || value === "batch_group" || value === "batch_announcement" || value === "batch_custom_group" ? value : null;
 }
 
 function chatConversationInclude(currentProfileId: string) {
@@ -5208,6 +5210,7 @@ function conversationTitle(item: any, currentProfileId: string) {
 function conversationSubtitle(item: any) {
   if (item.type === "batch_group") return "Batch group";
   if (item.type === "batch_announcement") return "Educator announcement";
+  if (item.type === "batch_custom_group") return "Group chat";
   if (item.type === "direct_student_student") return "Student chat";
   return "Student and educator";
 }
@@ -5409,6 +5412,56 @@ async function upsertBatchConversation(req: express.Request, res: express.Respon
   const title = stringOrNull(req.body.title);
   const conversation = await ensureBatchConversation(batch, type, title);
   return title ? prisma.conversation.update({ where: { id: conversation.id }, data: { title } }) : conversation;
+}
+
+async function createBatchCustomGroupConversation(req: express.Request, res: express.Response, profile: any, role: Role) {
+  const batchId = stringOrNull(req.body.batchId);
+  if (!batchId) {
+    res.status(400).json({ error: "Batch is required" });
+    return null;
+  }
+  const title = String(req.body.title ?? "").trim();
+  if (title.length < 2) {
+    res.status(400).json({ error: "Group name is required" });
+    return null;
+  }
+  const batch = await activeBatchWithChatAccess(batchId, profile, role);
+  if (!batch) {
+    res.status(404).json({ error: "Batch not found" });
+    return null;
+  }
+  const requestedIds = Array.isArray(req.body.participantProfileIds)
+    ? req.body.participantProfileIds.map((id: unknown) => String(id ?? "").trim()).filter(Boolean)
+    : [];
+  const allowedParticipants = [
+    { profile: batch.tutorProfile.profile, role: "tutor" as Role },
+    ...batch.enrollments.map((enrollment: any) => ({ profile: enrollment.studentProfile, role: "student" as Role }))
+  ];
+  const selectedIds = new Set([...requestedIds, profile.id]);
+  const participants = allowedParticipants.filter((participant) => selectedIds.has(participant.profile.id));
+  if (participants.length < 2) {
+    res.status(400).json({ error: "Select at least two batch participants" });
+    return null;
+  }
+  return prisma.conversation.create({
+    data: {
+      organizationId: batch.organizationId ?? null,
+      type: "batch_custom_group",
+      batchId: batch.id,
+      title: title.slice(0, 80),
+      sourceTag: "app",
+      participants: {
+        create: participants.map((participant) => ({
+          userId: participant.profile.userId,
+          profileId: participant.profile.id,
+          role: participant.role,
+          canRead: true,
+          canWrite: true,
+          sourceTag: "app"
+        }))
+      }
+    }
+  });
 }
 
 async function upsertDirectConversation(req: express.Request, res: express.Response, profile: any, role: Role, type: ConversationType) {

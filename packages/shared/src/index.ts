@@ -6,7 +6,7 @@ export type ResourceType = "video" | "article" | "flashcard" | "quiz";
 
 export type ConsentDocumentType = "pdf" | "url";
 
-export type ConversationType = "direct_student_educator" | "direct_student_student" | "batch_group" | "batch_announcement";
+export type ConversationType = "direct_student_educator" | "direct_student_student" | "batch_group" | "batch_announcement" | "batch_custom_group";
 
 export type MessageStatus = "sent" | "deleted" | "hidden";
 

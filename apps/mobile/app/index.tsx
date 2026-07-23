@@ -1,5 +1,5 @@
 import { appConfig, isFeatureEnabled } from "@mytution/config";
-import type { ActivityTimelineItem, BatchClass, BatchRequestSummary, ChatConversationSummary, ChatMessageSummary, ConversationType, ConsentDocumentSummary, ConsentRequirementResponse, CurriculumCatalogueResponse, CurriculumSelection, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, NotificationSummary, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorEnrollmentStudentDetail, TutorEnrollmentStudentSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
+import type { ActivityTimelineItem, BatchClass, BatchRequestSummary, ChatConversationSummary, ChatMessageSummary, ChatParticipantSummary, ConversationType, ConsentDocumentSummary, ConsentRequirementResponse, CurriculumCatalogueResponse, CurriculumSelection, IdentityContext, IdentityProfile, LearnerProgressSummary, MarketplaceRecommendationResponse, NotificationSummary, ParentMonitoringResponse, PaymentMethodConfig, PaymentOrderSummary, Persona, ProgramMilestone, ProgramSummary, QuizAttemptSummary, Recommendation, Reminder, ResourceAssetMetadata, ResourceType, Role, TutorAccountingSummary, TutorBatchSummary, TutorEnrollmentStudentDetail, TutorEnrollmentStudentSummary, TutorProgramCreateInput, TutorProgramResourceInput, TutorSearchResult, TutorSupplyAnalytics } from "@mytution/shared";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useEventListener } from "expo";
 import { BlurView } from "expo-blur";
@@ -100,7 +100,8 @@ type ParentLink = { id: string; name: string; relationship: string; status: stri
 type DashboardCard = { value: string; label: string; target: AppScreen };
 type TutorDashboardTarget = "programs" | "batches" | "requests" | "enrollments";
 type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number; milestoneTitle?: string; required?: boolean };
-type ChatTab = "all" | "unread" | "announcements" | "batches" | "direct";
+type ChatTab = "all" | "unread" | "announcements" | "batches" | "groups" | "direct";
+type ChatGroupDraft = { title: string; batchId: string; participantProfileIds: string[] };
 type TutorProgramDraft = TutorProgramCreateInput;
 type FlashcardPayload = { id?: string; sequence?: number; question: string; answer: string; learnMore?: string; relatedArticleId?: string | null };
 type ResourceDetailPayload = SelectedActivity & {
@@ -1259,6 +1260,35 @@ export default function Index() {
     }
   }
 
+  async function attachChatImage() {
+    if (!authSession?.accessToken || !selectedChatConversation?.canWrite) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 0.9
+    });
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    if (!asset?.uri) return;
+    setLoadingAction("attachChatImage");
+    try {
+      const uploaded = await apiUploadChatAttachment(
+        selectedChatConversation.id,
+        role,
+        asset.uri,
+        authSession.accessToken,
+        asset.fileName,
+        asset.mimeType
+      );
+      setChatMessages((items) => [...items, uploaded]);
+      await refreshChatConversations();
+    } catch {
+      setApiNotice("Image could not be sent.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
   async function openBatchConversation(batchId: string, type: Extract<ConversationType, "batch_group" | "batch_announcement">, title?: string | null) {
     if (!authSession?.accessToken) return;
     setLoadingAction(`openChat:${type}:${batchId}`);
@@ -1271,6 +1301,30 @@ export default function Index() {
       }
     } catch {
       setApiNotice("Conversation could not be opened.");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function createChatGroup(input: ChatGroupDraft) {
+    if (!authSession?.accessToken) return;
+    setLoadingAction("createChatGroup");
+    try {
+      const response = await apiPost<{ data: ChatConversationSummary }>("/api/v1/chat/conversations", {
+        role,
+        type: "batch_custom_group",
+        batchId: input.batchId,
+        title: input.title,
+        participantProfileIds: input.participantProfileIds
+      }, authSession.accessToken);
+      if (response.data) {
+        setChatTab("groups");
+        setScreen("chat");
+        await openChatConversation(response.data);
+        await refreshChatConversations();
+      }
+    } catch {
+      setChatNotice("Group could not be created. Check the selected batch members and try again.");
     } finally {
       setLoadingAction(null);
     }
@@ -2473,16 +2527,19 @@ export default function Index() {
       activeTab={chatTab}
       notice={chatNotice}
       loading={chatLoading}
+      creatingGroup={loadingAction === "createChatGroup"}
       sending={loadingAction === "sendChat"}
-      attaching={loadingAction === "attachChat"}
+      attaching={loadingAction === "attachChat" || loadingAction === "attachChatImage"}
       currentProfileId={identityContext?.activeProfile?.id ?? null}
       accessToken={authSession?.accessToken ?? null}
       setDraft={setChatDraft}
       setActiveTab={setChatTab}
       openConversation={openChatConversation}
+      createGroup={createChatGroup}
       closeConversation={() => { setSelectedChatConversation(null); setChatMessages([]); }}
       sendMessage={sendChatMessage}
       attachFile={attachChatFile}
+      attachImage={attachChatImage}
       refresh={refreshChatConversations}
       back={() => setScreen("home")}
     />;
@@ -2588,7 +2645,7 @@ export default function Index() {
   return (
     <LinearGradient colors={screenGradient(role)} style={styles.shell}>
       <ScrollView
-        contentContainerStyle={[styles.content, screen === "home" && styles.homeContent, screen === "value" && styles.valueContent, showNav && styles.contentWithNav, pinnedActivityAction && styles.contentWithPinnedAction]}
+        contentContainerStyle={[styles.content, screen === "home" && styles.homeContent, screen === "value" && styles.valueContent, showNav && styles.contentWithNav, screen === "chat" && selectedChatConversation && styles.chatContent, pinnedActivityAction && styles.contentWithPinnedAction]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshCurrentScreen} tintColor={theme.accentStrong} />}
       >
         {renderScreen()}
@@ -6432,6 +6489,7 @@ const chatTabs: Array<{ id: ChatTab; label: string }> = [
   { id: "unread", label: "Unread" },
   { id: "announcements", label: "Announcements" },
   { id: "batches", label: "Batch" },
+  { id: "groups", label: "Groups" },
   { id: "direct", label: "Direct" }
 ];
 
@@ -6439,6 +6497,7 @@ function conversationsForTab(conversations: ChatConversationSummary[], tab: Chat
   if (tab === "unread") return conversations.filter((item) => item.unreadCount > 0);
   if (tab === "announcements") return conversations.filter((item) => item.type === "batch_announcement");
   if (tab === "batches") return conversations.filter((item) => item.type === "batch_group");
+  if (tab === "groups") return conversations.filter((item) => item.type === "batch_custom_group");
   if (tab === "direct") return conversations.filter((item) => item.type === "direct_student_educator" || item.type === "direct_student_student");
   return conversations;
 }
@@ -6448,6 +6507,7 @@ function chatEmptyState(role: Role, tab: ChatTab) {
   if (tab === "unread") return { title: "No unread messages", copy: "New messages from your batches and direct chats will appear here." };
   if (tab === "announcements") return { title: "No announcements yet", copy: "Educator announcements for active batches will appear here." };
   if (tab === "batches") return { title: "No batch chats yet", copy: role === "tutor" ? "Batch chats appear after you create or sync active batches." : "Batch chats appear after your enrollment is active." };
+  if (tab === "groups") return { title: "No groups yet", copy: "Create a batch group to keep a focused chat thread with selected batch members." };
   if (tab === "direct") return { title: "No direct messages yet", copy: "One-to-one chats from your active learning connections will appear here." };
   return { title: "No conversations yet", copy: role === "tutor" ? "Chats will appear after your active batches and enrolled students are synced." : "Chats will appear after you join an active batch." };
 }
@@ -6461,6 +6521,7 @@ function Messages({
   activeTab,
   notice,
   loading,
+  creatingGroup,
   sending,
   attaching,
   currentProfileId,
@@ -6468,9 +6529,11 @@ function Messages({
   setDraft,
   setActiveTab,
   openConversation,
+  createGroup,
   closeConversation,
   sendMessage,
   attachFile,
+  attachImage,
   refresh,
   back
 }: {
@@ -6482,6 +6545,7 @@ function Messages({
   activeTab: ChatTab;
   notice: string;
   loading: boolean;
+  creatingGroup: boolean;
   sending: boolean;
   attaching: boolean;
   currentProfileId: string | null;
@@ -6489,72 +6553,100 @@ function Messages({
   setDraft: (value: string) => void;
   setActiveTab: (value: ChatTab) => void;
   openConversation: (conversation: ChatConversationSummary) => void;
+  createGroup: (input: ChatGroupDraft) => void;
   closeConversation: () => void;
   sendMessage: () => void;
   attachFile: () => void;
+  attachImage: () => void;
   refresh: () => void;
   back: () => void;
 }) {
   const theme = useRoleTheme(role);
-  const visibleConversations = conversationsForTab(conversations, activeTab);
+  const batchSources = useMemo(() => conversations.filter((item) => item.type === "batch_group" && item.batchId), [conversations]);
+  const [groupComposerOpen, setGroupComposerOpen] = useState(false);
+  const [groupTitle, setGroupTitle] = useState("");
+  const [groupBatchId, setGroupBatchId] = useState("");
+  const [groupParticipantIds, setGroupParticipantIds] = useState<string[]>([]);
+  const [chatSearch, setChatSearch] = useState("");
+  const tabConversations = conversationsForTab(conversations, activeTab);
+  const normalizedSearch = chatSearch.trim().toLowerCase();
+  const visibleConversations = normalizedSearch
+    ? tabConversations.filter((conversation) => `${conversation.title} ${conversation.subtitle ?? ""} ${conversation.participants.map((participant) => participant.name).join(" ")}`.toLowerCase().includes(normalizedSearch))
+    : tabConversations;
   const emptyState = chatEmptyState(role, activeTab);
+  const inboxParticipants = useMemo(() => {
+    const seen = new Set<string>();
+    return conversations.flatMap((conversation) => conversation.participants).filter((participant) => {
+      if (participant.profileId === currentProfileId || seen.has(participant.profileId)) return false;
+      seen.add(participant.profileId);
+      return true;
+    }).slice(0, 12);
+  }, [conversations, currentProfileId]);
+  const selectedBatchSource = batchSources.find((item) => item.batchId === groupBatchId) ?? batchSources[0] ?? null;
+  const groupParticipants = selectedBatchSource?.participants ?? [];
+  function openGroupComposer() {
+    const source = batchSources[0];
+    setGroupBatchId(source?.batchId ?? "");
+    setGroupTitle("");
+    setGroupParticipantIds(source?.participants.map((participant) => participant.profileId) ?? []);
+    setGroupComposerOpen(true);
+  }
+  function selectGroupBatch(batchId: string) {
+    const source = batchSources.find((item) => item.batchId === batchId);
+    setGroupBatchId(batchId);
+    setGroupParticipantIds(source?.participants.map((participant) => participant.profileId) ?? []);
+  }
+  function toggleGroupParticipant(profileId: string) {
+    if (profileId === currentProfileId) return;
+    setGroupParticipantIds((items) => items.includes(profileId) ? items.filter((id) => id !== profileId) : [...items, profileId]);
+  }
+  function submitGroup() {
+    if (!selectedBatchSource?.batchId || groupTitle.trim().length < 2) return;
+    createGroup({ title: groupTitle.trim(), batchId: selectedBatchSource.batchId, participantProfileIds: groupParticipantIds });
+    setGroupComposerOpen(false);
+  }
   if (selectedConversation) {
     return (
       <>
-        <TopBar title={selectedConversation.title} left="‹" onLeft={closeConversation} right="Refresh" onRight={refresh} />
-        <View style={styles.classRosterHero}>
-          <Text style={styles.classTitle}>{selectedConversation.title}</Text>
-          <Text style={styles.classMeta}>{selectedConversation.subtitle} • {selectedConversation.participantCount} participant{selectedConversation.participantCount === 1 ? "" : "s"}</Text>
-        </View>
-        {loading ? <ActivityIndicator color={theme.text} /> : null}
-        {messages.length ? messages.map((message) => {
-          const mine = message.senderProfileId === currentProfileId;
-          return (
-            <View key={message.id} style={[styles.chatBubble, mine ? styles.chatBubbleMine : styles.chatBubbleOther]}>
-              <Text style={styles.chatSender}>{mine ? "You" : message.senderName}</Text>
-              <Text style={styles.chatBody}>{message.body}</Text>
-              {message.attachments.length ? (
-                <View style={styles.chatAttachmentStack}>
-                  {message.attachments.map((attachment) => {
-                    const url = chatAttachmentUrl(attachment.fileUrl, role, accessToken);
-                    const image = isImageAttachment(attachment);
-                    return (
-                      <Pressable key={attachment.id} style={({ pressed }) => [styles.chatAttachmentPill, pressed && styles.pressablePressed]} onPress={() => url ? Linking.openURL(url).catch(() => undefined) : undefined}>
-                        {image && url ? <Image source={{ uri: url }} style={styles.chatAttachmentImage} resizeMode="cover" /> : null}
-                        <Text style={styles.chatAttachmentName} numberOfLines={1}>{attachment.fileName ?? capitalize(attachment.kind)}</Text>
-                        <Text style={styles.chatAttachmentMeta}>{image ? "Tap to open image" : "Tap to open file"}{attachment.sizeBytes ? ` • ${formatFileSize(attachment.sizeBytes)}` : ""}</Text>
-                      </Pressable>
-                    );
-                  })}
+        <View style={styles.chatThreadPane}>
+          <TopBar title={selectedConversation.title} left="‹" onLeft={closeConversation} right="Refresh" onRight={refresh} />
+          <View style={styles.chatRoomHeader}>
+            <Text style={styles.classTitle}>{selectedConversation.title}</Text>
+            <Text style={styles.classMeta}>{selectedConversation.subtitle} • {selectedConversation.participantCount} participant{selectedConversation.participantCount === 1 ? "" : "s"}</Text>
+            <ChatParticipantStrip participants={selectedConversation.participants} />
+          </View>
+          <ScrollView style={styles.chatMessageScroller} contentContainerStyle={styles.chatMessageContent} nestedScrollEnabled>
+            {loading ? <ActivityIndicator color={theme.text} /> : null}
+            {messages.length ? messages.map((message) => {
+              const mine = message.senderProfileId === currentProfileId;
+              return (
+                <View key={message.id} style={[styles.chatBubble, mine ? styles.chatBubbleMine : styles.chatBubbleOther]}>
+                  <Text style={styles.chatSender}>{mine ? "You" : message.senderName}</Text>
+                  <Text style={styles.chatBody}>{message.body}</Text>
+                  {message.attachments.length ? (
+                    <View style={styles.chatAttachmentStack}>
+                      {message.attachments.map((attachment) => {
+                        const url = chatAttachmentUrl(attachment.fileUrl, role, accessToken);
+                        const image = isImageAttachment(attachment);
+                        return (
+                          <Pressable key={attachment.id} style={({ pressed }) => [styles.chatAttachmentPill, pressed && styles.pressablePressed]} onPress={() => url ? Linking.openURL(url).catch(() => undefined) : undefined}>
+                            {image && url ? <Image source={{ uri: url }} style={styles.chatAttachmentImage} resizeMode="cover" /> : null}
+                            <Text style={styles.chatAttachmentName} numberOfLines={1}>{attachment.fileName ?? capitalize(attachment.kind)}</Text>
+                            <Text style={styles.chatAttachmentMeta}>{image ? "Tap to open image" : "Tap to open file"}{attachment.sizeBytes ? ` • ${formatFileSize(attachment.sizeBytes)}` : ""}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                  <Text style={styles.chatTime}>{formatReminderDateTime(message.createdAt)}</Text>
                 </View>
-              ) : null}
-              <Text style={styles.chatTime}>{formatReminderDateTime(message.createdAt)}</Text>
-            </View>
-          );
-        }) : (
-          <EmptyStateCard title="No messages yet" copy={selectedConversation.canWrite ? "Start the conversation when you are ready." : "Messages will appear here when they are sent."} />
-        )}
-        {selectedConversation.canWrite ? (
-          <View style={styles.chatComposer}>
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              multiline
-              placeholder="Write a message"
-              placeholderTextColor="#94A3B8"
-              style={styles.chatComposerInput}
-            />
-            <View style={styles.supplyActionRow}>
-              <Button role={role} variant="secondary" label="Attach" onPress={attachFile} loading={attaching} />
-              <Button role={role} label="Send" onPress={sendMessage} disabled={!draft.trim()} loading={sending} />
-            </View>
-          </View>
-        ) : (
-          <View style={styles.emptyInlineCard}>
-            <Text style={styles.todayTitle}>Read-only conversation</Text>
-            <Text style={styles.todayMeta}>Only the educator can post announcements in this chat.</Text>
-          </View>
-        )}
+              );
+            }) : (
+              <EmptyStateCard title="No messages yet" copy={selectedConversation.canWrite ? "Start the conversation when you are ready." : "Messages will appear here when they are sent."} />
+            )}
+          </ScrollView>
+          <ChatComposer role={role} draft={draft} setDraft={setDraft} canWrite={selectedConversation.canWrite} sending={sending} attaching={attaching} sendMessage={sendMessage} attachFile={attachFile} attachImage={attachImage} />
+        </View>
       </>
     );
   }
@@ -6565,6 +6657,14 @@ function Messages({
         <Text style={styles.classTitle}>Messages</Text>
         <Text style={styles.classMeta}>{role === "parent" ? "Parent accounts have no messaging conversations in this phase." : "Batch chats, announcements, and direct messages from your active enrollments appear here."}</Text>
       </View>
+      {role !== "parent" ? (
+        <Button role={role} label="Create group" onPress={openGroupComposer} disabled={!batchSources.length} />
+      ) : null}
+      <View style={styles.chatSearchBar}>
+        <TextInput value={chatSearch} onChangeText={setChatSearch} placeholder="Search" placeholderTextColor="#94A3B8" style={styles.chatSearchInput} />
+        <Text style={styles.chatSearchIcon}>⌕</Text>
+      </View>
+      {inboxParticipants.length ? <ChatParticipantStrip participants={inboxParticipants} /> : null}
       <View style={styles.chatTabs}>
         {chatTabs.map((tab) => {
           const selected = activeTab === tab.id;
@@ -6595,6 +6695,41 @@ function Messages({
       ) : (
         <EmptyStateCard title={emptyState.title} copy={emptyState.copy} />
       )}
+      <Modal visible={groupComposerOpen} transparent animationType="slide" onRequestClose={() => setGroupComposerOpen(false)}>
+        <View style={styles.filterModalBackdrop}>
+          <View style={styles.filterModalCard}>
+            <Text style={styles.filterModalTitle}>Create group</Text>
+            <TextInput value={groupTitle} onChangeText={setGroupTitle} placeholder="Group name" placeholderTextColor="#94A3B8" style={styles.input} />
+            <View style={styles.chatBatchPicker}>
+              {batchSources.map((source) => (
+                <Pressable key={source.id} onPress={() => selectGroupBatch(source.batchId!)} style={({ pressed }) => [styles.chatBatchChip, source.batchId === selectedBatchSource?.batchId && { borderColor: theme.accentStrong, backgroundColor: theme.accent }, pressed && styles.pressablePressed]}>
+                  <Text style={styles.chatBatchChipText} numberOfLines={1}>{source.title.replace(/ chat$/, "")}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <ScrollView style={styles.chatParticipantPicker} contentContainerStyle={styles.chatParticipantPickerContent}>
+              {groupParticipants.map((participant) => {
+                const selected = groupParticipantIds.includes(participant.profileId);
+                const locked = participant.profileId === currentProfileId;
+                return (
+                  <Pressable key={participant.profileId} onPress={() => toggleGroupParticipant(participant.profileId)} style={({ pressed }) => [styles.chatParticipantPickRow, selected && { borderColor: theme.accentStrong, backgroundColor: theme.accent }, pressed && !locked && styles.pressablePressed]}>
+                    <ParticipantAvatar participant={participant} />
+                    <View style={styles.flex}>
+                      <Text style={styles.parentRowName}>{participant.name}</Text>
+                      <Text style={styles.parentRowMeta}>{locked ? "You" : participant.role === "tutor" ? "Educator" : "Student"}</Text>
+                    </View>
+                    <Text style={styles.check}>{selected ? "✓" : ""}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            <View style={styles.supplyActionRow}>
+              <Button role={role} label="Create group" onPress={submitGroup} disabled={!selectedBatchSource || groupTitle.trim().length < 2 || groupParticipantIds.length < 2} loading={creatingGroup} />
+              <Button role={role} variant="secondary" label="Cancel" onPress={() => setGroupComposerOpen(false)} />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -6619,6 +6754,83 @@ function ConversationList({ items, openConversation }: { items: ChatConversation
         </Pressable>
       ))}
     </>
+  );
+}
+
+function ParticipantAvatar({ participant }: { participant: ChatParticipantSummary }) {
+  return (
+    <View style={styles.chatParticipantAvatar}>
+      {participant.avatarUrl ? <Image source={{ uri: participant.avatarUrl }} style={styles.chatParticipantImage} resizeMode="cover" /> : <Text style={styles.rosterAvatarText}>{participant.initials}</Text>}
+    </View>
+  );
+}
+
+function ChatParticipantStrip({ participants }: { participants: ChatParticipantSummary[] }) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chatParticipantStrip}>
+      {participants.map((participant) => (
+        <View key={participant.profileId} style={styles.chatParticipantItem}>
+          <ParticipantAvatar participant={participant} />
+          <View style={styles.chatOnlineDot} />
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+function ChatComposer({
+  role,
+  draft,
+  setDraft,
+  canWrite,
+  sending,
+  attaching,
+  sendMessage,
+  attachFile,
+  attachImage
+}: {
+  role: Role;
+  draft: string;
+  setDraft: (value: string) => void;
+  canWrite: boolean;
+  sending: boolean;
+  attaching: boolean;
+  sendMessage: () => void;
+  attachFile: () => void;
+  attachImage: () => void;
+}) {
+  const theme = useRoleTheme(role);
+  if (!canWrite) {
+    return (
+      <View style={styles.emptyInlineCard}>
+        <Text style={styles.todayTitle}>Read-only conversation</Text>
+        <Text style={styles.todayMeta}>Only the educator can post announcements in this chat.</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.chatComposerBar}>
+      <Pressable accessibilityLabel="Attach file" onPress={attachFile} disabled={attaching} style={({ pressed }) => [styles.chatIconButton, pressed && styles.pressablePressed]}>
+        <Text style={styles.chatIconText}>+</Text>
+      </Pressable>
+      <TextInput
+        value={draft}
+        onChangeText={setDraft}
+        multiline
+        placeholder="Message"
+        placeholderTextColor="#94A3B8"
+        style={styles.chatInlineInput}
+      />
+      <Pressable accessibilityLabel="Attach image" onPress={attachImage} disabled={attaching} style={({ pressed }) => [styles.chatIconButton, pressed && styles.pressablePressed]}>
+        <Text style={styles.chatIconText}>□</Text>
+      </Pressable>
+      <Pressable accessibilityLabel="Voice message" disabled style={[styles.chatMicButton, { backgroundColor: theme.accentStrong }, styles.chatMicDisabled]}>
+        <Text style={styles.chatMicText}>●</Text>
+      </Pressable>
+      <Pressable accessibilityLabel="Send message" onPress={sendMessage} disabled={!draft.trim() || sending} style={({ pressed }) => [styles.chatSendButton, { backgroundColor: theme.accentStrong }, (!draft.trim() || sending) && styles.chatSendDisabled, pressed && styles.pressablePressed]}>
+        <Text style={styles.chatSendText}>›</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -6971,6 +7183,7 @@ const styles = StyleSheet.create({
   appSplashLogo: { borderRadius: 28, height: 150, width: 150 },
   shell: { flex: 1 },
   content: { flexGrow: 1, gap: 12, padding: 20, paddingTop: 56 },
+  chatContent: { minHeight: "100%" },
   homeContent: { gap: 14, paddingHorizontal: 18 },
   valueContent: { justifyContent: "space-between" },
   contentWithNav: { paddingBottom: 124 },
@@ -7751,6 +7964,18 @@ const styles = StyleSheet.create({
   chatTabButton: { alignItems: "center", borderRadius: 999, borderWidth: 1, justifyContent: "center", minHeight: 34, paddingHorizontal: 12, paddingVertical: 7 },
   chatTabText: { fontSize: 12, fontWeight: "900", lineHeight: 16, textAlign: "center" },
   chatUnread: { backgroundColor: "#3B7CFF", borderRadius: 999, color: "#FFFFFF", fontSize: 11, fontWeight: "900", minWidth: 22, overflow: "hidden", paddingHorizontal: 7, paddingVertical: 3, textAlign: "center" },
+  chatSearchBar: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, flexDirection: "row", minHeight: 42, paddingHorizontal: 13 },
+  chatSearchInput: { color: "#111827", flex: 1, fontSize: 13, fontWeight: "700", minHeight: 40, paddingVertical: 8 },
+  chatSearchIcon: { color: "#202A35", fontSize: 17, fontWeight: "900" },
+  chatRoomHeader: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, gap: 10, padding: 14 },
+  chatThreadPane: { flex: 1, gap: 12, minHeight: 640 },
+  chatMessageScroller: { flex: 1, minHeight: 330 },
+  chatMessageContent: { gap: 9, paddingBottom: 8 },
+  chatParticipantStrip: { gap: 10, paddingRight: 6 },
+  chatParticipantItem: { height: 46, width: 46 },
+  chatParticipantAvatar: { alignItems: "center", backgroundColor: "#EAF2FF", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, height: 44, justifyContent: "center", overflow: "hidden", width: 44 },
+  chatParticipantImage: { height: "100%", width: "100%" },
+  chatOnlineDot: { backgroundColor: "#20C997", borderColor: "#FFFFFF", borderRadius: 999, borderWidth: 2, height: 12, position: "absolute", right: 0, top: 0, width: 12 },
   chatBubble: { borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, gap: 5, maxWidth: "88%", padding: 12 },
   chatBubbleMine: { alignSelf: "flex-end", backgroundColor: "#DCEAFE", borderColor: "#BBD2FF" },
   chatBubbleOther: { alignSelf: "flex-start", backgroundColor: "#FFFFFF" },
@@ -7762,8 +7987,22 @@ const styles = StyleSheet.create({
   chatAttachmentImage: { backgroundColor: "#E2E8F0", borderRadius: 10, height: 112, marginBottom: 8, width: 198 },
   chatAttachmentName: { color: "#111827", fontSize: 12, fontWeight: "900" },
   chatAttachmentMeta: { color: "#536A86", fontSize: 11, fontWeight: "800", marginTop: 2 },
-  chatComposer: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 10, padding: 12 },
-  chatComposerInput: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 14, borderWidth: 1, color: "#111827", fontSize: 14, minHeight: 76, padding: 12, textAlignVertical: "top" },
+  chatComposerBar: { alignItems: "flex-end", backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 7, padding: 6 },
+  chatIconButton: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, height: 34, justifyContent: "center", width: 34 },
+  chatIconText: { color: "#202A35", fontSize: 20, fontWeight: "900", lineHeight: 24 },
+  chatInlineInput: { color: "#111827", flex: 1, fontSize: 14, maxHeight: 92, minHeight: 34, paddingHorizontal: 4, paddingVertical: 7 },
+  chatMicButton: { alignItems: "center", borderRadius: 999, height: 38, justifyContent: "center", width: 38 },
+  chatMicDisabled: { opacity: 0.45 },
+  chatMicText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
+  chatSendButton: { alignItems: "center", borderRadius: 999, height: 38, justifyContent: "center", width: 38 },
+  chatSendDisabled: { opacity: 0.42 },
+  chatSendText: { color: "#FFFFFF", fontSize: 24, fontWeight: "900", lineHeight: 26 },
+  chatBatchPicker: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chatBatchChip: { borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, maxWidth: "100%", minHeight: 34, paddingHorizontal: 12, paddingVertical: 7 },
+  chatBatchChipText: { color: "#202A35", fontSize: 12, fontWeight: "900" },
+  chatParticipantPicker: { maxHeight: 260 },
+  chatParticipantPickerContent: { gap: 8, paddingBottom: 4 },
+  chatParticipantPickRow: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 14, borderWidth: 1, flexDirection: "row", gap: 10, minHeight: 58, padding: 10 },
   chatMiniButton: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#C9D6E4", borderRadius: 999, borderWidth: 1, flexShrink: 0, justifyContent: "center", minHeight: 34, paddingHorizontal: 12 },
   chatMiniButtonText: { color: "#202A35", fontSize: 12, fontWeight: "900" },
   monitoringCard: { backgroundColor: "rgba(255,255,255,0.96)", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, gap: 12, padding: 15, shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
