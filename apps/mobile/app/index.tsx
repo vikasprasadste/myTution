@@ -100,6 +100,7 @@ type ParentLink = { id: string; name: string; relationship: string; status: stri
 type DashboardCard = { value: string; label: string; target: AppScreen };
 type TutorDashboardTarget = "programs" | "batches" | "requests" | "enrollments";
 type SelectedActivity = Recommendation & { milestoneId?: string; activityId?: string; activitySequence?: number; milestoneSequence?: number; milestoneTitle?: string; required?: boolean };
+type ChatTab = "all" | "unread" | "announcements" | "batches" | "direct";
 type TutorProgramDraft = TutorProgramCreateInput;
 type FlashcardPayload = { id?: string; sequence?: number; question: string; answer: string; learnMore?: string; relatedArticleId?: string | null };
 type ResourceDetailPayload = SelectedActivity & {
@@ -423,6 +424,8 @@ export default function Index() {
   const [chatMessages, setChatMessages] = useState<ChatMessageSummary[]>([]);
   const [chatDraft, setChatDraft] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [chatTab, setChatTab] = useState<ChatTab>("all");
+  const [chatNotice, setChatNotice] = useState("");
   const [reminderTitle, setReminderTitle] = useState("Math revision reminder");
   const [reminderDate, setReminderDate] = useState("24/06/2026");
   const [reminderTime, setReminderTime] = useState("06:30 PM");
@@ -1182,10 +1185,10 @@ export default function Index() {
         const updatedSelected = response.data.find((conversation) => conversation.id === selectedChatConversation.id) ?? null;
         setSelectedChatConversation(updatedSelected);
       }
+      setChatNotice("");
       setApiNotice("");
     } catch {
-      setChatConversations([]);
-      setApiNotice("Messages could not be loaded from API.");
+      setChatNotice("Messages could not be loaded. Pull down to retry.");
     } finally {
       setChatLoading(false);
     }
@@ -1204,6 +1207,7 @@ export default function Index() {
       setSelectedChatConversation(conversationsResponse.data.find((item) => item.id === conversation.id) ?? conversation);
     } catch {
       setChatMessages([]);
+      setChatNotice("This conversation could not be opened. Pull down to retry.");
       setApiNotice("This conversation could not be opened.");
     } finally {
       setChatLoading(false);
@@ -2466,12 +2470,15 @@ export default function Index() {
       selectedConversation={selectedChatConversation}
       messages={chatMessages}
       draft={chatDraft}
+      activeTab={chatTab}
+      notice={chatNotice}
       loading={chatLoading}
       sending={loadingAction === "sendChat"}
       attaching={loadingAction === "attachChat"}
       currentProfileId={identityContext?.activeProfile?.id ?? null}
       accessToken={authSession?.accessToken ?? null}
       setDraft={setChatDraft}
+      setActiveTab={setChatTab}
       openConversation={openChatConversation}
       closeConversation={() => { setSelectedChatConversation(null); setChatMessages([]); }}
       sendMessage={sendChatMessage}
@@ -6420,18 +6427,46 @@ function Payments({ role, accessToken, back }: { role: Role; accessToken?: strin
   );
 }
 
+const chatTabs: Array<{ id: ChatTab; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "unread", label: "Unread" },
+  { id: "announcements", label: "Announcements" },
+  { id: "batches", label: "Batch" },
+  { id: "direct", label: "Direct" }
+];
+
+function conversationsForTab(conversations: ChatConversationSummary[], tab: ChatTab) {
+  if (tab === "unread") return conversations.filter((item) => item.unreadCount > 0);
+  if (tab === "announcements") return conversations.filter((item) => item.type === "batch_announcement");
+  if (tab === "batches") return conversations.filter((item) => item.type === "batch_group");
+  if (tab === "direct") return conversations.filter((item) => item.type === "direct_student_educator" || item.type === "direct_student_student");
+  return conversations;
+}
+
+function chatEmptyState(role: Role, tab: ChatTab) {
+  if (role === "parent") return { title: "Messages are view-only", copy: "Parent messaging is not enabled in this phase." };
+  if (tab === "unread") return { title: "No unread messages", copy: "New messages from your batches and direct chats will appear here." };
+  if (tab === "announcements") return { title: "No announcements yet", copy: "Educator announcements for active batches will appear here." };
+  if (tab === "batches") return { title: "No batch chats yet", copy: role === "tutor" ? "Batch chats appear after you create or sync active batches." : "Batch chats appear after your enrollment is active." };
+  if (tab === "direct") return { title: "No direct messages yet", copy: "One-to-one chats from your active learning connections will appear here." };
+  return { title: "No conversations yet", copy: role === "tutor" ? "Chats will appear after your active batches and enrolled students are synced." : "Chats will appear after you join an active batch." };
+}
+
 function Messages({
   role,
   conversations,
   selectedConversation,
   messages,
   draft,
+  activeTab,
+  notice,
   loading,
   sending,
   attaching,
   currentProfileId,
   accessToken,
   setDraft,
+  setActiveTab,
   openConversation,
   closeConversation,
   sendMessage,
@@ -6444,12 +6479,15 @@ function Messages({
   selectedConversation: ChatConversationSummary | null;
   messages: ChatMessageSummary[];
   draft: string;
+  activeTab: ChatTab;
+  notice: string;
   loading: boolean;
   sending: boolean;
   attaching: boolean;
   currentProfileId: string | null;
   accessToken: string | null;
   setDraft: (value: string) => void;
+  setActiveTab: (value: ChatTab) => void;
   openConversation: (conversation: ChatConversationSummary) => void;
   closeConversation: () => void;
   sendMessage: () => void;
@@ -6458,13 +6496,8 @@ function Messages({
   back: () => void;
 }) {
   const theme = useRoleTheme(role);
-  const unreadConversations = conversations.filter((item) => item.unreadCount > 0);
-  const readConversations = conversations.filter((item) => item.unreadCount === 0);
-  const grouped = {
-    announcement: readConversations.filter((item) => item.type === "batch_announcement"),
-    batch: readConversations.filter((item) => item.type === "batch_group"),
-    direct: readConversations.filter((item) => item.type === "direct_student_educator" || item.type === "direct_student_student")
-  };
+  const visibleConversations = conversationsForTab(conversations, activeTab);
+  const emptyState = chatEmptyState(role, activeTab);
   if (selectedConversation) {
     return (
       <>
@@ -6532,26 +6565,44 @@ function Messages({
         <Text style={styles.classTitle}>Messages</Text>
         <Text style={styles.classMeta}>{role === "parent" ? "Parent accounts have no messaging conversations in this phase." : "Batch chats, announcements, and direct messages from your active enrollments appear here."}</Text>
       </View>
-      {loading ? <ActivityIndicator color={theme.text} /> : null}
-      {conversations.length ? (
-        <>
-          <ConversationGroup title="Unread" items={unreadConversations} openConversation={openConversation} />
-          <ConversationGroup title="Announcements" items={grouped.announcement} openConversation={openConversation} />
-          <ConversationGroup title="Batch chats" items={grouped.batch} openConversation={openConversation} />
-          <ConversationGroup title="Direct messages" items={grouped.direct} openConversation={openConversation} />
-        </>
+      <View style={styles.chatTabs}>
+        {chatTabs.map((tab) => {
+          const selected = activeTab === tab.id;
+          return (
+            <Pressable
+              key={tab.id}
+              onPress={() => setActiveTab(tab.id)}
+              style={({ pressed }) => [
+                styles.chatTabButton,
+                { borderColor: selected ? theme.accentStrong : "#DDE7EF", backgroundColor: selected ? theme.accent : "rgba(255,255,255,0.94)" },
+                pressed && styles.pressablePressed
+              ]}
+            >
+              <Text style={[styles.chatTabText, { color: selected ? theme.accentStrong : "#536A86" }]}>{tab.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {notice ? (
+        <View style={styles.emptyInlineCard}>
+          <Text style={styles.todayTitle}>Messages unavailable</Text>
+          <Text style={styles.todayMeta}>{notice}</Text>
+        </View>
+      ) : null}
+      {loading && !visibleConversations.length ? <ActivityIndicator color={theme.text} /> : null}
+      {visibleConversations.length ? (
+        <ConversationList items={visibleConversations} openConversation={openConversation} />
       ) : (
-        <EmptyStateCard title="No conversations yet" copy={role === "tutor" ? "Chats will appear after you create a batch conversation or receive enrolled students." : "Chats will appear after you join an active batch."} />
+        <EmptyStateCard title={emptyState.title} copy={emptyState.copy} />
       )}
     </>
   );
 }
 
-function ConversationGroup({ title, items, openConversation }: { title: string; items: ChatConversationSummary[]; openConversation: (conversation: ChatConversationSummary) => void }) {
+function ConversationList({ items, openConversation }: { items: ChatConversationSummary[]; openConversation: (conversation: ChatConversationSummary) => void }) {
   if (!items.length) return null;
   return (
     <>
-      <SectionTitle>{title}</SectionTitle>
       {items.map((conversation) => (
         <Pressable key={conversation.id} onPress={() => openConversation(conversation)} style={styles.chatConversationRow}>
           <View style={styles.rosterAvatar}>
@@ -7696,6 +7747,9 @@ const styles = StyleSheet.create({
   parentRowName: { color: "#202A35", fontSize: 15, fontWeight: "900" },
   parentRowMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", marginTop: 2 },
   chatConversationRow: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, padding: 13 },
+  chatTabs: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chatTabButton: { alignItems: "center", borderRadius: 999, borderWidth: 1, justifyContent: "center", minHeight: 34, paddingHorizontal: 12, paddingVertical: 7 },
+  chatTabText: { fontSize: 12, fontWeight: "900", lineHeight: 16, textAlign: "center" },
   chatUnread: { backgroundColor: "#3B7CFF", borderRadius: 999, color: "#FFFFFF", fontSize: 11, fontWeight: "900", minWidth: 22, overflow: "hidden", paddingHorizontal: 7, paddingVertical: 3, textAlign: "center" },
   chatBubble: { borderColor: "#DDE7EF", borderRadius: 16, borderWidth: 1, gap: 5, maxWidth: "88%", padding: 12 },
   chatBubbleMine: { alignSelf: "flex-end", backgroundColor: "#DCEAFE", borderColor: "#BBD2FF" },
