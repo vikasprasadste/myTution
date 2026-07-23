@@ -27,6 +27,7 @@ import {
   useWindowDimensions,
   View
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SvgXml, type SvgProps } from "react-native-svg";
 import { WebView } from "react-native-webview";
 import AccountActiveIcon from "../assets/nav/Account_active.svg";
@@ -2526,7 +2527,6 @@ export default function Index() {
       draft={chatDraft}
       activeTab={chatTab}
       notice={chatNotice}
-      loading={chatLoading}
       creatingGroup={loadingAction === "createChatGroup"}
       sending={loadingAction === "sendChat"}
       attaching={loadingAction === "attachChat" || loadingAction === "attachChatImage"}
@@ -2540,7 +2540,6 @@ export default function Index() {
       sendMessage={sendChatMessage}
       attachFile={attachChatFile}
       attachImage={attachChatImage}
-      refresh={refreshChatConversations}
       back={() => setScreen("home")}
     />;
     if (screen === "account") return <Account role={role} persona={persona} avatarUri={avatarUri} signOut={async () => { if (authSession) await apiPost("/api/v1/auth/revoke", { refreshToken: authSession.refreshToken }, authSession.accessToken).catch(() => undefined); setAuthSession(null); setIdentityContext(null); setSignInMode("returning"); setScreen("signin"); }} setScreen={setScreen} onEditProfile={() => {
@@ -2636,7 +2635,8 @@ export default function Index() {
   }
 
   const pinnedActivityAction = renderPinnedActivityAction();
-  const showNav = ["home", "sessions", "events", "chat", "account"].includes(screen);
+  const chatThreadOpen = screen === "chat" && Boolean(selectedChatConversation);
+  const showNav = ["home", "sessions", "events", "chat", "account"].includes(screen) && !chatThreadOpen;
 
   if (showAppSplash) {
     return <AppSplash />;
@@ -3523,7 +3523,7 @@ function TopBar({ title, left, right, onLeft, onRight }: { title: string; left?:
       ) : (
         <View style={styles.topButtonSpacer} />
       )}
-      <Text style={styles.topTitle}>{title}</Text>
+      <Text style={styles.topTitle} numberOfLines={1} ellipsizeMode="tail">{title}</Text>
       {right ? (
         <Pressable onPress={onRight} style={styles.topTextAction}><Text style={styles.topTextActionText}>{right}</Text></Pressable>
       ) : (
@@ -6520,7 +6520,6 @@ function Messages({
   draft,
   activeTab,
   notice,
-  loading,
   creatingGroup,
   sending,
   attaching,
@@ -6534,7 +6533,6 @@ function Messages({
   sendMessage,
   attachFile,
   attachImage,
-  refresh,
   back
 }: {
   role: Role;
@@ -6544,7 +6542,6 @@ function Messages({
   draft: string;
   activeTab: ChatTab;
   notice: string;
-  loading: boolean;
   creatingGroup: boolean;
   sending: boolean;
   attaching: boolean;
@@ -6558,10 +6555,10 @@ function Messages({
   sendMessage: () => void;
   attachFile: () => void;
   attachImage: () => void;
-  refresh: () => void;
   back: () => void;
 }) {
   const theme = useRoleTheme(role);
+  const { height } = useWindowDimensions();
   const batchSources = useMemo(() => conversations.filter((item) => item.type === "batch_group" && item.batchId), [conversations]);
   const [groupComposerOpen, setGroupComposerOpen] = useState(false);
   const [groupTitle, setGroupTitle] = useState("");
@@ -6608,15 +6605,12 @@ function Messages({
   if (selectedConversation) {
     return (
       <>
-        <View style={styles.chatThreadPane}>
-          <TopBar title={selectedConversation.title} left="‹" onLeft={closeConversation} right="Refresh" onRight={refresh} />
+        <View style={[styles.chatThreadPane, { minHeight: Math.max(560, height - 88) }]}>
+          <TopBar title={selectedConversation.title} left="‹" onLeft={closeConversation} />
           <View style={styles.chatRoomHeader}>
-            <Text style={styles.classTitle}>{selectedConversation.title}</Text>
-            <Text style={styles.classMeta}>{selectedConversation.subtitle} • {selectedConversation.participantCount} participant{selectedConversation.participantCount === 1 ? "" : "s"}</Text>
             <ChatParticipantStrip participants={selectedConversation.participants} />
           </View>
           <ScrollView style={styles.chatMessageScroller} contentContainerStyle={styles.chatMessageContent} nestedScrollEnabled>
-            {loading ? <ActivityIndicator color={theme.text} /> : null}
             {messages.length ? messages.map((message) => {
               const mine = message.senderProfileId === currentProfileId;
               return (
@@ -6689,7 +6683,6 @@ function Messages({
           <Text style={styles.todayMeta}>{notice}</Text>
         </View>
       ) : null}
-      {loading && !visibleConversations.length ? <ActivityIndicator color={theme.text} /> : null}
       {visibleConversations.length ? (
         <ConversationList items={visibleConversations} openConversation={openConversation} />
       ) : (
@@ -6800,19 +6793,19 @@ function ChatComposer({
   attachImage: () => void;
 }) {
   const theme = useRoleTheme(role);
+  const insets = useSafeAreaInsets();
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   if (!canWrite) {
     return (
-      <View style={styles.emptyInlineCard}>
+      <View style={[styles.emptyInlineCard, { marginBottom: Math.max(insets.bottom, 10) }]}>
         <Text style={styles.todayTitle}>Read-only conversation</Text>
         <Text style={styles.todayMeta}>Only the educator can post announcements in this chat.</Text>
       </View>
     );
   }
   return (
-    <View style={styles.chatComposerBar}>
-      <Pressable accessibilityLabel="Attach file" onPress={attachFile} disabled={attaching} style={({ pressed }) => [styles.chatIconButton, pressed && styles.pressablePressed]}>
-        <Text style={styles.chatIconText}>+</Text>
-      </Pressable>
+    <View style={[styles.chatComposerWrap, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+      <View style={styles.chatComposerBar}>
       <TextInput
         value={draft}
         onChangeText={setDraft}
@@ -6821,15 +6814,27 @@ function ChatComposer({
         placeholderTextColor="#94A3B8"
         style={styles.chatInlineInput}
       />
-      <Pressable accessibilityLabel="Attach image" onPress={attachImage} disabled={attaching} style={({ pressed }) => [styles.chatIconButton, pressed && styles.pressablePressed]}>
-        <Text style={styles.chatIconText}>□</Text>
-      </Pressable>
-      <Pressable accessibilityLabel="Voice message" disabled style={[styles.chatMicButton, { backgroundColor: theme.accentStrong }, styles.chatMicDisabled]}>
-        <Text style={styles.chatMicText}>●</Text>
+      <Pressable accessibilityLabel="Attach" onPress={() => setAttachmentMenuOpen(true)} disabled={attaching} style={({ pressed }) => [styles.chatIconButton, pressed && styles.pressablePressed]}>
+        <Text style={styles.chatIconText}>📎</Text>
       </Pressable>
       <Pressable accessibilityLabel="Send message" onPress={sendMessage} disabled={!draft.trim() || sending} style={({ pressed }) => [styles.chatSendButton, { backgroundColor: theme.accentStrong }, (!draft.trim() || sending) && styles.chatSendDisabled, pressed && styles.pressablePressed]}>
         <Text style={styles.chatSendText}>›</Text>
       </Pressable>
+      </View>
+      <Modal visible={attachmentMenuOpen} transparent animationType="fade" onRequestClose={() => setAttachmentMenuOpen(false)}>
+        <Pressable style={styles.chatAttachMenuBackdrop} onPress={() => setAttachmentMenuOpen(false)}>
+          <View style={styles.chatAttachMenu}>
+            <Pressable style={({ pressed }) => [styles.chatAttachMenuItem, pressed && styles.pressablePressed]} onPress={() => { setAttachmentMenuOpen(false); attachImage(); }}>
+              <Text style={styles.chatAttachMenuTitle}>Image</Text>
+              <Text style={styles.chatAttachMenuMeta}>Choose a photo from gallery</Text>
+            </Pressable>
+            <Pressable style={({ pressed }) => [styles.chatAttachMenuItem, pressed && styles.pressablePressed]} onPress={() => { setAttachmentMenuOpen(false); attachFile(); }}>
+              <Text style={styles.chatAttachMenuTitle}>Document</Text>
+              <Text style={styles.chatAttachMenuMeta}>Upload a file or PDF</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -7201,7 +7206,7 @@ const styles = StyleSheet.create({
   topButtonText: { color: "#202A35", fontSize: 17, fontWeight: "800" },
   topTextAction: { alignItems: "flex-end", justifyContent: "center", minHeight: 40, width: 40 },
   topTextActionText: { color: "#202A35", fontSize: 12, fontWeight: "800" },
-  topTitle: { color: "#202A35", fontSize: 16, fontWeight: "800", letterSpacing: 0.1 },
+  topTitle: { color: "#202A35", flex: 1, fontSize: 16, fontWeight: "800", letterSpacing: 0.1, marginHorizontal: 10, minWidth: 0, textAlign: "center" },
   milesHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", minHeight: 42, position: "relative" },
   milesHeaderSpacer: { height: 39, width: 39 },
   milesHeaderTitle: { color: "#202A35", fontSize: 18, fontWeight: "900", left: 58, position: "absolute", right: 58, textAlign: "center" },
@@ -7967,8 +7972,8 @@ const styles = StyleSheet.create({
   chatSearchBar: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.94)", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, flexDirection: "row", minHeight: 42, paddingHorizontal: 13 },
   chatSearchInput: { color: "#111827", flex: 1, fontSize: 13, fontWeight: "700", minHeight: 40, paddingVertical: 8 },
   chatSearchIcon: { color: "#202A35", fontSize: 17, fontWeight: "900" },
-  chatRoomHeader: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, gap: 10, padding: 14 },
-  chatThreadPane: { flex: 1, gap: 12, minHeight: 640 },
+  chatRoomHeader: { backgroundColor: "rgba(255,255,255,0.97)", borderColor: "#DDE7EF", borderRadius: 20, borderWidth: 1, padding: 14 },
+  chatThreadPane: { flex: 1, gap: 12 },
   chatMessageScroller: { flex: 1, minHeight: 330 },
   chatMessageContent: { gap: 9, paddingBottom: 8 },
   chatParticipantStrip: { gap: 10, paddingRight: 6 },
@@ -7987,16 +7992,19 @@ const styles = StyleSheet.create({
   chatAttachmentImage: { backgroundColor: "#E2E8F0", borderRadius: 10, height: 112, marginBottom: 8, width: 198 },
   chatAttachmentName: { color: "#111827", fontSize: 12, fontWeight: "900" },
   chatAttachmentMeta: { color: "#536A86", fontSize: 11, fontWeight: "800", marginTop: 2 },
+  chatComposerWrap: { marginTop: "auto" },
   chatComposerBar: { alignItems: "flex-end", backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 7, padding: 6 },
   chatIconButton: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, height: 34, justifyContent: "center", width: 34 },
   chatIconText: { color: "#202A35", fontSize: 20, fontWeight: "900", lineHeight: 24 },
   chatInlineInput: { color: "#111827", flex: 1, fontSize: 14, maxHeight: 92, minHeight: 34, paddingHorizontal: 4, paddingVertical: 7 },
-  chatMicButton: { alignItems: "center", borderRadius: 999, height: 38, justifyContent: "center", width: 38 },
-  chatMicDisabled: { opacity: 0.45 },
-  chatMicText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
   chatSendButton: { alignItems: "center", borderRadius: 999, height: 38, justifyContent: "center", width: 38 },
   chatSendDisabled: { opacity: 0.42 },
   chatSendText: { color: "#FFFFFF", fontSize: 24, fontWeight: "900", lineHeight: 26 },
+  chatAttachMenuBackdrop: { backgroundColor: "rgba(15,23,42,0.18)", flex: 1, justifyContent: "flex-end", padding: 18 },
+  chatAttachMenu: { backgroundColor: "#FFFFFF", borderColor: "#DDE7EF", borderRadius: 18, borderWidth: 1, gap: 8, padding: 10, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.16, shadowRadius: 20 },
+  chatAttachMenuItem: { borderRadius: 14, minHeight: 58, justifyContent: "center", paddingHorizontal: 14, paddingVertical: 10 },
+  chatAttachMenuTitle: { color: "#202A35", fontSize: 15, fontWeight: "900" },
+  chatAttachMenuMeta: { color: "#536A86", fontSize: 12, fontWeight: "700", lineHeight: 17, marginTop: 2 },
   chatBatchPicker: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chatBatchChip: { borderColor: "#DDE7EF", borderRadius: 999, borderWidth: 1, maxWidth: "100%", minHeight: 34, paddingHorizontal: 12, paddingVertical: 7 },
   chatBatchChipText: { color: "#202A35", fontSize: 12, fontWeight: "900" },
