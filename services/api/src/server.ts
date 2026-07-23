@@ -3231,12 +3231,13 @@ app.get("/api/v1/recommendations", async (req, res) => {
     return;
   }
 
+  const accessToken = readRequestAccessToken(req);
   const data = await prisma.recommendation.findMany({
     where: { role },
     include: { content: true },
     orderBy: { createdAt: "asc" }
   });
-  res.json({ data: data.map(toRecommendation) });
+  res.json({ data: data.map((item) => toRecommendation(item, { private: true, role, accessToken })) });
 });
 
 app.get("/api/v1/events-reminders", async (req, res) => {
@@ -7237,15 +7238,8 @@ function toRecommendation(item: {
   title: string;
   description: string;
   thumbnailLabel: string;
-  content?: {
-    thumbnailPath?: string | null;
-    bannerPath?: string | null;
-    vttPath?: string | null;
-    metadataPath?: string | null;
-    type?: string | null;
-    contentJson?: unknown;
-  } | null;
-}) {
+  content?: ResourceAssetShape | null;
+}, assetOptions?: { private?: boolean; role?: Role; accessToken?: string | null }) {
   return {
     id: item.resourceId ?? item.id,
     role: item.role,
@@ -7253,7 +7247,7 @@ function toRecommendation(item: {
     title: item.title,
     description: item.description,
     thumbnailLabel: item.thumbnailLabel,
-    assetUrls: assetUrlsFor(item.content)
+    assetUrls: assetUrlsFor(item.content, assetOptions)
   };
 }
 

@@ -3731,6 +3731,9 @@ function assetPathFor(type: string, assetUrls?: { thumbnail?: string | null; ban
 function amsFileUrl(pathValue?: string | null) {
   if (!pathValue) return "";
   if (/^https?:\/\//.test(pathValue)) return pathValue;
+  if (pathValue.startsWith("services/api/assets/")) {
+    return `${appConfig.apiBaseUrl}/api/v1/ams/files/${pathValue.replace(/^services\/api\/assets\//, "")}`;
+  }
   return `${appConfig.apiBaseUrl}${pathValue}`;
 }
 
