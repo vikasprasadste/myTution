@@ -5582,7 +5582,7 @@ function TutorEnrollmentListScreen({ role, students, openStudent, back }: { role
           </View>
         </Pressable>
       ))}
-      {!students.length ? <Card role={role}><CardTitle>No active enrollments yet</CardTitle><Muted>Approved students will appear here across all batches.</Muted></Card> : null}
+      {!students.length ? <EmptyStateCard title="No active enrollments yet" copy="Approved students will appear here across all batches." /> : null}
     </>
   );
 }
