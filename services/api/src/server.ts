@@ -27,6 +27,87 @@ const allowedAssetExtensions = new Set([".svg", ".png", ".jpg", ".jpeg", ".webp"
 
 let curriculumCatalogueCache: CurriculumCatalogueResponse | null = null;
 
+const valuePropsSetting = {
+  key: "valueprops",
+  folder: "valueprops",
+  version: 1,
+  value: {
+    student: [
+      {
+        id: "find-verified-tutors",
+        icon: "🎓",
+        title: "Find verified tutors",
+        description: "Discover trusted home and online tutors by class, board, language, rating, and availability.",
+        imageUrl: "/api/v1/ams/files/valueprops/student/01-find-verified-tutors.png"
+      },
+      {
+        id: "book-trial-classes",
+        icon: "🗓",
+        title: "Book trial classes",
+        description: "Compare tutors, chat safely, and book trial sessions with transparent pricing.",
+        imageUrl: "/api/v1/ams/files/valueprops/student/02-book-trial-classes.png"
+      },
+      {
+        id: "learn-with-smart-picks",
+        icon: "✨",
+        title: "Learn with smart picks",
+        description: "Get personalized videos, articles, flashcards, and tutor matches for your goals.",
+        imageUrl: "/api/v1/ams/files/valueprops/student/03-learn-with-smart-picks.png"
+      }
+    ],
+    tutor: [
+      {
+        id: "receive-qualified-leads",
+        icon: "📚",
+        title: "Receive qualified leads",
+        description: "Get matched with students by subject, location, mode, language, and schedule.",
+        imageUrl: "/api/v1/ams/files/valueprops/tutor/01-receive-qualified-leads.png"
+      },
+      {
+        id: "run-your-teaching-day",
+        icon: "🗓",
+        title: "Run your teaching day",
+        description: "Manage sessions, reminders, chat, reviews, and availability from one place.",
+        imageUrl: "/api/v1/ams/files/valueprops/tutor/02-run-your-teaching-day.png"
+      },
+      {
+        id: "grow-with-trust",
+        icon: "₹",
+        title: "Grow with trust",
+        description: "Build a verified profile, collect ratings, and track payments and payouts.",
+        imageUrl: "/api/v1/ams/files/valueprops/tutor/03-grow-with-trust.png"
+      }
+    ],
+    parent: [
+      {
+        id: "track-learning-clearly",
+        icon: "✓",
+        title: "Track learning clearly",
+        description: "Follow sessions, tutor notes, attendance, and payment activity for your child.",
+        imageUrl: "/api/v1/ams/files/valueprops/parent/01-track-learning-clearly.png"
+      },
+      {
+        id: "approve-with-confidence",
+        icon: "★",
+        title: "Approve with confidence",
+        description: "Review tutor trust signals, trial classes, and upcoming reminders before committing.",
+        imageUrl: "/api/v1/ams/files/valueprops/parent/02-approve-with-confidence.png"
+      },
+      {
+        id: "stay-on-top-of-classes",
+        icon: "🔔",
+        title: "Stay on top of classes",
+        description: "Use reminders for fees, classes, parent approvals, and study follow-ups.",
+        imageUrl: "/api/v1/ams/files/valueprops/parent/03-stay-on-top-of-class.png"
+      }
+    ]
+  } satisfies Record<Role, Array<{ id: string; icon: string; title: string; description: string; imageUrl: string }>>
+};
+
+const configurationSettings: Record<string, typeof valuePropsSetting> = {
+  [valuePropsSetting.key]: valuePropsSetting
+};
+
 function uniqueStrings(values: unknown[]): string[] {
   return Array.from(new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean)));
 }
@@ -1926,6 +2007,19 @@ app.get("/api/v1/bootstrap", async (req, res) => {
     roleThemes,
     role
   });
+});
+
+app.get("/api/v1/configuration/settings", (_req, res) => {
+  res.json({ data: Object.values(configurationSettings).map((setting) => ({ key: setting.key, folder: setting.folder, version: setting.version })) });
+});
+
+app.get("/api/v1/configuration/settings/:key", (req, res) => {
+  const setting = configurationSettings[req.params.key];
+  if (!setting) {
+    res.status(404).json({ error: "Setting not found" });
+    return;
+  }
+  res.json({ data: setting });
 });
 
 app.get("/api/v1/theme/palette", (_req, res) => {

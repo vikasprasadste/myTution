@@ -36,7 +36,6 @@ import HomeActiveIcon from "../assets/nav/Home_active.svg";
 import HomeInactiveIcon from "../assets/nav/Home_inactive.svg";
 import MilesActiveIcon from "../assets/nav/myMiles_active.svg";
 import MilesInactiveIcon from "../assets/nav/myMiles_inactive.svg";
-import { roleValueProps } from "@/data/valueProps";
 import { useRoleTheme } from "@/theme/useRoleTheme";
 
 type AppScreen =
@@ -73,24 +72,6 @@ type AppScreen =
   | "ratings";
 
 const icon = require("../assets/AppIcons/appstore.png");
-
-const valuePropImages: Record<Role, number[]> = {
-  student: [
-    require("../assets/value-props/find_verified_tutors.png"),
-    require("../assets/value-props/book_trial_classes.png"),
-    require("../assets/value-props/learn_with_smart_picks.png")
-  ],
-  tutor: [
-    require("../assets/value-props/verified_lead.png"),
-    require("../assets/value-props/run_your_teaching_day.png"),
-    require("../assets/value-props/grow_with_trust.png")
-  ],
-  parent: [
-    require("../assets/value-props/track_learning_clearly.png"),
-    require("../assets/value-props/approve_with_confidence.png"),
-    require("../assets/value-props/stay_on_top_of_class.png")
-  ]
-};
 
 const roleCarouselCardBg: Record<Role, string> = {
   student: "#FFFFFF",
@@ -168,6 +149,8 @@ type TutorEnrollmentStudent = {
   feeType: string;
   feeAmount?: number | null;
 };
+type ValuePropItem = { id: string; icon: string; title: string; description: string; imageUrl: string };
+type ValuePropsSetting = { key: "valueprops"; folder: string; version: number; value: Record<Role, ValuePropItem[]> };
 type ProfileDraft = {
   firstName: string;
   lastName: string;
@@ -297,6 +280,8 @@ export default function Index() {
   const [showAppSplash, setShowAppSplash] = useState(true);
   const [signInMode, setSignInMode] = useState<SignInMode>("fresh");
   const [valueIndex, setValueIndex] = useState(0);
+  const [valuePropsSetting, setValuePropsSetting] = useState<ValuePropsSetting | null>(null);
+  const [valuePropsLoading, setValuePropsLoading] = useState(false);
   const [consent, setConsent] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
@@ -527,6 +512,26 @@ export default function Index() {
   useEffect(() => {
     const timer = setTimeout(() => setShowAppSplash(false), 2600);
     return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+    async function loadValueProps() {
+      setValuePropsLoading(true);
+      try {
+        const response = await apiGet<{ data: ValuePropsSetting }>("/api/v1/configuration/settings/valueprops");
+        if (!ignore) setValuePropsSetting(response.data);
+      } catch {
+        if (!ignore) {
+          setValuePropsSetting(null);
+          setApiNotice("Value props could not be loaded from configuration.");
+        }
+      } finally {
+        if (!ignore) setValuePropsLoading(false);
+      }
+    }
+    loadValueProps();
+    return () => { ignore = true; };
   }, []);
 
 
@@ -1712,6 +1717,7 @@ export default function Index() {
           {(["student", "tutor", "parent"] as Role[]).map((item) => (
             <Card key={item} role={role} selected={role === item} onPress={() => {
               setRole(item);
+              setValueIndex(0);
               setPhoneNumber("");
               setProfileDraft({ firstName: "", lastName: "", dob: "", city: "", communicationAddress: "", alternatePhone: "", curriculumBoards: [], curriculumClasses: [], curriculumSubjects: [], curriculumSelections: [] });
               setSelectedProgramId(null);
@@ -1736,21 +1742,44 @@ export default function Index() {
     }
 
     if (screen === "value") {
-      const prop = roleValueProps[role][valueIndex];
-      const last = valueIndex === roleValueProps[role].length - 1;
+      const configuredValueProps = valuePropsSetting?.value[role] ?? [];
+      const prop = configuredValueProps[valueIndex] ?? configuredValueProps[0] ?? null;
+      const last = valueIndex >= Math.max(0, configuredValueProps.length - 1);
       return (
         <>
           <TopBar title="Why myTution" left="‹" onLeft={() => setScreen("role")} right={last ? "" : "Skip"} onRight={() => setScreen("phone")} />
-          <View style={styles.valueStage}>
-            <View style={[styles.propArt, { backgroundColor: theme.surface }]}>
-              <Image source={valuePropImages[role][valueIndex] ?? valuePropImages[role][0]} style={styles.propImage} resizeMode="contain" />
+          {valuePropsLoading ? (
+            <View style={styles.valueStage}>
+              <View style={[styles.propArt, { backgroundColor: theme.surface }]}>
+                <ActivityIndicator color={theme.accentStrong} />
+              </View>
+              <View style={styles.valueCopy}>
+                <Title>Loading</Title>
+                <Muted>Fetching the latest onboarding configuration.</Muted>
+              </View>
             </View>
-            <View style={styles.valueCopy}>
-              <Title>{prop.title}</Title>
-              <Muted>{prop.desc}</Muted>
+          ) : prop ? (
+            <View style={styles.valueStage}>
+              <View style={[styles.propArt, { backgroundColor: theme.surface }]}>
+                <Image source={{ uri: amsFileUrl(prop.imageUrl) }} style={styles.propImage} resizeMode="contain" />
+              </View>
+              <View style={styles.valueCopy}>
+                <Title>{prop.title}</Title>
+                <Muted>{prop.description}</Muted>
+              </View>
             </View>
-          </View>
-          <Button role={role} label={last ? "Get started" : "Next"} onPress={() => last ? setScreen("phone") : setValueIndex((index) => index + 1)} />
+          ) : (
+            <View style={styles.valueStage}>
+              <View style={[styles.propArt, { backgroundColor: theme.surface }]}>
+                <Text style={[styles.propFallbackIcon, { color: theme.text }]}>!</Text>
+              </View>
+              <View style={styles.valueCopy}>
+                <Title>Configuration unavailable</Title>
+                <Muted>Please try again after the latest app configuration is available.</Muted>
+              </View>
+            </View>
+          )}
+          <Button role={role} label={last ? "Get started" : "Next"} disabled={!prop} onPress={() => last ? setScreen("phone") : setValueIndex((index) => index + 1)} />
         </>
       );
     }
@@ -6437,6 +6466,7 @@ const styles = StyleSheet.create({
   valueStage: { flex: 1, gap: 22, justifyContent: "center" },
   valueCopy: { gap: 8 },
   propArt: { alignItems: "center", alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.76)", borderColor: "rgba(215,227,240,0.9)", borderRadius: 20, borderWidth: 1, flex: 0.62, justifyContent: "center", minHeight: 300, overflow: "hidden", padding: 18 },
+  propFallbackIcon: { fontSize: 44, fontWeight: "900" },
   propImage: { height: "100%", maxHeight: 330, width: "100%" },
   propIcon: { fontSize: 62, fontWeight: "900" },
   button: { alignItems: "stretch", borderRadius: 14, borderWidth: 1, justifyContent: "center", minHeight: 48, overflow: "hidden", shadowColor: "#22304A", shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.06, shadowRadius: 12, elevation: 2 },
