@@ -143,36 +143,68 @@ const configurationSettings: Record<string, ConfigurationSetting<unknown>> = {
   [roleThumbnailsSetting.key]: roleThumbnailsSetting
 };
 
-const defaultRegistrationConsent: ConsentDocumentSummary = {
-  id: "consent_registration_v1",
-  key: "registration_terms",
-  version: "1.0",
-  title: "Registration consent",
-  description: "Consent required to create a myTution account and use role-specific learning, teaching, and parent monitoring features.",
-  documentType: "pdf",
-  documentUrl: "/api/v1/ams/files/access-control/consents/mytution-registration-consent-v1.pdf",
-  accessLevel: "public",
-  roleScope: null,
-  required: true,
-  status: "active",
-  permissionSet: {
-    fields: {
-      "profile.phone": ["read"],
-      "profile.role": ["read"],
-      "profile.firstName": ["read", "write"],
-      "profile.lastName": ["read", "write"],
-      "profile.dob": ["read", "write"],
-      "profile.city": ["read", "write"],
-      "profile.communicationAddress": ["read", "write"],
-      "profile.alternatePhone": ["read", "write"],
-      "profile.curriculumSelections": ["read", "write"],
-      "profile.stream": ["read", "write"],
-      "profile.specialization": ["read", "write"]
-    },
-    communications: ["otp", "account", "class", "payment", "progress"],
-    features: ["registration", "profile", "program", "batch", "parentLink"]
-  }
+const registrationConsentPermissionSet = {
+  fields: {
+    "profile.phone": ["read"],
+    "profile.role": ["read"],
+    "profile.firstName": ["read", "write"],
+    "profile.lastName": ["read", "write"],
+    "profile.dob": ["read", "write"],
+    "profile.city": ["read", "write"],
+    "profile.communicationAddress": ["read", "write"],
+    "profile.alternatePhone": ["read", "write"],
+    "profile.curriculumSelections": ["read", "write"],
+    "profile.stream": ["read", "write"],
+    "profile.specialization": ["read", "write"]
+  },
+  communications: ["otp", "account", "class", "payment", "progress"],
+  features: ["registration", "profile", "program", "batch", "parentLink"]
 };
+
+const defaultRegistrationConsents: ConsentDocumentSummary[] = [
+  {
+    id: "consent_eula_v1",
+    key: "end_user_license_agreement",
+    version: "1.0",
+    title: "End User License Agreement",
+    description: "Agreement for using the myTution mobile application and services.",
+    documentType: "pdf",
+    documentUrl: "/api/v1/ams/files/access-control/consents/mytution-end-user-license-agreement-v1.pdf",
+    accessLevel: "public",
+    roleScope: null,
+    required: true,
+    status: "active",
+    permissionSet: registrationConsentPermissionSet
+  },
+  {
+    id: "consent_terms_v1",
+    key: "terms_and_conditions",
+    version: "1.0",
+    title: "Terms and Conditions",
+    description: "Terms for account creation, platform use, classes, programs, payments, and communication.",
+    documentType: "pdf",
+    documentUrl: "/api/v1/ams/files/access-control/consents/mytution-terms-and-conditions-v1.pdf",
+    accessLevel: "public",
+    roleScope: null,
+    required: true,
+    status: "active",
+    permissionSet: registrationConsentPermissionSet
+  },
+  {
+    id: "consent_privacy_v1",
+    key: "privacy_policy",
+    version: "1.0",
+    title: "Privacy Policy",
+    description: "Policy for handling profile, learning, communication, payment, and parent-link information.",
+    documentType: "pdf",
+    documentUrl: "/api/v1/ams/files/access-control/consents/mytution-privacy-policy-v1.pdf",
+    accessLevel: "public",
+    roleScope: null,
+    required: true,
+    status: "active",
+    permissionSet: registrationConsentPermissionSet
+  }
+];
 
 function uniqueStrings(values: unknown[]): string[] {
   return Array.from(new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean)));
@@ -6159,6 +6191,7 @@ function toConsentDocumentSummary(document: any): ConsentDocumentSummary {
 
 async function activeConsentRequirements(role?: Role | null): Promise<ConsentDocumentSummary[]> {
   try {
+    await ensureDefaultRegistrationConsents();
     const documents = await prisma.consentDocument.findMany({
       where: {
         status: "active",
@@ -6167,43 +6200,48 @@ async function activeConsentRequirements(role?: Role | null): Promise<ConsentDoc
       },
       orderBy: [{ roleScope: "asc" }, { createdAt: "asc" }]
     });
-    if (documents.length) return documents.map(toConsentDocumentSummary);
-    return [toConsentDocumentSummary(await ensureDefaultRegistrationConsent())];
+    const currentDocuments = documents.filter((document) => document.key !== "registration_terms");
+    if (currentDocuments.length) return currentDocuments.map(toConsentDocumentSummary);
+    return (await ensureDefaultRegistrationConsents()).map(toConsentDocumentSummary);
   } catch (error) {
     if (!isMissingAccessControlTable(error)) throw error;
-    return [defaultRegistrationConsent];
+    return defaultRegistrationConsents;
   }
 }
 
-async function ensureDefaultRegistrationConsent() {
-  return prisma.consentDocument.upsert({
-    where: { key_version: { key: defaultRegistrationConsent.key, version: defaultRegistrationConsent.version } },
+async function ensureDefaultRegistrationConsents() {
+  await prisma.consentDocument.updateMany({
+    where: { key: "registration_terms", status: "active" },
+    data: { status: "inactive", required: false }
+  });
+  return Promise.all(defaultRegistrationConsents.map((consent) => prisma.consentDocument.upsert({
+    where: { key_version: { key: consent.key, version: consent.version } },
     update: {
-      title: defaultRegistrationConsent.title,
-      description: defaultRegistrationConsent.description,
-      documentType: defaultRegistrationConsent.documentType,
-      documentUrl: defaultRegistrationConsent.documentUrl,
-      accessLevel: defaultRegistrationConsent.accessLevel,
-      required: defaultRegistrationConsent.required,
-      status: defaultRegistrationConsent.status,
-      permissionSet: (defaultRegistrationConsent.permissionSet ?? {}) as Prisma.InputJsonValue
+      title: consent.title,
+      description: consent.description,
+      documentType: consent.documentType,
+      documentUrl: consent.documentUrl,
+      accessLevel: consent.accessLevel,
+      required: consent.required,
+      status: consent.status,
+      permissionSet: (consent.permissionSet ?? {}) as Prisma.InputJsonValue
     },
     create: {
-      id: defaultRegistrationConsent.id,
-      key: defaultRegistrationConsent.key,
-      version: defaultRegistrationConsent.version,
-      title: defaultRegistrationConsent.title,
-      description: defaultRegistrationConsent.description,
-      documentType: defaultRegistrationConsent.documentType,
-      documentUrl: defaultRegistrationConsent.documentUrl,
-      accessLevel: defaultRegistrationConsent.accessLevel,
-      roleScope: defaultRegistrationConsent.roleScope,
-      required: defaultRegistrationConsent.required,
-      status: defaultRegistrationConsent.status,
-      permissionSet: (defaultRegistrationConsent.permissionSet ?? {}) as Prisma.InputJsonValue,
+      id: consent.id,
+      key: consent.key,
+      version: consent.version,
+      title: consent.title,
+      description: consent.description,
+      documentType: consent.documentType,
+      documentUrl: consent.documentUrl,
+      accessLevel: consent.accessLevel,
+      roleScope: consent.roleScope,
+      required: consent.required,
+      status: consent.status,
+      permissionSet: (consent.permissionSet ?? {}) as Prisma.InputJsonValue,
       sourceTag: "app"
     }
-  });
+  })));
 }
 
 function toConsentAssignmentSummary(assignment: any): ConsentAssignmentSummary {
@@ -6272,14 +6310,14 @@ function normalizeConsentAssignmentInput(input: unknown, current: { role: Role; 
 }
 
 async function resolveConsentDocumentForAssignment(consentDocumentId?: string | null, consentKey?: string | null, consentVersion?: string | null) {
-  await ensureDefaultRegistrationConsent();
+  await ensureDefaultRegistrationConsents();
   if (consentDocumentId) {
     return prisma.consentDocument.findUnique({ where: { id: consentDocumentId } });
   }
   if (consentKey && consentVersion) {
     return prisma.consentDocument.findUnique({ where: { key_version: { key: consentKey, version: consentVersion } } });
   }
-  return prisma.consentDocument.findUnique({ where: { id: defaultRegistrationConsent.id } });
+  return prisma.consentDocument.findUnique({ where: { id: defaultRegistrationConsents[0].id } });
 }
 
 async function listConsentAssignmentsForActor(actor: { role: Role; userId: string; profileId?: string | null }) {

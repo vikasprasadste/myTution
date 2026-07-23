@@ -561,7 +561,10 @@ export default function Index() {
       try {
         const response = await apiGet<{ data: ConsentRequirementResponse }>(`/api/v1/access-control/consent-management/requirements?role=${role}`);
         if (!ignore) {
-          setConsentDocuments(response.data.required ?? []);
+          const required = response.data.required ?? [];
+          setConsentDocuments(required);
+          setAcceptedConsentIds(required.filter((item) => item.required).map((item) => item.id));
+          setConsent(required.length > 0);
           setApiNotice("");
         }
       } catch {
@@ -1752,14 +1755,6 @@ export default function Index() {
     }
   }
 
-  function toggleConsentDocument(id: string) {
-    setAcceptedConsentIds((items) => {
-      const next = items.includes(id) ? items.filter((item) => item !== id) : [...items, id];
-      setConsent(requiredConsentIds.every((requiredId) => next.includes(requiredId)));
-      return next;
-    });
-  }
-
   function renderScreen() {
     if (screen === "role") {
       return (
@@ -1850,24 +1845,21 @@ export default function Index() {
         <>
           <TopBar title="Consent" left="‹" onLeft={() => setScreen("value")} />
           <Title>Register with phone</Title>
-          <Muted>Review and accept the required consent before entering your number.</Muted>
-          <ConsentCard
-            role={role}
-            consents={consentDocuments}
-            acceptedIds={acceptedConsentIds}
-            loading={consentsLoading}
-            toggleConsent={toggleConsentDocument}
-            openConsent={setSelectedConsentDocument}
-          />
+          <Muted>Enter your number to continue registration.</Muted>
           <FieldLabel>Phone number</FieldLabel>
           <Input
-            editable={requiredConsentsAccepted}
+            editable
             value={phoneNumber}
             onChangeText={(value) => setPhoneNumber(value.replace(/\D/g, "").slice(0, 10))}
             keyboardType="phone-pad"
             maxLength={10}
           />
           <Button disabled={!requiredConsentsAccepted || !phoneComplete} loading={loadingAction === "sendOtp"} role={role} label="Send OTP" onPress={sendOtp} />
+          <ConsentCard
+            consents={consentDocuments}
+            loading={consentsLoading}
+            openConsent={setSelectedConsentDocument}
+          />
         </>
       );
     }
@@ -2501,59 +2493,43 @@ function ForgotPasswordScreen({
 }
 
 function ConsentCard({
-  role,
   consents,
-  acceptedIds,
   loading,
-  toggleConsent,
   openConsent
 }: {
-  role: Role;
   consents: ConsentDocumentSummary[];
-  acceptedIds: string[];
   loading: boolean;
-  toggleConsent: (id: string) => void;
   openConsent: (document: ConsentDocumentSummary) => void;
 }) {
-  const theme = useRoleTheme(role);
   if (loading) {
     return (
-      <View style={styles.consentCard}>
-        <ActivityIndicator color={theme.accentStrong} />
-        <Text style={styles.consentText}>Loading consent details.</Text>
+      <View style={styles.consentInlineWrap}>
+        <ActivityIndicator />
       </View>
     );
   }
   if (!consents.length) {
     return (
-      <View style={styles.consentCard}>
-        <Text style={styles.consentText}>Consent details are not available right now. Please try again shortly.</Text>
-      </View>
+      <Text style={styles.consentInlineText}>Consent details are not available right now.</Text>
     );
   }
+  const eula = consentByKey(consents, "end_user_license_agreement") ?? consents[0];
+  const terms = consentByKey(consents, "terms_and_conditions") ?? consents[1] ?? eula;
+  const privacy = consentByKey(consents, "privacy_policy") ?? consents[2] ?? terms;
   return (
-    <View style={styles.consentList}>
-      {consents.map((item) => {
-        const checked = acceptedIds.includes(item.id);
-        return (
-          <View key={item.id} style={styles.consentCard}>
-            <Pressable style={styles.consentCheckTap} onPress={() => toggleConsent(item.id)}>
-              <View style={[styles.consentCheck, checked && { backgroundColor: theme.accentStrong, borderColor: theme.accentStrong }]}>
-                <Text style={styles.consentCheckText}>{checked ? "✓" : ""}</Text>
-              </View>
-            </Pressable>
-            <View style={styles.flex}>
-              <Pressable onPress={() => openConsent(item)}>
-                <Text style={styles.consentTitle}>{item.title}{item.required ? " • Required" : ""}</Text>
-                <Text style={styles.consentText}>{item.description}</Text>
-                <Text style={[styles.consentLink, { color: theme.accentStrong }]}>View consent</Text>
-              </Pressable>
-            </View>
-          </View>
-        );
-      })}
-    </View>
+    <Text style={styles.consentInlineText}>
+      By proceeding you agree with{" "}
+      <Text style={styles.consentInlineLink} onPress={() => openConsent(eula)}>End User License Agreement</Text>
+      {" "}and{" "}
+      <Text style={styles.consentInlineLink} onPress={() => openConsent(terms)}>Terms and Conditions</Text>
+      {" "}and{" "}
+      <Text style={styles.consentInlineLink} onPress={() => openConsent(privacy)}>Privacy Policy</Text>.
+    </Text>
   );
+}
+
+function consentByKey(consents: ConsentDocumentSummary[], key: string) {
+  return consents.find((item) => item.key === key);
 }
 
 function ConsentDocumentModal({ document, onClose }: { document: ConsentDocumentSummary | null; onClose: () => void }) {
@@ -6662,14 +6638,12 @@ const styles = StyleSheet.create({
   registerLinkText: { color: "#0F5560", fontSize: 14, fontWeight: "900", textDecorationLine: "underline" },
   forgotPasswordLink: { alignItems: "flex-end", justifyContent: "center", minHeight: 28 },
   forgotPasswordText: { fontSize: 13, fontWeight: "900", textDecorationLine: "underline" },
-  consentList: { gap: 10 },
-  consentCard: { alignItems: "flex-start", backgroundColor: "rgba(255,255,255,0.88)", borderColor: "#D8E4EE", borderRadius: 19, borderWidth: 1, flexDirection: "row", gap: 12, padding: 18, shadowColor: "#0F172A", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.06, shadowRadius: 18 },
-  consentCheckTap: { minHeight: 34, minWidth: 28, paddingTop: 2 },
+  consentInlineWrap: { alignItems: "center", minHeight: 28, justifyContent: "center" },
+  consentInlineText: { color: "#536A86", fontSize: 11, fontWeight: "600", lineHeight: 16, marginTop: -2, textAlign: "center" },
+  consentInlineLink: { color: "#536A86", fontSize: 11, fontWeight: "600", lineHeight: 16, textDecorationLine: "underline" },
   consentCheck: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#8A99A8", borderRadius: 3, borderWidth: 1, height: 13, justifyContent: "center", marginTop: 2, width: 13 },
   consentCheckText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900", lineHeight: 12 },
-  consentTitle: { color: "#202A35", fontSize: 14, fontWeight: "900", lineHeight: 19 },
   consentText: { color: "#536A86", flex: 1, fontSize: 13, fontWeight: "600", lineHeight: 18 },
-  consentLink: { fontSize: 13, fontWeight: "900", lineHeight: 18, marginTop: 8, textDecorationLine: "underline" },
   consentViewerShell: { backgroundColor: "#EEF5FF", flex: 1, paddingTop: 48 },
   consentViewerHeader: { alignItems: "center", flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingBottom: 10 },
   consentViewerTitle: { color: "#202A35", flex: 1, fontSize: 16, fontWeight: "900", lineHeight: 21, textAlign: "center" },

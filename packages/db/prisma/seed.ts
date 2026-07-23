@@ -43,37 +43,68 @@ async function main() {
     }
   });
 
-  await prisma.consentDocument.create({
-    data: {
-      id: "consent_registration_v1",
-      key: "registration_terms",
-      version: "1.0",
-      title: "Registration consent",
-      description: "Consent required to create a myTution account and use role-specific learning, teaching, and parent monitoring features.",
-      documentType: "pdf",
-      documentUrl: "/api/v1/ams/files/access-control/consents/mytution-registration-consent-v1.pdf",
-      accessLevel: "public",
-      required: true,
-      status: "active",
-      permissionSet: {
-        fields: {
-          "profile.phone": ["read"],
-          "profile.role": ["read"],
-          "profile.firstName": ["read", "write"],
-          "profile.lastName": ["read", "write"],
-          "profile.dob": ["read", "write"],
-          "profile.city": ["read", "write"],
-          "profile.communicationAddress": ["read", "write"],
-          "profile.alternatePhone": ["read", "write"],
-          "profile.curriculumSelections": ["read", "write"],
-          "profile.stream": ["read", "write"],
-          "profile.specialization": ["read", "write"]
-        },
-        communications: ["otp", "account", "class", "payment", "progress"],
-        features: ["registration", "profile", "program", "batch", "parentLink"]
+  const registrationConsentPermissionSet = {
+    fields: {
+      "profile.phone": ["read"],
+      "profile.role": ["read"],
+      "profile.firstName": ["read", "write"],
+      "profile.lastName": ["read", "write"],
+      "profile.dob": ["read", "write"],
+      "profile.city": ["read", "write"],
+      "profile.communicationAddress": ["read", "write"],
+      "profile.alternatePhone": ["read", "write"],
+      "profile.curriculumSelections": ["read", "write"],
+      "profile.stream": ["read", "write"],
+      "profile.specialization": ["read", "write"]
+    },
+    communications: ["otp", "account", "class", "payment", "progress"],
+    features: ["registration", "profile", "program", "batch", "parentLink"]
+  };
+  await prisma.consentDocument.createMany({
+    data: [
+      {
+        id: "consent_eula_v1",
+        key: "end_user_license_agreement",
+        version: "1.0",
+        title: "End User License Agreement",
+        description: "Agreement for using the myTution mobile application and services.",
+        documentType: "pdf",
+        documentUrl: "/api/v1/ams/files/access-control/consents/mytution-end-user-license-agreement-v1.pdf",
+        accessLevel: "public",
+        required: true,
+        status: "active",
+        permissionSet: registrationConsentPermissionSet,
+        sourceTag
       },
-      sourceTag
-    }
+      {
+        id: "consent_terms_v1",
+        key: "terms_and_conditions",
+        version: "1.0",
+        title: "Terms and Conditions",
+        description: "Terms for account creation, platform use, classes, programs, payments, and communication.",
+        documentType: "pdf",
+        documentUrl: "/api/v1/ams/files/access-control/consents/mytution-terms-and-conditions-v1.pdf",
+        accessLevel: "public",
+        required: true,
+        status: "active",
+        permissionSet: registrationConsentPermissionSet,
+        sourceTag
+      },
+      {
+        id: "consent_privacy_v1",
+        key: "privacy_policy",
+        version: "1.0",
+        title: "Privacy Policy",
+        description: "Policy for handling profile, learning, communication, payment, and parent-link information.",
+        documentType: "pdf",
+        documentUrl: "/api/v1/ams/files/access-control/consents/mytution-privacy-policy-v1.pdf",
+        accessLevel: "public",
+        required: true,
+        status: "active",
+        permissionSet: registrationConsentPermissionSet,
+        sourceTag
+      }
+    ]
   });
 
   const user = await prisma.user.create({
