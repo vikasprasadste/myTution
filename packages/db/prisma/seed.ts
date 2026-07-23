@@ -8,6 +8,8 @@ const sourceTag = "mock";
 async function main() {
   await prisma.authSession.deleteMany();
   await prisma.mobileClient.deleteMany();
+  await prisma.userConsentAcceptance.deleteMany();
+  await prisma.consentDocument.deleteMany();
   await prisma.communityReaction.deleteMany();
   await prisma.communityComment.deleteMany();
   await prisma.communityThread.deleteMany();
@@ -36,6 +38,39 @@ async function main() {
     data: {
       clientId: "mytution_mobile_app",
       name: "myTution Mobile App",
+      sourceTag
+    }
+  });
+
+  await prisma.consentDocument.create({
+    data: {
+      id: "consent_registration_v1",
+      key: "registration_terms",
+      version: "1.0",
+      title: "Registration consent",
+      description: "Consent required to create a myTution account and use role-specific learning, teaching, and parent monitoring features.",
+      documentType: "pdf",
+      documentUrl: "/api/v1/ams/files/access-control/consents/mytution-registration-consent-v1.pdf",
+      accessLevel: "public",
+      required: true,
+      status: "active",
+      permissionSet: {
+        fields: {
+          "profile.phone": ["read"],
+          "profile.role": ["read"],
+          "profile.firstName": ["read", "write"],
+          "profile.lastName": ["read", "write"],
+          "profile.dob": ["read", "write"],
+          "profile.city": ["read", "write"],
+          "profile.communicationAddress": ["read", "write"],
+          "profile.alternatePhone": ["read", "write"],
+          "profile.curriculumSelections": ["read", "write"],
+          "profile.stream": ["read", "write"],
+          "profile.specialization": ["read", "write"]
+        },
+        communications: ["otp", "account", "class", "payment", "progress"],
+        features: ["registration", "profile", "program", "batch", "parentLink"]
+      },
       sourceTag
     }
   });

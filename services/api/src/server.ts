@@ -7,9 +7,10 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
+import type { Prisma } from "@prisma/client";
 import { featureFlags, isFeatureEnabled, paletteConfig, roleThemes } from "@mytution/config";
 import { prisma } from "@mytution/db";
-import type { CommunityReactionType, CurriculumCatalogueResponse, CurriculumSelection, MarketplaceBatchRecommendation, MarketplaceProgramRecommendation, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
+import type { CommunityReactionType, ConsentDocumentSummary, ConsentRequirementResponse, CurriculumCatalogueResponse, CurriculumSelection, MarketplaceBatchRecommendation, MarketplaceProgramRecommendation, ProgramSummary, ResourceType, Role, TutorProgramCreateInput, TutorProgramResourceInput } from "@mytution/shared";
 
 const app = express();
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
@@ -142,6 +143,37 @@ const configurationSettings: Record<string, ConfigurationSetting<unknown>> = {
   [roleThumbnailsSetting.key]: roleThumbnailsSetting
 };
 
+const defaultRegistrationConsent: ConsentDocumentSummary = {
+  id: "consent_registration_v1",
+  key: "registration_terms",
+  version: "1.0",
+  title: "Registration consent",
+  description: "Consent required to create a myTution account and use role-specific learning, teaching, and parent monitoring features.",
+  documentType: "pdf",
+  documentUrl: "/api/v1/ams/files/access-control/consents/mytution-registration-consent-v1.pdf",
+  accessLevel: "public",
+  roleScope: null,
+  required: true,
+  status: "active",
+  permissionSet: {
+    fields: {
+      "profile.phone": ["read"],
+      "profile.role": ["read"],
+      "profile.firstName": ["read", "write"],
+      "profile.lastName": ["read", "write"],
+      "profile.dob": ["read", "write"],
+      "profile.city": ["read", "write"],
+      "profile.communicationAddress": ["read", "write"],
+      "profile.alternatePhone": ["read", "write"],
+      "profile.curriculumSelections": ["read", "write"],
+      "profile.stream": ["read", "write"],
+      "profile.specialization": ["read", "write"]
+    },
+    communications: ["otp", "account", "class", "payment", "progress"],
+    features: ["registration", "profile", "program", "batch", "parentLink"]
+  }
+};
+
 function uniqueStrings(values: unknown[]): string[] {
   return Array.from(new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean)));
 }
@@ -246,6 +278,12 @@ function isMissingParentLinkTable(error: unknown) {
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined;
   const table = typeof error === "object" && error !== null && "meta" in error ? (error as { meta?: { table?: string } }).meta?.table : undefined;
   return code === "P2021" && (table === "public.ParentActivationCode" || table === "public.ParentStudentLink");
+}
+
+function isMissingAccessControlTable(error: unknown) {
+  const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined;
+  const table = typeof error === "object" && error !== null && "meta" in error ? (error as { meta?: { table?: string } }).meta?.table : undefined;
+  return code === "P2021" && (table === "public.ConsentDocument" || table === "public.UserConsentAcceptance");
 }
 
 type RateLimitBucket = { count: number; resetAt: number };
@@ -696,6 +734,17 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
     res.status(400).json({ error: "Something went wrong" });
     return;
   }
+  const requiredConsents = await activeConsentRequirements(role);
+  const acceptedConsentIds = new Set(
+    Array.isArray(req.body.acceptedConsentIds)
+      ? req.body.acceptedConsentIds.map((id: unknown) => String(id))
+      : []
+  );
+  const missingConsents = requiredConsents.filter((consent) => consent.required && !acceptedConsentIds.has(consent.id));
+  if (missingConsents.length > 0) {
+    res.status(400).json({ error: "Required consent is missing" });
+    return;
+  }
 
   const user = await prisma.user.create({
     data: {
@@ -780,13 +829,34 @@ app.post("/api/v1/auth/register/verify", async (req, res) => {
   }
 
   const session = await createSession(user.id);
+  if (profile && requiredConsents.length > 0) {
+    try {
+      await prisma.userConsentAcceptance.createMany({
+        data: requiredConsents.map((consent) => ({
+          userId: user.id,
+          profileId: profile.id,
+          role,
+          consentDocumentId: consent.id,
+          consentKey: consent.key,
+          consentVersion: consent.version,
+          status: "accepted",
+          permissionSet: (consent.permissionSet ?? {}) as Prisma.InputJsonValue,
+          sourceTag: "app"
+        })),
+        skipDuplicates: true
+      });
+    } catch (error) {
+      if (!isMissingAccessControlTable(error)) throw error;
+    }
+  }
   await logAudit({
     userId: user.id,
     profileId: profile?.id,
     role,
     action: "auth.register",
     entityType: "User",
-    entityId: user.id
+    entityId: user.id,
+    metadata: { acceptedConsentIds: requiredConsents.map((consent) => consent.id) }
   });
   res.status(201).json({ data: { userId: user.id, profileId: profile?.id, role, ...session } });
 });
@@ -2054,6 +2124,12 @@ app.get("/api/v1/configuration/settings/:key", (req, res) => {
     return;
   }
   res.json({ data: setting });
+});
+
+app.get("/api/v1/access-control/consent-management/requirements", async (req, res) => {
+  const role = req.query.role ? readRole(req.query.role) : null;
+  const required = await activeConsentRequirements(role);
+  res.json({ data: { service: "access-control", module: "consent-management", required } satisfies ConsentRequirementResponse });
 });
 
 app.get("/api/v1/theme/palette", (_req, res) => {
@@ -5978,6 +6054,72 @@ function permissionsForRole(role: Role) {
     "activity:complete",
     "parent:invite"
   ];
+}
+
+function toConsentDocumentSummary(document: any): ConsentDocumentSummary {
+  return {
+    id: document.id,
+    key: document.key,
+    version: document.version,
+    title: document.title,
+    description: document.description,
+    documentType: document.documentType === "url" ? "url" : "pdf",
+    documentUrl: document.documentUrl,
+    accessLevel: document.accessLevel === "private" ? "private" : "public",
+    roleScope: document.roleScope ?? null,
+    required: Boolean(document.required),
+    status: document.status,
+    permissionSet: document.permissionSet ?? {}
+  };
+}
+
+async function activeConsentRequirements(role?: Role | null): Promise<ConsentDocumentSummary[]> {
+  try {
+    const documents = await prisma.consentDocument.findMany({
+      where: {
+        status: "active",
+        required: true,
+        OR: [{ roleScope: null }, ...(role ? [{ roleScope: role }] : [])]
+      },
+      orderBy: [{ roleScope: "asc" }, { createdAt: "asc" }]
+    });
+    if (documents.length) return documents.map(toConsentDocumentSummary);
+    return [toConsentDocumentSummary(await ensureDefaultRegistrationConsent())];
+  } catch (error) {
+    if (!isMissingAccessControlTable(error)) throw error;
+    return [defaultRegistrationConsent];
+  }
+}
+
+async function ensureDefaultRegistrationConsent() {
+  return prisma.consentDocument.upsert({
+    where: { key_version: { key: defaultRegistrationConsent.key, version: defaultRegistrationConsent.version } },
+    update: {
+      title: defaultRegistrationConsent.title,
+      description: defaultRegistrationConsent.description,
+      documentType: defaultRegistrationConsent.documentType,
+      documentUrl: defaultRegistrationConsent.documentUrl,
+      accessLevel: defaultRegistrationConsent.accessLevel,
+      required: defaultRegistrationConsent.required,
+      status: defaultRegistrationConsent.status,
+      permissionSet: (defaultRegistrationConsent.permissionSet ?? {}) as Prisma.InputJsonValue
+    },
+    create: {
+      id: defaultRegistrationConsent.id,
+      key: defaultRegistrationConsent.key,
+      version: defaultRegistrationConsent.version,
+      title: defaultRegistrationConsent.title,
+      description: defaultRegistrationConsent.description,
+      documentType: defaultRegistrationConsent.documentType,
+      documentUrl: defaultRegistrationConsent.documentUrl,
+      accessLevel: defaultRegistrationConsent.accessLevel,
+      roleScope: defaultRegistrationConsent.roleScope,
+      required: defaultRegistrationConsent.required,
+      status: defaultRegistrationConsent.status,
+      permissionSet: (defaultRegistrationConsent.permissionSet ?? {}) as Prisma.InputJsonValue,
+      sourceTag: "app"
+    }
+  });
 }
 
 function fallbackPersona(role: Role) {

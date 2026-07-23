@@ -4,6 +4,29 @@ export type Stream = "junior" | "senior" | "ug" | "pg";
 
 export type ResourceType = "video" | "article" | "flashcard" | "quiz";
 
+export type ConsentDocumentType = "pdf" | "url";
+
+export interface ConsentDocumentSummary {
+  id: string;
+  key: string;
+  version: string;
+  title: string;
+  description: string;
+  documentType: ConsentDocumentType;
+  documentUrl: string;
+  accessLevel: "public" | "private";
+  roleScope: Role | null;
+  required: boolean;
+  status: string;
+  permissionSet?: Record<string, unknown>;
+}
+
+export interface ConsentRequirementResponse {
+  service: "access-control";
+  module: "consent-management";
+  required: ConsentDocumentSummary[];
+}
+
 export type FeatureFlagKey =
   | "aiMatching"
   | "avatarUpload"
