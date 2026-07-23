@@ -169,6 +169,52 @@ type ProfileDraft = {
 
 const emptyCurriculum: CurriculumCatalogueResponse = { boards: [], classes: [], subjects: [] };
 
+const registrationConsentLinks: ConsentDocumentSummary[] = [
+  {
+    id: "consent_eula_v1",
+    key: "end_user_license_agreement",
+    version: "1.0",
+    title: "End User License Agreement",
+    description: "Agreement for using the myTution mobile application and services.",
+    documentType: "pdf",
+    documentUrl: "/api/v1/ams/files/access-control/consents/mytution-end-user-license-agreement-v1.pdf",
+    accessLevel: "public",
+    roleScope: null,
+    required: true,
+    status: "active"
+  },
+  {
+    id: "consent_terms_v1",
+    key: "terms_and_conditions",
+    version: "1.0",
+    title: "Terms and Conditions",
+    description: "Terms for account creation, platform use, classes, programs, payments, and communication.",
+    documentType: "pdf",
+    documentUrl: "/api/v1/ams/files/access-control/consents/mytution-terms-and-conditions-v1.pdf",
+    accessLevel: "public",
+    roleScope: null,
+    required: true,
+    status: "active"
+  },
+  {
+    id: "consent_privacy_v1",
+    key: "privacy_policy",
+    version: "1.0",
+    title: "Privacy Policy",
+    description: "Policy for handling profile, learning, communication, payment, and parent-link information.",
+    documentType: "pdf",
+    documentUrl: "/api/v1/ams/files/access-control/consents/mytution-privacy-policy-v1.pdf",
+    accessLevel: "public",
+    roleScope: null,
+    required: true,
+    status: "active"
+  }
+];
+
+function normalizedRegistrationConsents(consents: ConsentDocumentSummary[]) {
+  return registrationConsentLinks.map((fallback) => consentByKey(consents, fallback.key) ?? fallback);
+}
+
 function curriculumLabel(selections?: CurriculumSelection[]) {
   const first = selections?.[0];
   return first ? `${first.board} ${first.classLevel} ${first.subject}` : null;
@@ -561,7 +607,7 @@ export default function Index() {
       try {
         const response = await apiGet<{ data: ConsentRequirementResponse }>(`/api/v1/access-control/consent-management/requirements?role=${role}`);
         if (!ignore) {
-          const required = response.data.required ?? [];
+          const required = normalizedRegistrationConsents(response.data.required ?? []);
           setConsentDocuments(required);
           setAcceptedConsentIds(required.filter((item) => item.required).map((item) => item.id));
           setConsent(required.length > 0);
@@ -2511,9 +2557,7 @@ function ConsentCard({
       <Text style={styles.consentInlineText}>Consent details are not available right now.</Text>
     );
   }
-  const eula = consentByKey(consents, "end_user_license_agreement") ?? consents[0];
-  const terms = consentByKey(consents, "terms_and_conditions") ?? consents[1] ?? eula;
-  const privacy = consentByKey(consents, "privacy_policy") ?? consents[2] ?? terms;
+  const [eula, terms, privacy] = normalizedRegistrationConsents(consents);
   return (
     <Text style={styles.consentInlineText}>
       By proceeding you agree with{" "}
