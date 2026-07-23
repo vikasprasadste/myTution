@@ -151,6 +151,8 @@ type TutorEnrollmentStudent = {
 };
 type ValuePropItem = { id: string; icon: string; title: string; description: string; imageUrl: string };
 type ValuePropsSetting = { key: "valueprops"; folder: string; version: number; value: Record<Role, ValuePropItem[]> };
+type RoleThumbnailItem = { title: string; description: string; imageUrl: string };
+type RoleThumbnailsSetting = { key: "rolethumbnails"; folder: string; version: number; accessLevel: "public"; value: Record<Role, RoleThumbnailItem> };
 type ProfileDraft = {
   firstName: string;
   lastName: string;
@@ -281,6 +283,7 @@ export default function Index() {
   const [signInMode, setSignInMode] = useState<SignInMode>("fresh");
   const [valueIndex, setValueIndex] = useState(0);
   const [valuePropsSetting, setValuePropsSetting] = useState<ValuePropsSetting | null>(null);
+  const [roleThumbnailsSetting, setRoleThumbnailsSetting] = useState<RoleThumbnailsSetting | null>(null);
   const [valuePropsLoading, setValuePropsLoading] = useState(false);
   const [consent, setConsent] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -516,21 +519,28 @@ export default function Index() {
 
   useEffect(() => {
     let ignore = false;
-    async function loadValueProps() {
+    async function loadPreAuthConfiguration() {
       setValuePropsLoading(true);
       try {
-        const response = await apiGet<{ data: ValuePropsSetting }>("/api/v1/configuration/settings/valueprops");
-        if (!ignore) setValuePropsSetting(response.data);
+        const [valueProps, roleThumbnails] = await Promise.all([
+          apiGet<{ data: ValuePropsSetting }>("/api/v1/configuration/settings/valueprops"),
+          apiGet<{ data: RoleThumbnailsSetting }>("/api/v1/configuration/settings/rolethumbnails")
+        ]);
+        if (!ignore) {
+          setValuePropsSetting(valueProps.data);
+          setRoleThumbnailsSetting(roleThumbnails.data);
+        }
       } catch {
         if (!ignore) {
           setValuePropsSetting(null);
-          setApiNotice("Value props could not be loaded from configuration.");
+          setRoleThumbnailsSetting(null);
+          setApiNotice("App configuration could not be loaded.");
         }
       } finally {
         if (!ignore) setValuePropsLoading(false);
       }
     }
-    loadValueProps();
+    loadPreAuthConfiguration();
     return () => { ignore = true; };
   }, []);
 
@@ -1723,10 +1733,16 @@ export default function Index() {
               setSelectedProgramId(null);
               setConsent(false);
             }}>
-              <Avatar role={item} label={item[0].toUpperCase()} />
+              <View style={styles.roleThumbnailFrame}>
+                {roleThumbnailsSetting?.value[item]?.imageUrl ? (
+                  <Image source={{ uri: amsFileUrl(roleThumbnailsSetting.value[item].imageUrl) }} style={styles.roleThumbnailImage} resizeMode="cover" />
+                ) : (
+                  <Avatar role={item} label={item[0].toUpperCase()} />
+                )}
+              </View>
               <View style={styles.flex}>
-                <CardTitle>{capitalize(item)}</CardTitle>
-                <Muted>{item === "student" ? "Discover tutors and book trial classes." : item === "tutor" ? "Manage leads, calendar, and payments." : "Track classes, payments, and progress."}</Muted>
+                <CardTitle>{roleThumbnailsSetting?.value[item]?.title ?? capitalize(item)}</CardTitle>
+                <Muted>{roleThumbnailsSetting?.value[item]?.description ?? (item === "student" ? "Discover tutors and book trial classes." : item === "tutor" ? "Manage leads, calendar, and payments." : "Track classes, payments, and progress.")}</Muted>
               </View>
               <Text style={styles.check}>{role === item ? "✓" : ""}</Text>
             </Card>
@@ -6462,6 +6478,8 @@ const styles = StyleSheet.create({
   viewAllChevron: { fontSize: 16, fontWeight: "900", lineHeight: 18 },
   muted: { color: "#5C6F89", fontSize: 14, lineHeight: 20 },
   card: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.96)", borderColor: "rgba(214,225,235,0.9)", borderRadius: 16, borderWidth: 1, flexDirection: "row", gap: 12, padding: 15, shadowColor: "#22304A", shadowOpacity: 0.055, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 2 },
+  roleThumbnailFrame: { alignItems: "center", borderRadius: 16, height: 58, justifyContent: "center", overflow: "hidden", width: 72 },
+  roleThumbnailImage: { height: "100%", width: "100%" },
   check: { color: "#111827", fontSize: 16, fontWeight: "900" },
   valueStage: { flex: 1, gap: 22, justifyContent: "center" },
   valueCopy: { gap: 8 },

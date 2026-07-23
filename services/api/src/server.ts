@@ -27,10 +27,19 @@ const allowedAssetExtensions = new Set([".svg", ".png", ".jpg", ".jpeg", ".webp"
 
 let curriculumCatalogueCache: CurriculumCatalogueResponse | null = null;
 
+type ConfigurationSetting<TValue> = {
+  key: string;
+  folder: string;
+  version: number;
+  accessLevel: "public" | "private";
+  value: TValue;
+};
+
 const valuePropsSetting = {
   key: "valueprops",
   folder: "valueprops",
   version: 1,
+  accessLevel: "public",
   value: {
     student: [
       {
@@ -101,11 +110,36 @@ const valuePropsSetting = {
         imageUrl: "/api/v1/ams/files/valueprops/parent/03-stay-on-top-of-class.png"
       }
     ]
-  } satisfies Record<Role, Array<{ id: string; icon: string; title: string; description: string; imageUrl: string }>>
-};
+  }
+} satisfies ConfigurationSetting<Record<Role, Array<{ id: string; icon: string; title: string; description: string; imageUrl: string }>>>;
 
-const configurationSettings: Record<string, typeof valuePropsSetting> = {
-  [valuePropsSetting.key]: valuePropsSetting
+const roleThumbnailsSetting = {
+  key: "rolethumbnails",
+  folder: "rolethumbnails",
+  version: 1,
+  accessLevel: "public",
+  value: {
+    student: {
+      title: "Student",
+      description: "Discover tutors and book trial classes.",
+      imageUrl: "/api/v1/ams/files/rolethumbnails/student.png"
+    },
+    tutor: {
+      title: "Tutor",
+      description: "Manage leads, calendar, and payments.",
+      imageUrl: "/api/v1/ams/files/rolethumbnails/tutor.png"
+    },
+    parent: {
+      title: "Parent",
+      description: "Track classes, payments, and progress.",
+      imageUrl: "/api/v1/ams/files/rolethumbnails/parent.png"
+    }
+  }
+} satisfies ConfigurationSetting<Record<Role, { title: string; description: string; imageUrl: string }>>;
+
+const configurationSettings: Record<string, ConfigurationSetting<unknown>> = {
+  [valuePropsSetting.key]: valuePropsSetting,
+  [roleThumbnailsSetting.key]: roleThumbnailsSetting
 };
 
 function uniqueStrings(values: unknown[]): string[] {
@@ -2010,7 +2044,7 @@ app.get("/api/v1/bootstrap", async (req, res) => {
 });
 
 app.get("/api/v1/configuration/settings", (_req, res) => {
-  res.json({ data: Object.values(configurationSettings).map((setting) => ({ key: setting.key, folder: setting.folder, version: setting.version })) });
+  res.json({ data: Object.values(configurationSettings).map((setting) => ({ key: setting.key, folder: setting.folder, version: setting.version, accessLevel: setting.accessLevel })) });
 });
 
 app.get("/api/v1/configuration/settings/:key", (req, res) => {
