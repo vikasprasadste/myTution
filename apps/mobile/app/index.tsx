@@ -1843,16 +1843,14 @@ export default function Index() {
     if (screen === "phone") {
       return (
         <>
-          <TopBar title="Consent" left="‹" onLeft={() => setScreen("value")} />
-          <Title>Register with phone</Title>
-          <Muted>Enter your number to continue registration.</Muted>
+          <TopBar title="Registration" left="‹" onLeft={() => setScreen("value")} />
+          <View style={styles.registrationBrand}>
+            <Image source={icon} style={styles.registrationLogo} resizeMode="contain" />
+          </View>
           <FieldLabel>Phone number</FieldLabel>
-          <Input
-            editable
+          <PhoneNumberInput
             value={phoneNumber}
             onChangeText={(value) => setPhoneNumber(value.replace(/\D/g, "").slice(0, 10))}
-            keyboardType="phone-pad"
-            maxLength={10}
           />
           <Button disabled={!requiredConsentsAccepted || !phoneComplete} loading={loadingAction === "sendOtp"} role={role} label="Send OTP" onPress={sendOtp} />
           <ConsentCard
@@ -3167,6 +3165,27 @@ function Button({ role, label, onPress, disabled, loading, variant = "primary" }
 
 function Input(props: React.ComponentProps<typeof TextInput> & { compact?: boolean }) {
   return <TextInput {...props} placeholderTextColor="#94A3B8" style={[styles.input, props.compact && styles.compactInput]} />;
+}
+
+function PhoneNumberInput({ value, onChangeText }: { value: string; onChangeText: (value: string) => void }) {
+  const [focused, setFocused] = useState(false);
+  const showPrefix = focused || value.length > 0;
+  return (
+    <View style={styles.phoneInputShell}>
+      {showPrefix ? <Text style={styles.phonePrefix}>+91</Text> : null}
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        keyboardType="number-pad"
+        maxLength={10}
+        placeholder={showPrefix ? "" : "Enter phone number"}
+        placeholderTextColor="#94A3B8"
+        style={[styles.phoneInput, showPrefix && styles.phoneInputWithPrefix]}
+      />
+    </View>
+  );
 }
 
 function Avatar({ role, label, uri, large }: { role: Role; label: string; uri?: string | null; large?: boolean }) {
@@ -6613,6 +6632,10 @@ const styles = StyleSheet.create({
   fieldLabel: { color: "#2F3B4C", fontSize: 12, fontWeight: "800", letterSpacing: 0.1 },
   input: { alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#C9D6E4", borderRadius: 13, borderWidth: 1, color: "#111827", fontSize: 14, minHeight: 48, minWidth: 0, paddingHorizontal: 14, width: "100%" },
   compactInput: { minWidth: 0 },
+  phoneInputShell: { alignItems: "center", alignSelf: "stretch", backgroundColor: "rgba(255,255,255,0.98)", borderColor: "#C9D6E4", borderRadius: 13, borderWidth: 1, flexDirection: "row", minHeight: 48, paddingHorizontal: 14, width: "100%" },
+  phonePrefix: { color: "#111827", flexShrink: 0, fontSize: 14, fontWeight: "700", lineHeight: 20, marginRight: 8 },
+  phoneInput: { color: "#111827", flex: 1, fontSize: 14, fontWeight: "600", minHeight: 48, minWidth: 0, paddingVertical: 0 },
+  phoneInputWithPrefix: { paddingLeft: 0 },
   otpShell: { position: "relative" },
   otpRow: { flexDirection: "row", gap: 8 },
   otpInput: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#CBD5E1", borderRadius: 14, borderWidth: 1, height: 52, justifyContent: "center", width: 48 },
@@ -6624,6 +6647,8 @@ const styles = StyleSheet.create({
   eye: { alignItems: "center", backgroundColor: "#F1F5F9", borderRadius: 999, height: 34, justifyContent: "center", position: "absolute", right: 8, top: 8, width: 34 },
   roleLandingBrand: { alignItems: "center", gap: 6, marginBottom: 12, marginTop: 4 },
   roleLandingLogo: { borderRadius: 22, height: 112, width: 112 },
+  registrationBrand: { alignItems: "center", marginBottom: 18, marginTop: 8 },
+  registrationLogo: { borderRadius: 24, height: 118, width: 118 },
   signinFormBrand: { alignItems: "center", gap: 6, marginTop: 24, marginBottom: 22 },
   freshSigninLogo: { borderRadius: 28, height: 150, width: 150 },
   freshSigninBrand: { color: "#202A35", fontSize: 31, fontWeight: "900", marginTop: 18 },
